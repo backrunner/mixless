@@ -43,8 +43,8 @@ compiler is not part of the standalone Command Line Tools). `dev.sh` locates
 the project even when called from another directory and automatically selects
 an Xcode installation with Metal support, including Xcode-beta. An explicit
 `DEVELOPER_DIR` takes precedence. Press Ctrl+C to stop; rerun after code changes
-to rebuild and replace the previous instance from this checkout. The window title
-shows the Git revision; startup logs also include the UTC build time. The first
+to rebuild and replace the previous instance from this checkout. Click MIXLESS / ABOUT to see the version, Git revision and UTC build time.
+The main window keeps build metadata out of the workspace. The first
 build optimizes the audio engine, GPUI and waveform tessellation for development
 and may take longer. The script uses the normal local app library and does not provide
 automatic file watching.
@@ -53,6 +53,19 @@ The UI mirrors `EngineSnapshot` from the engine's atomics at display VSync
 while audio is active, and repaints on demand while idle — the playhead
 is never integrated on the UI side. Keymap: Space play/pause, F xfader center,
 S sync, QWER/UIOP hot cues 1–4.
+
+The library fills the remaining window height. Use **+ Files** or **+ Folder**
+for local imports (folders include subfolders; duplicate paths are skipped),
+or **Spotify / Details** for playlist import and progress details. Native file
+selection is asynchronous and folder scanning runs on a worker. Drag a library
+track onto either deck to load it; the receiving deck highlights during the drag.
+Loading a track manually takes over from Automix.
+
+The waveform uses a symmetric peak envelope colored by low/mid/high spectral
+energy, with a darker RMS body and a fixed playhead. Beat and downbeat markers
+come from stored analysis; tracks without a measured grid show no invented bar
+lines. Tempo changes preserve the source-time grid. This is an independent
+renderer inspired by DJ workstations, not a pixel-identical reproduction.
 
 ## Automix
 

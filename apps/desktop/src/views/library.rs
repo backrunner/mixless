@@ -7,7 +7,27 @@ use crate::state::UiState;
 use crate::theme;
 use gpui::prelude::*;
 use gpui::{IntoElement, MouseButton, MouseDownEvent, SharedString, Styled, Window, px};
-use mixless_protocol::Track;
+use mixless_protocol::{Track, TrackId};
+
+#[derive(Clone)]
+pub struct TrackDrag {
+    pub id: TrackId,
+    pub title: String,
+}
+impl gpui::Render for TrackDrag {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .px_3()
+            .py_2()
+            .rounded(px(6.))
+            .bg(theme::PANEL_RAISED)
+            .border_1()
+            .border_color(theme::ACCENT)
+            .text_color(theme::TEXT)
+            .text_size(px(12.))
+            .child(self.title.clone())
+    }
+}
 
 fn fmt_duration(ms: u64) -> String {
     let s = ms / 1000;
@@ -132,35 +152,6 @@ impl UiState {
             })
         };
 
-        let local_root = gpui::div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .w_full()
-            .h(px(24.))
-            .px_2()
-            .text_size(px(9.))
-            .font_weight(gpui::FontWeight::BOLD)
-            .text_color(theme::MUTED)
-            .child(gpui::div().flex_none().text_size(px(8.)).child("▾"))
-            .child("LOCAL");
-
-        let spotify_root = gpui::div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .w_full()
-            .h(px(22.))
-            .px_2()
-            .mt_1()
-            .text_size(px(9.))
-            .font_weight(gpui::FontWeight::BOLD)
-            .text_color(theme::MUTED)
-            .child(gpui::div().flex_none().text_size(px(8.)).child("▾"))
-            .child("SPOTIFY");
-
         let playlists = self.playlists.clone();
         let playlist_sel = self.playlist_sel;
         let playlist_state = cx.entity();
@@ -222,77 +213,66 @@ impl UiState {
         .flex_1()
         .min_h_0();
 
-        let import_button = {
-            let label = if self.busy {
-                "IMPORTING…"
-            } else {
-                "IMPORT AUDIO"
-            };
-            let el = gpui::div()
-                .id("tree-import-button")
-                .flex()
-                .items_center()
-                .gap_2()
-                .w_full()
-                .h(px(30.))
-                .px_2()
-                .rounded(px(4.))
-                .bg(theme::ACCENT)
-                .text_size(px(10.))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(theme::BG)
-                .hover(|s| s.bg(theme::TEXT))
-                .child(gpui::div().flex_none().text_size(px(13.)).child("＋"))
-                .child(label);
-            let st = state.clone();
-            el.on_click(move |_ev, _window, cx| {
-                st.update(cx, |s, cx| {
-                    s.show_import_modal = true;
-                    cx.notify();
-                });
-            })
-        };
-
-        let footer = gpui::div()
+        let toolbar = gpui::div()
             .flex()
             .flex_none()
-            .flex_col()
-            .gap_1()
-            .p_2()
-            .when(self.busy && !self.acquire.is_empty(), |el| {
-                el.child(
-                    gpui::div()
-                        .h(px(14.))
-                        .text_size(px(9.))
-                        .text_color(theme::MUTED)
-                        .overflow_hidden()
-                        .child(self.acquire.clone()),
-                )
-            })
-            .child(import_button);
-
+            .items_center()
+            .gap_2()
+            .h(px(30.))
+            .px_2()
+            .border_b_1()
+            .border_color(theme::LINE)
+            .child(
+                gpui::div()
+                    .flex_1()
+                    .text_size(px(10.))
+                    .text_color(theme::MUTED)
+                    .child(format!(
+                        "{} tracks · drag a track to deck A or B",
+                        self.tracks.len()
+                    )),
+            )
+            .child(self.local_import_button(cx, false, "+ Files"))
+            .child(self.local_import_button(cx, true, "+ Folder"))
+            .child(
+                gpui::div()
+                    .id("library-import")
+                    .cursor_pointer()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(3.))
+                    .text_size(px(10.))
+                    .text_color(theme::MUTED)
+                    .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
+                    .child(if self.busy {
+                        "Importing…"
+                    } else {
+                        "Spotify / Details"
+                    })
+                    .on_click(cx.listener(|s, _, _, cx| {
+                        s.show_import_modal = true;
+                        cx.notify();
+                    })),
+            );
         let side = gpui::div()
             .flex()
             .flex_none()
-            .w(px(192.))
+            .w(px(166.))
             .flex_col()
-            .py_2()
+            .py_1()
             .bg(gpui::rgb(0x0e0e10))
             .overflow_hidden()
-            .child(local_root)
             .child(all_tracks_row)
-            .child(spotify_root)
             .child(
                 gpui::div()
                     .flex_none()
                     .px_2()
-                    .pb_1()
-                    .text_size(px(8.))
+                    .py_1()
+                    .text_size(px(9.))
                     .text_color(theme::MUTED)
                     .child("PLAYLISTS"),
             )
-            .child(playlist_list)
-            .child(footer);
+            .child(playlist_list);
 
         let shown = self.tracks.clone();
         let track_sel = self.track_sel;
@@ -363,10 +343,11 @@ impl UiState {
                     let dur = fmt_duration(t.duration_ms as u64);
 
                     let row = gpui::div()
-                        .id(SharedString::from(format!("track-{}", t.id.0)))
+                        .id(SharedString::from(format!("track-{}-{ix}", t.id.0)))
+                        .w_full()
                         .flex()
                         .items_center()
-                        .h(px(30.))
+                        .h(px(26.))
                         .px(px(ROW_PAD))
                         .gap_2()
                         .text_size(px(12.))
@@ -447,18 +428,28 @@ impl UiState {
 
                     let st = track_state.clone();
                     let track_id = t.id;
-                    rows.push(row.on_mouse_down(
-                        MouseButton::Left,
-                        move |ev: &MouseDownEvent, _window, cx| {
-                            st.update(cx, |s, cx| {
-                                s.track_sel = Some(track_id.0);
-                                if ev.click_count >= 2 {
-                                    s.load_deck(focus_deck, track_id);
-                                }
-                                cx.notify();
-                            });
-                        },
-                    ));
+                    rows.push(
+                        row.cursor_move()
+                            .on_drag(
+                                TrackDrag {
+                                    id: track_id,
+                                    title: t.title.clone(),
+                                },
+                                |drag, _, _, cx| cx.new(|_| drag.clone()),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                move |ev: &MouseDownEvent, _window, cx| {
+                                    st.update(cx, |s, cx| {
+                                        s.track_sel = Some(track_id.0);
+                                        if ev.click_count >= 2 {
+                                            s.load_deck(focus_deck, track_id);
+                                        }
+                                        cx.notify();
+                                    });
+                                },
+                            ),
+                    );
                 }
                 rows
             })
@@ -504,15 +495,66 @@ impl UiState {
         gpui::div()
             .id("library")
             .flex()
-            .flex_none()
-            .h(px(height))
+            .flex_1()
+            .min_h(px(height))
+            .flex_col()
             .rounded(px(8.))
             .bg(theme::PANEL)
             .border_1()
             .border_color(theme::LINE)
             .overflow_hidden()
-            .child(side)
-            .child(main_col)
+            .child(toolbar)
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(side)
+                    .child(main_col),
+            )
+            .when(!self.acquire.is_empty(), |el| {
+                el.child(
+                    gpui::div()
+                        .flex_none()
+                        .h(px(18.))
+                        .px_2()
+                        .text_size(px(9.))
+                        .text_color(theme::MUTED)
+                        .overflow_hidden()
+                        .child(self.acquire.clone()),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn local_import_button(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        folders: bool,
+        label: &'static str,
+    ) -> gpui::AnyElement {
+        let disabled = self.busy || self.picker_open;
+        gpui::div()
+            .id(if folders {
+                "choose-folders"
+            } else {
+                "choose-files"
+            })
+            .flex_none()
+            .px_2()
+            .py_1()
+            .rounded(px(3.))
+            .text_size(px(10.))
+            .text_color(theme::TEXT)
+            .bg(theme::PANEL_RAISED)
+            .when(disabled, |el| el.opacity(0.4))
+            .when(!disabled, |el| {
+                el.cursor_pointer().hover(|s| s.bg(theme::LINE))
+            })
+            .child(label)
+            .on_click(cx.listener(move |s, _, _, cx| {
+                s.choose_local(folders, cx);
+            }))
             .into_any_element()
     }
 
@@ -528,7 +570,6 @@ impl UiState {
         let state = cx.entity();
         let dismiss_state = state.clone();
         let close_state = state.clone();
-        let local_state = state.clone();
         let spotify_state = state.clone();
         let busy = self.busy;
         let can_import_spotify = !busy && !self.url.trim().is_empty();
@@ -553,38 +594,11 @@ impl UiState {
             });
 
         let local_button = gpui::div()
-            .id("import-local-files")
             .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .h(px(32.))
-            .px_3()
-            .rounded(px(4.))
-            .bg(theme::ACCENT)
-            .text_size(px(10.))
-            .font_weight(gpui::FontWeight::BOLD)
-            .text_color(theme::BG)
-            .when(busy, |el| el.opacity(0.45))
-            .when(!busy, |el| el.hover(|s| s.bg(theme::TEXT)))
-            .child("CHOOSE FILES")
-            .on_click(move |_ev, _window, cx| {
-                if busy {
-                    return;
-                }
-                let paths = rfd::FileDialog::new()
-                    .add_filter(
-                        "Audio",
-                        &["wav", "mp3", "flac", "aiff", "aif", "ogg", "m4a", "aac"],
-                    )
-                    .pick_files();
-                if let Some(paths) = paths.filter(|paths| !paths.is_empty()) {
-                    local_state.update(cx, |s, cx| {
-                        s.import_files(paths);
-                        cx.notify();
-                    });
-                }
-            });
+            .flex_col()
+            .gap_2()
+            .child(self.local_import_button(cx, false, "Choose files…"))
+            .child(self.local_import_button(cx, true, "Choose folders…"));
 
         let spotify_button = gpui::div()
             .id("import-spotify-playlist")
@@ -689,7 +703,7 @@ impl UiState {
                                 gpui::div()
                                     .text_size(px(10.))
                                     .text_color(theme::MUTED)
-                                    .child("Select one or more audio files."),
+                                    .child("Folders include subfolders; duplicates are skipped."),
                             ),
                     )
                     .child(local_button),

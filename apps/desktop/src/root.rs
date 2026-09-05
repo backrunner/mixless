@@ -71,12 +71,12 @@ impl Render for UiState {
         // size without making hardware controls too small to grab.
         let width_scale = (viewport_width / 1440.0).clamp(0.82, 1.0);
         let compact_height = viewport_height < 870.0;
-        let mixer_width = 312.0 * width_scale;
+        let mixer_width = 288.0;
         let deck_min_width = (340.0 * width_scale).max(300.0);
         let vertical_wave_width = 72.0 * width_scale;
-        let wave_strip_height = if compact_height { 42.0 } else { 66.0 };
-        let library_height = if compact_height { 180.0 } else { 222.0 };
-        let main_min_height = if compact_height { 300.0 } else { 280.0 };
+        let wave_strip_height = if compact_height { 48.0 } else { 60.0 };
+        let library_height = 160.0;
+        let main_min_height = if compact_height { 300.0 } else { 340.0 };
 
         let topbar = self.render_topbar(cx);
 
@@ -154,8 +154,8 @@ impl Render for UiState {
             .child(
                 gpui::div()
                     .flex()
-                    .flex_1()
-                    .min_h(px(main_min_height))
+                    .flex_none()
+                    .h(px(main_min_height))
                     .gap_2()
                     .flex_nowrap()
                     .overflow_hidden()

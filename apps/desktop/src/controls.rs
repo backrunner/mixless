@@ -623,7 +623,8 @@ pub fn meter(levels: [f32; 2], width: f32) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
-        .gap_1()
+        .gap(px(2.))
+        .w(px(width * 2.0 + 2.0))
         .h_full()
         .child(
             canvas(

@@ -13,7 +13,7 @@ const HIGH_HZ: f32 = 2_500.0;
 
 /// Compute an overview waveform with `columns` columns from a decoded buffer.
 ///
-/// Single pass: the mono signal runs through a low-pass and a high-pass so
+/// Single pass: each stereo channel runs through a low-pass and a high-pass so
 /// each column can report how its energy splits across bands. Peaks are
 /// normalized to the track maximum; band shares are per-column ratios.
 pub fn compute_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
@@ -35,8 +35,12 @@ pub fn compute_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
     }
 
     let sr = buf.sample_rate as f32;
-    let mut lp = Biquad::lowpass(sr, LOW_HZ, std::f32::consts::FRAC_1_SQRT_2);
-    let mut hp = Biquad::highpass(sr, HIGH_HZ, std::f32::consts::FRAC_1_SQRT_2);
+    let mut lp = std::array::from_fn::<_, 2, _>(|_| {
+        Biquad::lowpass(sr, LOW_HZ, std::f32::consts::FRAC_1_SQRT_2)
+    });
+    let mut hp = std::array::from_fn::<_, 2, _>(|_| {
+        Biquad::highpass(sr, HIGH_HZ, std::f32::consts::FRAC_1_SQRT_2)
+    });
 
     let per_col = frames as f64 / columns as f64;
     let mut peak_pos = vec![0.0f32; columns];
@@ -48,18 +52,20 @@ pub fn compute_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
     let mut e_high = vec![0.0f32; columns];
 
     for i in 0..frames {
-        let x = 0.5 * (buf.samples[i * 2] + buf.samples[i * 2 + 1]);
-        let low = lp.process(x);
-        let high = hp.process(x);
-        let mid = x - low - high;
         let c = ((i as f64 / per_col) as usize).min(columns - 1);
-        peak_pos[c] = peak_pos[c].max(x.max(0.0));
-        peak_neg[c] = peak_neg[c].max((-x).max(0.0));
-        sum_sq[c] += x * x;
-        sample_count[c] += 1;
-        e_low[c] += low * low;
-        e_mid[c] += mid * mid;
-        e_high[c] += high * high;
+        for ch in 0..2 {
+            let x = buf.samples[i * 2 + ch];
+            let low = lp[ch].process(x);
+            let high = hp[ch].process(x);
+            let mid = x - low - high;
+            peak_pos[c] = peak_pos[c].max(x.max(0.0));
+            peak_neg[c] = peak_neg[c].max((-x).max(0.0));
+            sum_sq[c] += x * x;
+            sample_count[c] += 1;
+            e_low[c] += low * low;
+            e_mid[c] += mid * mid;
+            e_high[c] += high * high;
+        }
     }
 
     let max_peak = peak_pos
@@ -125,6 +131,25 @@ mod tests {
             frames: frames as u64,
             sample_rate: sr,
         })
+    }
+
+    #[test]
+    fn antiphase_stereo_is_not_silence() {
+        let original = tone(48_000, 80.0, 0.5);
+        let mut inverted = AudioBuffer {
+            samples: original.samples.clone(),
+            frames: original.frames,
+            sample_rate: original.sample_rate,
+        };
+        for sample in inverted.samples.iter_mut().skip(1).step_by(2) {
+            *sample = -*sample;
+        }
+        let same = compute_waveform(&original, 64);
+        let opposite = compute_waveform(&inverted, 64);
+        assert_eq!(same.peak, opposite.peak);
+        assert_eq!(same.rms, opposite.rms);
+        assert_eq!(same.low, opposite.low);
+        assert!(opposite.peak[32] > 200);
     }
 
     #[test]

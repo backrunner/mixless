@@ -78,9 +78,9 @@ impl UiState {
         let dc = theme::deck_color(deck);
         let flip = deck == DeckId::B;
         let pfl_available = self.snapshot.pfl_available;
-        let top_diameter = if compact_height { 22.0 } else { 26.0 };
+        let top_diameter = 22.0;
         let eq_diameter = if compact_height { 26.0 } else { 30.0 };
-        let eq_row_width = if compact_height { 66.0 } else { 72.0 };
+        let eq_row_width = 56.0;
 
         /* top row: TRIM + FILTER side by side */
         let top_knobs = gpui::div()
@@ -88,7 +88,7 @@ impl UiState {
             .flex_none()
             .items_start()
             .justify_center()
-            .gap(px(if compact_height { 5.0 } else { 8.0 }))
+            .gap(px(6.0))
             .pt(px(if compact_height { 2.0 } else { 4.0 }))
             .child(knob(
                 KnobSpec {
@@ -133,8 +133,8 @@ impl UiState {
         /* EQ column: kill dot on the outer side of each knob */
         let mut eq_col = gpui::div()
             .flex()
-            .flex_1()
-            .min_h_0()
+            .flex_none()
+            .w(px(eq_row_width))
             .flex_col()
             .justify_between()
             .items_center()
@@ -208,7 +208,7 @@ impl UiState {
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .w(px(56.))
+                .w(px(38.))
                 .h(px(if compact_height { 18.0 } else { 20.0 }))
                 .rounded(px(4.))
                 .border_1()
@@ -238,13 +238,14 @@ impl UiState {
             })
         };
 
-        /* fader + meters */
+        /* One stereo meter pair per channel, beside the full-height fader. */
         let fader_row = gpui::div()
             .flex()
+            .when(flip, |el| el.flex_row_reverse())
             .flex_1()
             .min_h_0()
             .justify_center()
-            .gap_2()
+            .gap(px(4.))
             .pb_1()
             .child(meter(d.level, 5.0))
             .child(fader_v(
@@ -258,8 +259,7 @@ impl UiState {
                     ticks: true,
                 },
                 cx,
-            ))
-            .child(meter(d.level, 5.0));
+            ));
 
         gpui::div()
             .id(SharedString::from(format!("ch-{:?}", deck)))
@@ -279,9 +279,27 @@ impl UiState {
                     .child(deck_label(deck)),
             )
             .child(top_knobs)
-            .child(eq_col)
-            .child(pfl_btn)
-            .child(fader_row)
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(154.))
+                    .w_full()
+                    .gap_2()
+                    .when(flip, |el| el.flex_row_reverse())
+                    .child(eq_col)
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_2()
+                            .items_center()
+                            .child(fader_row)
+                            .child(pfl_btn),
+                    ),
+            )
             .into_any_element()
     }
 }

@@ -38,14 +38,7 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
-                title: Some(
-                    format!(
-                        "Mixless · {} · {}",
-                        env!("MIXLESS_BUILD_PROFILE"),
-                        env!("MIXLESS_REVISION")
-                    )
-                    .into(),
-                ),
+                title: Some("Mixless".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(24.))),
             }),

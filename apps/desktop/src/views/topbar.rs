@@ -243,13 +243,16 @@ impl UiState {
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::TEXT)
+                            .id("about-mixless")
+                            .cursor_pointer()
                             .child("MIXLESS")
                             .child(
                                 gpui::div()
                                     .text_size(px(8.))
                                     .text_color(theme::MUTED)
-                                    .child(format!("{} {}", env!("MIXLESS_BUILD_PROFILE"), env!("MIXLESS_REVISION"))),
-                            ),
+                                    .child("ABOUT"),
+                            )
+                            .on_click(|_, _, cx| crate::views::about::open(cx)),
                     ),
             )
             .child(divider())

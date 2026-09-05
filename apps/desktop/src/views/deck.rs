@@ -11,6 +11,7 @@ use mixless_protocol::{DeckId, Waveform};
 use crate::controls::{FaderSpec, JogSpec, KnobSpec, caption, fader_v, jog, knob};
 use crate::state::{FaderCtl, KnobCtl, UiState};
 use crate::theme;
+use crate::views::library::TrackDrag;
 
 const LOOP_SIZES: [u16; 5] = [1, 2, 4, 8, 16];
 const PERFORM_HEIGHT: f32 = 64.0;
@@ -157,6 +158,7 @@ impl UiState {
                     deck,
                     d,
                     wave,
+                    self.wave_tempo[deck.index()].clone(),
                     device_sr,
                     dc,
                     cx,
@@ -188,6 +190,7 @@ impl UiState {
         };
 
         gpui::div()
+            .w_full()
             .flex()
             .flex_col()
             .items_center()
@@ -207,6 +210,7 @@ impl UiState {
                     deck,
                     d,
                     wave,
+                    self.wave_tempo[deck.index()].clone(),
                     device_sr,
                     dc,
                     cx,
@@ -757,6 +761,15 @@ impl UiState {
 
         gpui::div()
             .id(SharedString::from(format!("deck-{:?}", deck)))
+            .drag_over::<TrackDrag>(move |style, _, _, _| {
+                style.bg(theme::with_alpha(dc, 0.12)).border_color(dc)
+            })
+            .on_drop(cx.listener(move |s, track: &TrackDrag, _, cx| {
+                s.focus = deck;
+                s.track_sel = Some(track.id.0);
+                s.load_deck(deck, track.id);
+                cx.notify();
+            }))
             .flex()
             .flex_1()
             .min_w(px(min_width))
@@ -889,6 +902,7 @@ impl UiState {
 
         let mix = gpui::div()
             .flex()
+            .when(deck == DeckId::B, |el| el.flex_row_reverse())
             .flex_1()
             .min_w_0()
             .items_center()
@@ -919,7 +933,7 @@ impl UiState {
             .flex()
             .flex_col()
             .flex_1()
-            .min_w(px(112.))
+            .min_w_0()
             .min_h_0()
             .gap_1()
             .h(px(60.))
@@ -966,7 +980,7 @@ impl UiState {
     pub fn render_fxbar(
         &self,
         cx: &mut gpui::Context<Self>,
-        center_width: f32,
+        _center_width: f32,
     ) -> gpui::AnyElement {
         let ch_a = {
             let dc = theme::deck_color(DeckId::A);
@@ -1024,7 +1038,7 @@ impl UiState {
                 gpui::div()
                     .flex()
                     .flex_none()
-                    .w(px(center_width))
+                    .w(px(28.))
                     .justify_center()
                     .text_size(px(11.))
                     .font_weight(gpui::FontWeight::BOLD)

@@ -10,8 +10,8 @@ use gpui::{Bounds, Context, FocusHandle, Keystroke, Pixels, SharedString, Window
 use mixless_acquire::imports::{ImportReport, ImportService};
 use mixless_acquire_yt::YoutubeMusicAcquire;
 use mixless_protocol::{
-    Command, CueKind, DeckId, EngineSnapshot, EqBand, FxParams, FxSlot, PlaylistId, Track, TrackId,
-    Waveform,
+    Command, CueKind, DeckId, EngineSnapshot, EqBand, FxParams, FxSlot, PlaylistId, TempoMap,
+    Track, TrackId, Waveform,
 };
 use mixless_spotify::SpotifyClient;
 
@@ -189,10 +189,13 @@ pub struct UiState {
     pub import_details: Vec<String>,
     pub playlist_issues: Vec<mixless_library::ImportItem>,
     pub busy: bool,
+    pub picker_open: bool,
     pub show_fx: bool,
     pub wave_layout: WaveLayout,
     pub fx: [[FxUi; 3]; 2],
     pub wave: [Option<(i64, Arc<Waveform>)>; 2],
+    pub wave_tempo: [Option<Arc<TempoMap>>; 2],
+    grid_rx: [Option<Receiver<Option<TempoMap>>>; 2],
     pub drag: Option<DragCtl>,
     /// `(deck, slot, was_on)` for the FX button currently held by the mouse.
     /// The root mouse-up capture restores `was_on` even when the pointer leaves
@@ -233,10 +236,13 @@ impl UiState {
             import_details: Vec::new(),
             playlist_issues: Vec::new(),
             busy: false,
+            picker_open: false,
             show_fx: true,
             wave_layout: WaveLayout::Top,
             fx: [default_fx(), default_fx()],
             wave: [None, None],
+            wave_tempo: [None, None],
+            grid_rx: [None, None],
             drag: None,
             momentary_fx: None,
             import_rx: None,
@@ -789,6 +795,44 @@ impl UiState {
 
     /* ---- imports ---------------------------------------------------------- */
 
+    pub fn choose_local(&mut self, folders: bool, cx: &mut Context<Self>) {
+        if self.busy || self.picker_open {
+            return;
+        }
+        self.picker_open = true;
+        let selection = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: !folders,
+            directories: folders,
+            multiple: true,
+            prompt: Some(
+                if folders {
+                    "Import folders"
+                } else {
+                    "Import audio files"
+                }
+                .into(),
+            ),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = selection.await;
+            let _ = this.update(cx, |s, cx| {
+                s.picker_open = false;
+                match result {
+                    Ok(Ok(Some(paths))) => {
+                        s.show_import_modal = false;
+                        s.import_files(paths);
+                    }
+                    Ok(Err(error)) => s.error = error.to_string().into(),
+                    Err(error) => s.error = error.to_string().into(),
+                    _ => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub fn import_files(&mut self, paths: Vec<PathBuf>) {
         if self.busy || paths.is_empty() {
             return;
@@ -864,6 +908,29 @@ impl UiState {
             let cached = self.wave[i].as_ref().map(|(id, _)| *id);
             if tid != cached {
                 changed = true;
+                self.wave_tempo[i] = None;
+                self.grid_rx[i] = tid.map(|id| {
+                    let (tx, rx) = channel();
+                    let core = self.core.clone();
+                    std::thread::spawn(move || {
+                        let tempo = core
+                            .library
+                            .load_analysis(TrackId(id), mixless_analyze::ANALYSIS_VERSION)
+                            .ok()
+                            .flatten()
+                            .map(|analysis| {
+                                let mut tempo = analysis.tempo;
+                                for positions in [&mut tempo.beats, &mut tempo.downbeats] {
+                                    positions.retain(|value| value.is_finite() && *value >= 0.0);
+                                    positions.sort_by(f32::total_cmp);
+                                    positions.dedup();
+                                }
+                                tempo
+                            });
+                        let _ = tx.send(tempo);
+                    });
+                    rx
+                });
                 self.wave[i] = self
                     .core
                     .engine
@@ -872,6 +939,18 @@ impl UiState {
             }
         }
 
+        for i in 0..2 {
+            if let Some(rx) = self.grid_rx[i].take() {
+                match rx.try_recv() {
+                    Ok(tempo) => {
+                        self.wave_tempo[i] = tempo.map(Arc::new);
+                        changed = true;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.grid_rx[i] = Some(rx),
+                    Err(_) => {}
+                }
+            }
+        }
         if let Some(rx) = self.import_rx.take() {
             let mut finished = false;
             loop {
@@ -986,9 +1065,25 @@ fn import_files_blocking(core: &AppCore, paths: Vec<PathBuf>, tx: &Sender<Import
         library: &core.library,
         analyzer: &core.analyzer,
     };
-    let report = service.local_files(&paths, |message| {
+    let _ = tx.send(ImportMsg::Progress("Scanning folders…".into()));
+    let (paths, errors) = mixless_acquire::local_paths::collect_audio(&paths);
+    if paths.is_empty() {
+        let message = if errors.is_empty() {
+            "No supported audio files found in this selection.".into()
+        } else {
+            errors.join("\n")
+        };
+        let _ = tx.send(ImportMsg::Done(Err(message)));
+        return;
+    }
+    let mut report = service.local_files(&paths, |message| {
         let _ = tx.send(ImportMsg::Progress(message));
     });
+    report.errors.extend(errors);
+    if !report.errors.is_empty() {
+        report.warning =
+            Some("Some files or folders could not be imported; open import details.".into());
+    }
     let _ = tx.send(ImportMsg::Done(Ok(report)));
 }
 

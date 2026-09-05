@@ -1,6 +1,6 @@
 //! Scrolling, beat-anchored RGB waveform in the Serato/rekordbox style:
-//! playhead fixed at the center, with asymmetric peaks, three frequency bands,
-//! an RMS body and transient detail. Dragging the lane scrubs the deck through
+//! playhead fixed at the center, with a symmetric peak envelope tinted by
+//! frequency energy, a darker RMS body and measured beat ticks. Dragging the lane scrubs the deck through
 //! the same Jog command the platter uses.
 
 use std::sync::{Arc, Mutex};
@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use gpui::prelude::*;
 use gpui::{
     Bounds, IntoElement, MouseButton, MouseDownEvent, PathBuilder, Pixels, Rgba, SharedString,
-    Window, canvas, div, point, px,
+    Window, canvas, div, px,
 };
-use mixless_protocol::{DeckId, DeckSnapshot, Waveform};
+use mixless_protocol::{DeckId, DeckSnapshot, TempoMap, Waveform};
 
 use crate::controls::{pf, quad_fill};
 use crate::state::UiState;
@@ -21,110 +21,62 @@ const BEATS_SHOWN: f32 = 16.0;
 /// Fallback window when BPM is unknown: 8 seconds.
 const FALLBACK_SECONDS: f32 = 8.0;
 
-/// The band and RMS boundaries of one waveform slice, ordered from the outer
-/// negative side through the positive side.
-struct WaveSample {
+/// Quantized RGB mixtures keep the number of path submissions bounded.
+fn spectrum(low: f32, mid: f32, high: f32) -> (usize, Rgba) {
+    let total = (low + mid + high).max(1.0);
+    let l = ((low / total * 4.0).round() as usize).min(4);
+    let m = ((mid / total * 4.0).round() as usize).min(4 - l);
+    let h = 4 - l - m;
+    let bands = [theme::WF_LOW, theme::WF_MID, theme::WF_HIGH];
+    let weights = [l as f32, m as f32, h as f32];
+    let rgb: [f32; 3] = std::array::from_fn(|channel| {
+        bands
+            .iter()
+            .zip(weights)
+            .map(|(color, weight)| color[channel] * weight)
+            .sum::<f32>()
+            / 4.0
+    });
+    let brightest = rgb.iter().copied().fold(0.01f32, f32::max);
+    (
+        l * 5 + m,
+        gpui::rgb(rgba_bytes(
+            rgb[0] / brightest,
+            rgb[1] / brightest,
+            rgb[2] / brightest,
+        )),
+    )
+}
+
+fn source_beat_frames(d: &DeckSnapshot, sr: u32) -> f32 {
+    if d.sounding_bpm.is_finite() && d.sounding_bpm > 0.0 && d.rate.is_finite() && d.rate > 0.0 {
+        sr as f32 * 60.0 * d.rate / d.sounding_bpm
+    } else {
+        0.0
+    }
+}
+
+fn add_column(
+    path: &mut PathBuilder,
+    vertical: bool,
+    ox: f32,
+    oy: f32,
+    axis: f32,
     position: f32,
-    /// high | mid | low | low | mid | high, followed by RMS -/+
-    edges: [f32; 8],
-    crest: f32,
-}
-
-fn wave_point(
-    vertical: bool,
-    ox: f32,
-    oy: f32,
-    axis: f32,
-    sample: &WaveSample,
-    edge: usize,
-) -> gpui::Point<Pixels> {
-    if vertical {
-        point(px(ox + axis + sample.edges[edge]), px(oy + sample.position))
-    } else {
-        point(px(ox + sample.position), px(oy + axis + sample.edges[edge]))
-    }
-}
-
-/// Add a filled strip between two waveform boundaries. A whole frequency
-/// band is submitted as one GPU path instead of one quad per pixel.
-fn append_strip(
-    path: &mut PathBuilder,
-    samples: &[WaveSample],
-    vertical: bool,
-    ox: f32,
-    oy: f32,
-    axis: f32,
-    first_edge: usize,
-    second_edge: usize,
+    half: f32,
 ) {
-    let Some(first) = samples.first() else { return };
-    path.move_to(wave_point(vertical, ox, oy, axis, first, first_edge));
-    for sample in samples.iter().skip(1) {
-        path.line_to(wave_point(vertical, ox, oy, axis, sample, first_edge));
-    }
-    for sample in samples.iter().rev() {
-        path.line_to(wave_point(vertical, ox, oy, axis, sample, second_edge));
-    }
-    path.close();
-}
-
-/// Add one continuous boundary without creating a draw call per sample.
-fn append_contour(
-    path: &mut PathBuilder,
-    samples: &[WaveSample],
-    vertical: bool,
-    ox: f32,
-    oy: f32,
-    axis: f32,
-    edge: usize,
-) {
-    let Some(first) = samples.first() else { return };
-    path.move_to(wave_point(vertical, ox, oy, axis, first, edge));
-    for sample in samples.iter().skip(1) {
-        path.line_to(wave_point(vertical, ox, oy, axis, sample, edge));
-    }
-}
-
-fn transient_point(
-    vertical: bool,
-    ox: f32,
-    oy: f32,
-    axis: f32,
-    sample: &WaveSample,
-    offset: f32,
-) -> gpui::Point<Pixels> {
-    if vertical {
-        point(px(ox + axis + offset), px(oy + sample.position))
-    } else {
-        point(px(ox + sample.position), px(oy + axis + offset))
-    }
-}
-
-/// Percussive peaks get short cyan-white caps. They are all tessellated into
-/// one path, so their detail is effectively free from a submission standpoint.
-fn append_transient_caps(
-    path: &mut PathBuilder,
-    samples: &[WaveSample],
-    vertical: bool,
-    ox: f32,
-    oy: f32,
-    axis: f32,
-) {
-    for sample in samples.iter().filter(|sample| sample.crest > 0.38) {
-        for edge in [sample.edges[0], sample.edges[5]] {
-            if edge.abs() < 2.0 {
-                continue;
-            }
-            path.move_to(transient_point(vertical, ox, oy, axis, sample, edge * 0.82));
-            path.line_to(transient_point(vertical, ox, oy, axis, sample, edge));
+    let point = |time, amp| {
+        if vertical {
+            gpui::point(px(ox + axis + amp), px(oy + time))
+        } else {
+            gpui::point(px(ox + time), px(oy + axis + amp))
         }
-    }
-}
-
-fn paint_band(window: &mut Window, path: PathBuilder, color: Rgba) {
-    if let Ok(path) = path.build() {
-        window.paint_path(path, color);
-    }
+    };
+    path.move_to(point(position, -half));
+    path.line_to(point(position + 1.0, -half));
+    path.line_to(point(position + 1.0, half));
+    path.line_to(point(position, half));
+    path.close();
 }
 
 /// Frames per pixel along the time axis for the current view. Shared by the
@@ -139,11 +91,7 @@ pub fn frames_per_px(d: &DeckSnapshot, device_sr: u32, span: f32) -> f32 {
     if sr == 0 {
         return 1.0;
     }
-    let beat_frames = if d.sounding_bpm > 0.0 {
-        sr as f32 * 60.0 / d.sounding_bpm
-    } else {
-        0.0
-    };
+    let beat_frames = source_beat_frames(d, sr);
     let window_frames = if beat_frames > 0.0 {
         BEATS_SHOWN * beat_frames
     } else {
@@ -158,6 +106,7 @@ pub fn paint_wave(
     vertical: bool,
     d: &DeckSnapshot,
     wave: Option<&Waveform>,
+    tempo: Option<&TempoMap>,
     device_sr: u32,
     deck_color: Rgba,
 ) {
@@ -167,7 +116,7 @@ pub fn paint_wave(
         (pf(bounds.size.width), pf(bounds.size.height))
     };
     let axis = thick / 2.0;
-    let max_half = axis - 2.0;
+    let max_half = (axis - 5.0).max(1.0);
     let anchor = span / 2.0;
     let ox = pf(bounds.origin.x);
     let oy = pf(bounds.origin.y);
@@ -184,12 +133,6 @@ pub fn paint_wave(
     if sr == 0 {
         return;
     }
-    let bpm = d.sounding_bpm;
-    let beat_frames = if bpm > 0.0 {
-        sr as f32 * 60.0 / bpm
-    } else {
-        0.0
-    };
     let fpp = frames_per_px(d, device_sr, span);
     // Never trust a partially-written or older cache to have equally-sized
     // vectors. The positive/negative/RMS vectors are optional for backwards
@@ -202,32 +145,9 @@ pub fn paint_wave(
     if n == 0 {
         return;
     }
-    let asymmetric = data.peak_pos.len() >= n && data.peak_neg.len() >= n;
     let has_rms = data.rms.len() >= n;
     let frames = d.frames as f32;
     let frame = d.frame as f32;
-
-    // Saturated RGB band colors: lows red-orange, mids amber, highs cyan.
-    let col_low = gpui::rgb(rgba_bytes(
-        theme::WF_LOW[0],
-        theme::WF_LOW[1],
-        theme::WF_LOW[2],
-    ));
-    let col_mid = gpui::rgb(rgba_bytes(
-        theme::WF_MID[0],
-        theme::WF_MID[1],
-        theme::WF_MID[2],
-    ));
-    let col_high = gpui::rgb(rgba_bytes(
-        theme::WF_HIGH[0],
-        theme::WF_HIGH[1],
-        theme::WF_HIGH[2],
-    ));
-    let col_core = gpui::rgb(rgba_bytes(
-        theme::WF_CORE[0],
-        theme::WF_CORE[1],
-        theme::WF_CORE[2],
-    ));
 
     // A hairline keeps silent passages and phase asymmetry readable.
     let center_line = theme::with_alpha(gpui::rgb(0xbfd3dc), 0.10);
@@ -240,7 +160,9 @@ pub fn paint_wave(
     // Exactly one aggregate sample per screen pixel. Higher-resolution cache
     // columns improve peak accuracy but do not multiply per-frame path points.
     let sample_count = span.ceil().max(1.0) as usize;
-    let mut samples = Vec::with_capacity(sample_count);
+    let mut paths: Vec<_> = (0..25).map(|_| PathBuilder::fill()).collect();
+    let mut colors = [None; 25];
+    let mut body = PathBuilder::fill();
     for px_i in 0..sample_count {
         let pxi = px_i as f32 + 0.5;
         let pos = frame + (pxi - anchor) * fpp;
@@ -256,14 +178,10 @@ pub fn paint_wave(
         let c1 = (((pos1 / frames) * n as f32).ceil() as usize).min(n);
         let c1 = c1.clamp(c0 + 1, n);
         let mut peak = 0u8;
-        let (mut peak_pos, mut peak_neg, mut rms) = (0u8, 0u8, 0u8);
+        let mut rms = 0u8;
         let (mut l, mut m, mut h) = (0u64, 0u64, 0u64);
         for c in c0..c1 {
             peak = peak.max(data.peak[c]);
-            if asymmetric {
-                peak_pos = peak_pos.max(data.peak_pos[c]);
-                peak_neg = peak_neg.max(data.peak_neg[c]);
-            }
             if has_rms {
                 rms = rms.max(data.rms[c]);
             }
@@ -276,100 +194,63 @@ pub fn paint_wave(
             m += data.mid[c] as u64 * weight;
             h += data.high[c] as u64 * weight;
         }
-        let s = (l + m + h).max(1) as f32;
-        let sl = (l as f32 / s).clamp(0.0, 1.0);
-        let sm = (m as f32 / s).clamp(0.0, 1.0);
-
-        if !asymmetric {
-            peak_pos = peak;
-            peak_neg = peak;
-        }
-        if !has_rms {
-            rms = ((peak as f32) * 0.58).round() as u8;
-        }
-        let scale_peak = |value: u8| {
-            if value == 0 {
-                0.0
+        let (bucket, color) = spectrum(l as f32, m as f32, h as f32);
+        if peak > 0 {
+            let half = (peak as f32 / 255.0).powf(0.85) * max_half;
+            add_column(&mut paths[bucket], vertical, ox, oy, axis, pxi - 0.5, half);
+            colors[bucket] = Some(color);
+            let rms = if has_rms {
+                rms as f32 / 255.0
             } else {
-                ((value as f32 / 255.0).powf(0.68) * max_half).max(0.65)
+                peak as f32 / 255.0 * 0.55
+            };
+            add_column(
+                &mut body,
+                vertical,
+                ox,
+                oy,
+                axis,
+                pxi - 0.5,
+                (rms * max_half).min(half),
+            );
+        }
+    }
+    for (path, color) in paths.into_iter().zip(colors) {
+        if let Some(color) = color {
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
             }
-        };
-        let pos_half = scale_peak(peak_pos);
-        let neg_half = scale_peak(peak_neg);
-        let neg_low = sl * neg_half;
-        let neg_mid = neg_low + sm * neg_half;
-        let pos_low = sl * pos_half;
-        let pos_mid = pos_low + sm * pos_half;
-        let rms_half = scale_peak(rms);
-        let rms_neg = rms_half.min(neg_half);
-        let rms_pos = rms_half.min(pos_half);
-        let crest = if peak > 0 {
-            1.0 - rms as f32 / peak as f32
-        } else {
-            0.0
-        };
-        samples.push(WaveSample {
-            position: pxi,
-            edges: [
-                -neg_half, -neg_mid, -neg_low, pos_low, pos_mid, pos_half, -rms_neg, rms_pos,
-            ],
-            crest,
-        });
+        }
+    }
+    if let Ok(path) = body.build() {
+        window.paint_path(path, gpui::rgba(0x07101945));
     }
 
-    // Five visual slices become three draw submissions (one per color),
-    // versus up to span * 5 individual quads in the old painter.
-    let mut high = PathBuilder::fill();
-    append_strip(&mut high, &samples, vertical, ox, oy, axis, 0, 1);
-    append_strip(&mut high, &samples, vertical, ox, oy, axis, 4, 5);
-    paint_band(window, high, col_high);
-
-    let mut mid = PathBuilder::fill();
-    append_strip(&mut mid, &samples, vertical, ox, oy, axis, 1, 2);
-    append_strip(&mut mid, &samples, vertical, ox, oy, axis, 3, 4);
-    paint_band(window, mid, col_mid);
-
-    let mut low = PathBuilder::fill();
-    append_strip(&mut low, &samples, vertical, ox, oy, axis, 2, 3);
-    paint_band(window, low, col_low);
-
-    // The RMS body adds density to sustained material without hiding the RGB
-    // split, while a fine contour preserves crisp peaks on Retina displays.
-    let mut core = PathBuilder::fill();
-    append_strip(&mut core, &samples, vertical, ox, oy, axis, 6, 7);
-    if let Ok(path) = core.build() {
-        window.paint_path(path, theme::with_alpha(col_core, 0.18));
-    }
-
-    let mut contour = PathBuilder::stroke(px(0.8));
-    append_contour(&mut contour, &samples, vertical, ox, oy, axis, 0);
-    append_contour(&mut contour, &samples, vertical, ox, oy, axis, 5);
-    if let Ok(path) = contour.build() {
-        window.paint_path(path, theme::with_alpha(col_core, 0.38));
-    }
-
-    let mut transients = PathBuilder::stroke(px(1.0));
-    append_transient_caps(&mut transients, &samples, vertical, ox, oy, axis);
-    if let Ok(path) = transients.build() {
-        window.paint_path(path, theme::with_alpha(col_core, 0.72));
-    }
-
-    // Beat ticks + bar lines (grid assumes beat 1 at frame 0).
-    if beat_frames > 0.0 {
-        let start_beat = ((frame - anchor * fpp) / beat_frames).floor().max(0.0) as i64;
-        let end_beat = ((frame + anchor * fpp) / beat_frames).ceil() as i64 + 1;
-        for k in start_beat..end_beat {
-            let p = anchor + (k as f32 * beat_frames - frame) / fpp;
-            if p < 0.0 || p >= span {
-                continue;
-            }
-            let bar = k % 4 == 0;
-            let (alpha, w) = if bar { (0.28, 1.0) } else { (0.09, 0.6) };
-            let color = theme::with_alpha(gpui::rgb(0xffffff), alpha);
-            if vertical {
-                quad_fill(window, ox, p + oy, thick, w, color);
-            } else {
-                quad_fill(window, p + ox, oy, w, thick, color);
+    // Draw measured source-time beats. No invented downbeat at frame zero.
+    if let Some(tempo) = tempo {
+        let start_sec = (frame - anchor * fpp) / sr as f32;
+        let end_sec = (frame + anchor * fpp) / sr as f32;
+        for (positions, downbeat) in [(&tempo.beats, false), (&tempo.downbeats, true)] {
+            let start = positions.partition_point(|sec| *sec < start_sec);
+            for sec in positions[start..].iter().take_while(|sec| **sec <= end_sec) {
+                let p = anchor + (*sec * sr as f32 - frame) / fpp;
+                if !(0.0..span).contains(&p) {
+                    continue;
+                }
+                let color =
+                    theme::with_alpha(gpui::rgb(0xffffff), if downbeat { 0.65 } else { 0.19 });
+                let tick = if downbeat { thick } else { 5.0 };
+                if vertical {
+                    quad_fill(window, ox, oy + p, tick, 1.0, color);
+                    if !downbeat {
+                        quad_fill(window, ox + thick - tick, oy + p, tick, 1.0, color);
+                    }
+                } else {
+                    quad_fill(window, ox + p, oy, 1.0, tick, color);
+                    if !downbeat {
+                        quad_fill(window, ox + p, oy + thick - tick, 1.0, tick, color);
+                    }
+                }
             }
         }
     }
@@ -406,7 +287,7 @@ pub fn paint_wave(
     }
 
     // Dim the played side (behind the playhead).
-    let dim = theme::with_alpha(gpui::rgb(0x040508), 0.46);
+    let dim = theme::with_alpha(gpui::rgb(0x040508), 0.18);
     if vertical {
         quad_fill(window, ox, oy, thick, anchor, dim);
     } else {
@@ -511,6 +392,7 @@ pub fn wave_lane(
     deck: DeckId,
     d: DeckSnapshot,
     wave: Option<Arc<Waveform>>,
+    tempo: Option<Arc<TempoMap>>,
     device_sr: u32,
     deck_color: Rgba,
     cx: &mut gpui::Context<UiState>,
@@ -543,6 +425,7 @@ pub fn wave_lane(
                         vertical,
                         &d,
                         wave.as_deref(),
+                        tempo.as_deref(),
                         device_sr,
                         deck_color,
                     );
@@ -550,4 +433,31 @@ pub fn wave_lane(
             )
             .size_full(),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn changing_rate_does_not_move_source_beat_grid() {
+        let mut d = DeckSnapshot {
+            sounding_bpm: 120.,
+            src_sample_rate: 48_000,
+            ..Default::default()
+        };
+        let native = frames_per_px(&d, 44_100, 1000.);
+        d.rate = 1.08;
+        d.sounding_bpm = 129.6;
+        assert!((frames_per_px(&d, 44_100, 1000.) - native).abs() < 0.001);
+        assert!((source_beat_frames(&d, 48_000) - 24_000.).abs() < 0.01);
+    }
+    #[test]
+    fn spectral_extremes_have_distinct_colors() {
+        let (low, _) = spectrum(255., 0., 0.);
+        let (mid, _) = spectrum(0., 255., 0.);
+        let (high, _) = spectrum(0., 0., 255.);
+        assert_ne!(low, mid);
+        assert_ne!(mid, high);
+        assert_ne!(low, high);
+    }
 }

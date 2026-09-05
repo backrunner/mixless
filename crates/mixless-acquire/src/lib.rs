@@ -1,4 +1,5 @@
 pub mod imports;
+pub mod local_paths;
 mod matching;
 pub use matching::{candidate_score, local_match, normalize};
 use mixless_protocol::BatchId;
