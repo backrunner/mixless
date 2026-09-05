@@ -5,7 +5,7 @@ usage() {
     cat <<'EOF'
 用法：./dev.sh [--check | --build | --help]
 
-  默认      增量编译并启动 Mixless 开发版本；Ctrl+C 停止
+  默认      增量编译并重启本仓库的开发实例；Ctrl+C 停止
   --check   检查 Rust / Xcode / Metal 环境，不编译、不启动
   --build   只编译开发版本
   --help    显示帮助
@@ -33,6 +33,7 @@ fail() {
 [ "$(uname -s)" = Darwin ] || fail "目前仅支持 macOS。"
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd -- "$project_dir"
+
 
 # Finder/non-login shells may omit Rust and Homebrew from PATH. Preserve any
 # toolchain explicitly selected by the caller ahead of these fallback paths.
@@ -78,7 +79,30 @@ case "$mode" in
         exec cargo build --locked -p mixless-desktop --bin mixless
         ;;
     run)
-        printf '正在启动开发版本，首次编译可能较久；Ctrl+C 停止。\n'
-        exec cargo run --locked -p mixless-desktop --bin mixless
+        printf '正在编译开发版本；编译成功后重启本仓库的实例。\n'
+        cargo build --locked -p mixless-desktop --bin mixless
+        build_root="${CARGO_TARGET_DIR:-$project_dir/target}"
+        desktop_bin="$(cd -- "$build_root/debug" && pwd)/mixless"
+        # Match the executable mapping, not a shell command/substring. This
+        # also recognizes ./target/debug/mixless and leaves other checkouts alone.
+        for pid in $(/usr/bin/pgrep -x mixless || true); do
+            same_binary=false
+            while IFS= read -r entry; do
+                if [ "$entry" = "n$desktop_bin" ]; then same_binary=true; fi
+            done < <(/usr/sbin/lsof -a -p "$pid" -d txt -Fn 2>/dev/null || true)
+            if [ "$same_binary" = true ]; then
+                printf '停止本仓库的旧实例：PID %s\n' "$pid"
+                kill -TERM "$pid" 2>/dev/null || true
+                for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                    kill -0 "$pid" 2>/dev/null || break
+                    sleep 0.1
+                done
+                if kill -0 "$pid" 2>/dev/null; then
+                    fail "旧实例尚未退出，请关闭其窗口后重试。"
+                fi
+            fi
+        done
+        printf '启动：%s\nCtrl+C 停止。\n' "$desktop_bin"
+        exec "$desktop_bin"
         ;;
 esac

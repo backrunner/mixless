@@ -46,3 +46,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.dev.package.mixless-engine]
+opt-level = 2
+[profile.dev.package.gpui]
+opt-level = 2
+[profile.dev.package.lyon_tessellation]
+opt-level = 2

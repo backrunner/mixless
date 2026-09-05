@@ -243,7 +243,13 @@ impl UiState {
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::TEXT)
-                            .child("MIXLESS"),
+                            .child("MIXLESS")
+                            .child(
+                                gpui::div()
+                                    .text_size(px(8.))
+                                    .text_color(theme::MUTED)
+                                    .child(format!("{} {}", env!("MIXLESS_BUILD_PROFILE"), env!("MIXLESS_REVISION"))),
+                            ),
                     ),
             )
             .child(divider())

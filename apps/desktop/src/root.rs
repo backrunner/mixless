@@ -12,6 +12,10 @@ use crate::theme;
 
 impl Render for UiState {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.poll();
+        if self.needs_continuous_repaint() {
+            window.request_animation_frame();
+        }
         // Register global drag capture during this canvas's paint phase.
         // Unlike hover-bound element listeners, these keep receiving events
         // after the pointer leaves a small knob/jog hitbox (notably the master

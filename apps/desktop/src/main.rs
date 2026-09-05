@@ -16,15 +16,20 @@ use gpui::{
     WindowOptions, point, px, size,
 };
 
-/// 60 Hz UI cadence: one update per 16.67 ms frame budget. GPUI's native
-/// animation clock follows 120 Hz ProMotion displays, which doubles the work
-/// without improving the 60 fps contract this UI targets.
-const UI_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+/// Idle worker/MIDI wakeup; active rendering follows the display clock.
+const UI_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter("mixless=info,mixless_engine=info")
         .init();
+    let build_id = format!(
+        "{} · {} · {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("MIXLESS_REVISION"),
+        env!("MIXLESS_BUILD_TIME")
+    );
+    tracing::info!(build = %build_id, profile = env!("MIXLESS_BUILD_PROFILE"), "starting Mixless");
 
     Application::new().run(|cx: &mut App| {
         let core = state::app_core();
@@ -33,7 +38,14 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
-                title: Some("Mixless".into()),
+                title: Some(
+                    format!(
+                        "Mixless · {} · {}",
+                        env!("MIXLESS_BUILD_PROFILE"),
+                        env!("MIXLESS_REVISION")
+                    )
+                    .into(),
+                ),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(24.))),
             }),
@@ -64,13 +76,13 @@ fn main() {
                 cx.notify();
                 cx.spawn(async move |this, cx| {
                     loop {
-                        // Poll engine/MIDI state at the target cadence, but
-                        // repaint idle windows only when visible state changed.
+                        // Active windows poll immediately before painting.
                         cx.background_executor().timer(UI_FRAME_INTERVAL).await;
                         if this
                             .update(cx, |state, cx| {
+                                let animating = state.needs_continuous_repaint();
                                 let changed = state.poll();
-                                if changed || state.needs_continuous_repaint() {
+                                if !animating && (changed || state.needs_continuous_repaint()) {
                                     cx.notify();
                                 }
                             })
