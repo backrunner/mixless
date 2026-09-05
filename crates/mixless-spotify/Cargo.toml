@@ -1,0 +1,14 @@
+[package]
+name = "mixless-spotify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Public playlist metadata via Spotify embed. No audio bytes."
+
+[dependencies]
+mixless-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ureq = { version = "2", features = ["tls"] }
+url = "2"

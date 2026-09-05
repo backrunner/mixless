@@ -1,0 +1,27 @@
+[package]
+name = "mixless-desktop"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Mixless GPUI desktop app. No web, no DSP outside mixless-engine."
+
+[[bin]]
+name = "mixless"
+path = "src/main.rs"
+
+[dependencies]
+mixless-engine = { workspace = true }
+mixless-library = { workspace = true }
+mixless-protocol = { workspace = true }
+mixless-analyze = { workspace = true }
+mixless-mixplan = { workspace = true }
+mixless-spotify = { workspace = true }
+mixless-acquire = { path = "../../crates/mixless-acquire" }
+mixless-acquire-yt = { path = "../../crates/mixless-acquire-yt" }
+mixless-midi = { workspace = true }
+gpui = { workspace = true }
+rfd = { workspace = true }
+dirs = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+lofty = { workspace = true }

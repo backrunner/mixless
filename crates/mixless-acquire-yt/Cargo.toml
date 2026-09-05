@@ -1,0 +1,16 @@
+[package]
+name = "mixless-acquire-yt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "yt-dlp sidecar for YouTube Music matching"
+
+[dependencies]
+mixless-acquire = { path = "../mixless-acquire" }
+mixless-protocol = { workspace = true }
+thiserror = { workspace = true }
+which = "7"
+serde_json = { workspace = true }
+ureq = { version = "2", features = ["json", "tls"] }
+tempfile = "3"
+libc = "0.2"

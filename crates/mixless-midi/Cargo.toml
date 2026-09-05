@@ -1,0 +1,14 @@
+[package]
+name = "mixless-midi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MIDI learn / mapping for Mixless"
+
+[dependencies]
+mixless-protocol = { workspace = true }
+midir = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

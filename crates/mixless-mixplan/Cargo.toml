@@ -1,0 +1,9 @@
+[package]
+name = "mixless-mixplan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AI mix planner. Depends only on mixless-protocol."
+
+[dependencies]
+mixless-protocol = { workspace = true }

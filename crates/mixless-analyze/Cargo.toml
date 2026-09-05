@@ -1,0 +1,16 @@
+[package]
+name = "mixless-analyze"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Offline BPM / key / waveform analysis"
+
+[dependencies]
+mixless-protocol = { workspace = true }
+mixless-engine = { workspace = true }
+thiserror = { workspace = true }
+rustfft = "6"
+
+[dev-dependencies]
+mixless-mixplan = { workspace = true }
+hound = "3"

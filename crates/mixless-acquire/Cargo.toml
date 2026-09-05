@@ -1,0 +1,20 @@
+[package]
+name = "mixless-acquire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Resolver scoring and acquire job types"
+
+[dependencies]
+mixless-protocol = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+unicode-normalization = "0.1"
+mixless-library = { workspace = true }
+mixless-analyze = { workspace = true }
+mixless-spotify = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+hound = "3"
+mixless-engine = { workspace = true }
