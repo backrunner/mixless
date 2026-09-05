@@ -21,3 +21,8 @@ apps/desktop/src-tauri/gen/
 acquired/
 .env
 .env.*
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

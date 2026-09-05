@@ -43,11 +43,14 @@ compiler is not part of the standalone Command Line Tools). `dev.sh` locates
 the project even when called from another directory and automatically selects
 an Xcode installation with Metal support, including Xcode-beta. An explicit
 `DEVELOPER_DIR` takes precedence. Press Ctrl+C to stop; rerun after code changes
-to rebuild. The script uses the normal local app library and does not provide
+to rebuild and replace the previous instance from this checkout. The window title
+shows the Git revision; startup logs also include the UTC build time. The first
+build optimizes the audio engine, GPUI and waveform tessellation for development
+and may take longer. The script uses the normal local app library and does not provide
 automatic file watching.
 
-The UI mirrors `EngineSnapshot` from the engine's atomics on a 60 Hz frame
-budget while audio is active, and repaints on demand while idle — the playhead
+The UI mirrors `EngineSnapshot` from the engine's atomics at display VSync
+while audio is active, and repaints on demand while idle — the playhead
 is never integrated on the UI side. Keymap: Space play/pause, F xfader center,
 S sync, QWER/UIOP hot cues 1–4.
 
@@ -78,3 +81,8 @@ Implementation details, verification and current limitations are in
 
 Audio DSP behavior, regression checks and remaining limitations are documented
 in [AUDIO_DSP.md](AUDIO_DSP.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and Conventional Commits.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled code licenses.

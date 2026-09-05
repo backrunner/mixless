@@ -1,6 +1,6 @@
 # Mixless 文档索引
 
-Mixless 是基于 Tauri 2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只做 macOS**）：双唱盘、本地资料库与离线预分析、Spotify 歌单浏览、把歌单曲目获取成本地文件后再混。实时音频与分析在 Rust，WebView 只渲染 UI。
+Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只做 macOS**）：双唱盘、本地资料库与离线预分析、Spotify 歌单浏览、把歌单曲目获取成本地文件后再混。实时音频与分析在 Rust，原生 GPUI 只渲染 UI。
 
 **一句话**：像 djay Pro 的双碟工作台；歌单走 Spotify，音频落到本地后再分析、预听、自动混。
 
@@ -33,7 +33,7 @@ Mixless 是基于 Tauri 2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只做
 - Time-stretch 默认 Signalsmith（音乐档 20–40 ms）；scratch 走 0–2 ms 重采样。
 - v1 只有 2 个 deck。Master = 系统默认输出。**PFL 进 v1**（第二 CoreAudio）。无第二设备只禁 PFL，**Hot Cue 跳转永远可用**。
 - Mixer / FX 按 [10-mixer-fx.md](./10-mixer-fx.md) 齐备；全开时 callback p99 < 50% block。
-- 播放真相在 Rust；Svelte store 只镜像 `EngineSnapshot`。前端是 Svelte 5 + SCSS。
+- 播放真相在 Rust；GPUI `UiState` 只镜像 `EngineSnapshot`。早期设计中 Tauri/Svelte 的描述已被原生 GPUI 实现取代。
 - v1 jog SLA：**p99 < 30 ms** @ 128 frames / scratch 路径。
 - 只有 `kind=in|out` 硬约束 Automix；hot cue 是软锚。
 - `mixplan` **不**依赖 `analyze`；`TrackAnalysis` 在 `protocol`。
@@ -47,7 +47,7 @@ Mixless 是基于 Tauri 2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只做
 ## 仓库目标布局
 
 ```
-apps/desktop/                 # Tauri 2 + Svelte 5 + SCSS（macOS）
+apps/desktop/                 # GPUI / Rust（macOS）
 crates/mixless-engine
 crates/mixless-analyze
 crates/mixless-mixplan
@@ -63,6 +63,6 @@ private/                      # 闭源 CDN 插件，不随开源发布
 
 ## 状态
 
-- 日期：2026-08-15
-- 仓库：greenfield
+- 日期：2026-09-05
+- 仓库：已实现原生桌面、导入与 Automix；当前行为见根 README / AUTOMIX / AUDIO_DSP
 - 设计状态：Draft 0.3.1

@@ -1,0 +1,15 @@
+name: Rust
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup update stable && rustup default stable
+      - name: Test workspace crates
+        run: cargo test --locked --workspace --exclude mixless-desktop
+      - name: Check desktop
+        run: cargo check --locked -p mixless-desktop

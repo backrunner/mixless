@@ -1,0 +1,6 @@
+#!/bin/sh
+# Conventional Commits: type(scope)!: description
+LC_ALL=C head -n 1 "$1" | LC_ALL=C grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_./-]+\))?!?: .+' || {
+    echo 'Use Conventional Commits, e.g. fix(desktop): synchronize animations with display frames' >&2
+    exit 1
+}
