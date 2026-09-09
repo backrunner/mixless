@@ -1,6 +1,6 @@
 # Third-party notices
 
-Mixless source is licensed under Apache-2.0; see LICENSE.
+Mixless source is licensed under MPL-2.0; see LICENSE.
 
 The vendored Signalsmith DSP and stretch sources in
 `crates/mixless-engine/native/vendor/` retain their own MIT licenses and copyright

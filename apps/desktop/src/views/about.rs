@@ -50,7 +50,7 @@ impl Render for About {
                 div()
                     .text_size(px(11.))
                     .text_color(theme::MUTED)
-                    .child("Apache-2.0 · BackRunner"),
+                    .child("MPL-2.0 · BackRunner"),
             )
     }
 }

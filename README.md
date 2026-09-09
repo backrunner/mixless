@@ -4,7 +4,7 @@ Local AI Mixing / AI DJ desktop app. Dual decks, offline analysis, playlist auto
 
 - **Audio**: Rust realtime graph (`mixless-engine` + CoreAudio)
 - **UI**: [GPUI](https://github.com/zed-industries/gpui) (pure Rust, GPU-rendered, no web stack)
-- **License**: Apache-2.0 (optional closed-source acquire plugin is not in this tree)
+- **License**: MPL-2.0 (optional closed-source acquire plugin is not in this tree)
 
 v1 targets **macOS** only. Design lives in [`.agents/`](.agents/README.md).
 

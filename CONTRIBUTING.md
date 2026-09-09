@@ -66,5 +66,5 @@ cargo test --locked --release -p mixless-engine callback_budget -- --ignored --n
 ```
 
 Do not commit credentials, personal libraries, acquired audio, build artifacts,
-or generated databases. Contributions are under Apache-2.0; preserve third-party
+or generated databases. Contributions are under MPL-2.0; preserve third-party
 license notices. Spotify supplies playlist metadata, not decoded mixing audio.

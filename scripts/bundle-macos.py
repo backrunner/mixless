@@ -36,7 +36,7 @@ info = {
     'LSMinimumSystemVersion': '12.0',
     'NSHighResolutionCapable': True,
     'NSSupportsAutomaticGraphicsSwitching': True,
-    'NSHumanReadableCopyright': 'Mixless contributors. Apache-2.0.',
+    'NSHumanReadableCopyright': 'Mixless contributors. MPL-2.0.',
 }
 with (contents / 'Info.plist').open('wb') as file:
     plistlib.dump(info, file)
