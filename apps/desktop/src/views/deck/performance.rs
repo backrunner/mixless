@@ -1,0 +1,253 @@
+//! Playback, hot-cue pads and loop controls in the deck performance row.
+
+use gpui::{IntoElement, SharedString, prelude::*, px};
+use mixless_protocol::{DeckId, DeckSnapshot};
+
+use crate::{state::UiState, theme};
+
+use crate::controls::caption;
+use gpui::{MouseButton, MouseDownEvent};
+
+const LOOP_SIZES: [f32; 11] = [0.0625, 0.125, 0.25, 0.5, 1., 2., 4., 8., 16., 32., 64.];
+const PERFORM_HEIGHT: f32 = 64.0;
+
+impl UiState {
+    pub(super) fn render_deck_performance(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        deck: DeckId,
+        d: &DeckSnapshot,
+        inner_gap: f32,
+    ) -> gpui::AnyElement {
+        let dc = theme::deck_color(deck);
+        let flip = deck == DeckId::B;
+        let play_btn = {
+            let el = gpui::div()
+                .id(SharedString::from(format!("play-{:?}", deck)))
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .h(px(34.))
+                .rounded(px(4.))
+                .border_1()
+                .border_color(if d.playing {
+                    theme::with_alpha(theme::LED_GREEN, 0.55)
+                } else {
+                    theme::LINE.into()
+                })
+                .bg(if d.playing {
+                    theme::with_alpha(theme::LED_GREEN, 0.16)
+                } else {
+                    theme::PANEL_INSET.into()
+                })
+                .text_size(px(14.))
+                .text_color(if d.playing { theme::LED_GREEN } else { dc })
+                .hover(|s| s.bg(theme::PANEL_RAISED))
+                .child(if d.playing { "❚❚" } else { "▶" });
+            let state = cx.entity();
+            el.on_click(move |_ev, _window, cx| {
+                state.update(cx, |s, cx| {
+                    s.play_pause(deck);
+                    cx.notify();
+                });
+            })
+        };
+        let cue_btn = {
+            let el = gpui::div()
+                .id(SharedString::from(format!("cue-{:?}", deck)))
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .h(px(34.))
+                .rounded(px(4.))
+                .border_1()
+                .border_color(theme::with_alpha(theme::DANGER, 0.45))
+                .bg(theme::PANEL_INSET)
+                .text_size(px(10.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(theme::DANGER)
+                .hover(|s| s.bg(theme::PANEL_RAISED))
+                .child("CUE");
+            let state = cx.entity();
+            el.on_click(move |ev, _window, cx| {
+                state.update(cx, |s, cx| {
+                    s.trigger_cue(deck, 0, ev.modifiers().shift);
+                    cx.notify();
+                });
+            })
+        };
+
+        // Give the transport and pad grid the exact same row box. The
+        // transport row is anchored to its bottom, so PLAY/CUE share a
+        // baseline with pads 5–8 at every deck width.
+        let transport = gpui::div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .justify_end()
+            .w(px(132.))
+            .h(px(PERFORM_HEIGHT))
+            .child(
+                gpui::div()
+                    .flex()
+                    .gap_1()
+                    .when(flip, |el| el.flex_row_reverse())
+                    .child(play_btn)
+                    .child(cue_btn),
+            );
+
+        let pad_state = cx.entity();
+        let build_pad_row = |row_i: usize| -> gpui::Div {
+            let mut row_el = gpui::div().flex().flex_1().gap_1().min_h_0();
+            for col in 0..4 {
+                let i = row_i * 4 + col;
+                let set = d.cues[i].is_some();
+                let color = theme::cue_color(i);
+                let pad = {
+                    let el = gpui::div()
+                        .id(SharedString::from(format!("pad-{:?}-{i}", deck)))
+                        .flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .h(px(30.))
+                        .rounded(px(4.))
+                        .border_1()
+                        .text_size(px(11.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child((i + 1).to_string())
+                        .hover(|s| s.bg(theme::with_alpha(color, 0.15)));
+                    if set {
+                        el.bg(color)
+                            .border_color(theme::with_alpha(color, 0.7))
+                            .text_color(gpui::rgb(0x101216))
+                    } else {
+                        el.bg(theme::PANEL_INSET)
+                            .border_color(theme::LINE)
+                            .text_color(theme::with_alpha(color, 0.55))
+                    }
+                };
+                let state = pad_state.clone();
+                let pad = pad.on_mouse_down(
+                    MouseButton::Left,
+                    move |ev: &MouseDownEvent, _window, cx| {
+                        state.update(cx, |s, cx| {
+                            s.trigger_cue(deck, i, ev.modifiers.shift);
+                            cx.notify();
+                        });
+                    },
+                );
+                row_el = row_el.child(pad);
+            }
+            row_el
+        };
+        let pads = gpui::div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .flex_col()
+            .h(px(PERFORM_HEIGHT))
+            .gap_1()
+            .child(build_pad_row(0))
+            .child(build_pad_row(1));
+
+        let loop_step = |dir: i32| {
+            let el = gpui::div()
+                .id(SharedString::from(format!("loop-{dir}-{:?}", deck)))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(46.))
+                .h(px(18.))
+                .rounded(px(3.))
+                .border_1()
+                .border_color(theme::LINE)
+                .bg(theme::PANEL_INSET)
+                .text_size(px(8.))
+                .text_color(theme::MUTED)
+                .hover(|s| s.bg(theme::PANEL_RAISED))
+                .child(if dir > 0 { "▲" } else { "▼" });
+            let state = cx.entity();
+            el.on_click(move |_ev, _window, cx| {
+                state.update(cx, |s, cx| {
+                    let (bars, on) = {
+                        let d = s.deck(deck);
+                        let i = LOOP_SIZES
+                            .iter()
+                            .position(|&b| b == d.loop_beats)
+                            .unwrap_or(2);
+                        let next = LOOP_SIZES
+                            [((i as i32 + dir).clamp(0, LOOP_SIZES.len() as i32 - 1)) as usize];
+                        (next, d.loop_on)
+                    };
+                    s.set_loop(deck, bars, on);
+                    cx.notify();
+                });
+            })
+        };
+        let loop_toggle = {
+            let el = gpui::div()
+                .id(SharedString::from(format!("loop-size-{:?}", deck)))
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .w(px(46.))
+                .rounded(px(3.))
+                .border_1()
+                .border_color(if d.loop_on {
+                    theme::with_alpha(theme::ACCENT, 0.55)
+                } else {
+                    theme::LINE.into()
+                })
+                .bg(if d.loop_on {
+                    theme::with_alpha(theme::ACCENT, 0.16)
+                } else {
+                    theme::PANEL_INSET.into()
+                })
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(if d.loop_on {
+                    theme::ACCENT
+                } else {
+                    theme::TEXT
+                })
+                .hover(|s| s.bg(theme::PANEL_RAISED))
+                .child(if d.loop_beats < 1. { format!("1/{:.0}", 1. / d.loop_beats) } else { format!("{:.0}", d.loop_beats) });
+            let state = cx.entity();
+            el.on_click(move |_ev, _window, cx| {
+                state.update(cx, |s, cx| {
+                    let bars = s.deck(deck).loop_beats;
+                    let on = !s.deck(deck).loop_on;
+                    s.set_loop(deck, bars, on);
+                    cx.notify();
+                });
+            })
+        };
+
+        let loop_col = gpui::div()
+            .flex()
+            .flex_none()
+            .flex_col()
+            .items_center()
+            .gap(px(2.))
+            .w(px(46.))
+            .child(loop_step(1))
+            .child(loop_toggle.flex_1())
+            .child(loop_step(-1))
+            .child(caption("BEATS"));
+
+        gpui::div()
+            .flex()
+            .flex_none()
+            .gap(px(inner_gap))
+            .h(px(PERFORM_HEIGHT))
+            .when(flip, |el| el.flex_row_reverse())
+            .child(transport)
+            .child(pads)
+            .child(loop_col)
+            .into_any_element()
+    }
+}

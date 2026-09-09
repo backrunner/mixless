@@ -5,14 +5,20 @@ use gpui::{
     DispatchPhase, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, Render, Styled, Window,
     canvas, px,
 };
-use mixless_protocol::{Command, DeckId};
+use mixless_protocol::DeckId;
 
 use crate::state::{UiState, WaveLayout};
 use crate::theme;
 
 impl Render for UiState {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        if let Some((x, y)) = self.pending_drag.take() { self.drag_move(x, y); }
         self.poll();
+        if window.focused(cx).is_none()
+            || (!self.show_import_modal && self.url_focus.is_focused(window))
+        {
+            self.keyboard_focus.focus(window);
+        }
         if self.needs_continuous_repaint() {
             window.request_animation_frame();
         }
@@ -33,7 +39,7 @@ impl Render for UiState {
                     drag_state.update(cx, |state, _cx| {
                         if state.drag.is_some() {
                             if ev.dragging() {
-                                state.drag_move(ev.position.x.into(), ev.position.y.into());
+                                state.pending_drag = Some((ev.position.x.into(), ev.position.y.into()));
                             } else {
                                 state.end_drag();
                             }
@@ -48,6 +54,7 @@ impl Render for UiState {
                     release_state.update(cx, |state, cx| {
                         let was_dragging = state.drag.is_some();
                         if was_dragging {
+                            state.drag_move(ev.position.x.into(), ev.position.y.into());
                             state.end_drag();
                         }
                         let ended_momentary = state.end_momentary_fx();
@@ -94,18 +101,36 @@ impl Render for UiState {
                 .flex_col()
                 .gap_1()
                 .flex_none()
-                .p_1()
+                // Keep the waveform flush with the content edges.  The
+                // metadata column provides its own spacing; horizontal
+                // padding here made every strip start with a visible blank.
+                .py_1()
                 .child(a)
                 .child(b)
         });
 
-        let library = self.render_library(cx, library_height);
+        let library_key = (
+            std::sync::Arc::as_ptr(&self.tracks) as usize, std::sync::Arc::as_ptr(&self.playlists) as usize,
+            self.playlist_sel, self.track_sel, self.focus, self.snapshot.decks.each_ref().map(|d| d.track_id),
+            self.analysis_revision, self.busy, self.picker_open, self.acquire.clone(),
+        );
+        if self.library_key.as_ref() != Some(&library_key) {
+            self.library_key = Some(library_key);
+            self.library_view.update(cx, |_, cx| cx.notify());
+        }
+        let library = gpui::AnyView::from(self.library_view.clone())
+            .cached(gpui::div().flex_1().w_full().min_h(px(library_height)).style().clone());
         let import_modal = self.render_import_modal(window, cx);
         let fxbar = self.show_fx.then(|| self.render_fxbar(cx, mixer_width));
+        let shortcuts = self.show_shortcuts.then(|| self.render_shortcuts(cx));
+        let fx_editor = self
+            .fx_editor
+            .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
         let error = self.error.clone();
 
         gpui::div()
             .id("root")
+            .track_focus(&self.keyboard_focus)
             .relative()
             .size_full()
             .flex()
@@ -115,39 +140,9 @@ impl Render for UiState {
             .bg(theme::BG)
             .font_family(theme::FONT_UI)
             .text_color(theme::TEXT)
-            .on_key_down(
-                cx.listener(|s: &mut UiState, ev: &gpui::KeyDownEvent, window, cx| {
-                    if s.show_import_modal && s.url_focus.is_focused(window) {
-                        return;
-                    }
-                    let ks = &ev.keystroke;
-                    if s.show_import_modal {
-                        if ks.key == "escape" {
-                            s.show_import_modal = false;
-                            cx.notify();
-                        }
-                        return;
-                    }
-                    if ks.modifiers.control || ks.modifiers.platform || ks.modifiers.alt {
-                        return;
-                    }
-                    let key = ks.key.as_str();
-                    let cue_a = ["q", "w", "e", "r"].iter().position(|k| *k == key);
-                    let cue_b = ["u", "i", "o", "p"].iter().position(|k| *k == key);
-                    if key == "space" {
-                        s.play_pause(s.focus);
-                    } else if key == "f" {
-                        s.dispatch(Command::SetCrossfader { value: 0.0 });
-                    } else if key == "s" {
-                        s.sync(s.focus);
-                    } else if let Some(i) = cue_a {
-                        s.jump_cue(DeckId::A, i);
-                    } else if let Some(i) = cue_b {
-                        s.jump_cue(DeckId::B, i);
-                    }
-                    cx.notify();
-                }),
-            )
+            .on_key_down(cx.listener(|s, ev, window, cx| {
+                s.handle_shortcut(ev, window, cx);
+            }))
             .child(drag_capture)
             .child(topbar)
             .when_some(waves, |el, w| el.child(w))
@@ -205,5 +200,7 @@ impl Render for UiState {
                 )
             })
             .when_some(import_modal, |el, modal| el.child(modal))
+            .when_some(shortcuts, |el, modal| el.child(modal))
+            .when_some(fx_editor, |el, modal| el.child(modal))
     }
 }

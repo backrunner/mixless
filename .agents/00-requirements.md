@@ -23,7 +23,7 @@
 - 我能一键 **SYNC**：本碟 sounding BPM 贴对面，并量化到对面下一 downbeat；可选 keylock。
 - 我能独立调 pitch（半音）和 BPM（time-stretch），互不影响。
 - 我能用完整 mixer：trim、3-band isolator + **kill**、channel filter、fader、crossfader（含曲线与 hamster）、master + limiter、quantize、beat jump。
-- 效果齐备：每碟 3 insert（Gate / Flanger / Phaser / Crush / Dist / Chorus）+ 共享 Echo（含 echo-out）/ Reverb + 传输类 Roll / Reverse / Brake。规格见 [10-mixer-fx.md](./10-mixer-fx.md)。
+- 效果齐备：每碟 4 insert（Gate / Flanger / Phaser / Crush / Dist / Chorus）+ 共享 Echo（含 echo-out）/ Reverb + 传输类 Roll / Reverse / Brake。规格见 [10-mixer-fx.md](./10-mixer-fx.md)。
 - 我能设 1/2/4/8/16 bar loop（源播放头域），开关与倍减吸附网格。
 - 每轨最多 8 个 **Hot Cue**；单击跳转，seek 无咔哒、缺口 < 8 ms。**没有耳机设备时热键照常能跳**，只是不能 PFL 预听。
 - 右键可把某垫标成 **mix-in / mix-out**。一键自动 cue 在结构分析就绪后可用，不覆盖我手打的点。
@@ -87,7 +87,7 @@
 
 | 功能 | v1 | 以后 |
 |------|----|------|
-| 2 deck + 完整 mixer + 3 insert + send FX + 传输 FX + loop + 8 hot cue + SYNC | 是 | |
+| 2 deck + 完整 mixer + 4 insert + send FX + 传输 FX + loop + 8 hot cue + SYNC | 是 | |
 | 本地库 + 预分析（显式导入） | 是 | watch-folder、手动 beat grid（P1） |
 | Automix 8 策略 + fallback 表 | 是 | smart shuffle（P1） |
 | 右键 mix-in / mix-out | 是 | |

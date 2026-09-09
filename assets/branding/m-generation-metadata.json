@@ -1,0 +1,19 @@
+{
+  "model": "openai/gpt-image-2.5-flare",
+  "quality": "medium",
+  "aspect_ratio": "1:1",
+  "prediction_id": "zm6jxrdssnrmt0d0gvv9bcjh98",
+  "created_at": "2026-09-09T16:18:31.501Z",
+  "tool": "replicate-cli (replicate 0.1.1)",
+  "mode": "image edit",
+  "reference_image": "archive/wave-m/app-icon-1024.png",
+  "reference_role": "edit target; preserve the original M identity",
+  "reference_sha256": "9990ef63dfa0a787de19b09b08e99f7491ae8d45c2f9cde27351da450075b0ba",
+  "input_file": "m-generation.json",
+  "source_file": "m-source.png",
+  "size": [
+    1024,
+    1024
+  ],
+  "silhouette_overlap_at_luminance_70": 0.9776
+}

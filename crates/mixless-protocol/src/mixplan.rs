@@ -5,12 +5,14 @@ use crate::{DeckId, TrackId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StrategyId {
+    DryCut,
     PhraseBlend,
     BassSwap,
     DropCut,
     EchoOut,
     FilterSweep,
     LoopConstruct,
+    ScratchCut,
     BreakToIntro,
     EnergyHold,
     FallbackSwapFilter,
@@ -20,7 +22,7 @@ impl StrategyId {
     pub fn default_bars(self) -> u16 {
         match self {
             Self::PhraseBlend | Self::BreakToIntro => 32,
-            Self::DropCut => 4,
+            Self::DryCut | Self::DropCut | Self::ScratchCut => 4,
             Self::EchoOut => 8,
             _ => 16,
         }
@@ -62,6 +64,8 @@ pub enum TransitionMode {
     BeatBlend,
     /// Separate rhythmic/tonal foregrounds; tracks keep their own tempo/key.
     PhraseBridge,
+    /// Quantized incoming loop roll; selected only with reliable grids.
+    LoopRoll,
 }
 
 /// Coordinates are outgoing master bars; filter lanes interpolate in log Hz.
@@ -129,6 +133,18 @@ pub struct LoopOp {
     pub length_src_frames: u64,
 }
 
+/// A short, quantized vinyl-style cut. The deck is touched at `on_bar`,
+/// jogged back by `peak_delta_frames` at `peak_bar`, then released at
+/// `off_bar`; slip mode returns the playhead to the original timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScratchOp {
+    pub start_src_frame: u64,
+    pub peak_delta_frames: i64,
+    pub on_bar: f32,
+    pub peak_bar: f32,
+    pub off_bar: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AutomationLanes {
     pub xfader: Polyline,
@@ -146,6 +162,10 @@ pub struct AutomationLanes {
     pub pitch_b: Polyline,
     pub loop_a: Option<LoopOp>,
     pub loop_b: Option<LoopOp>,
+    #[serde(default)]
+    pub scratch_a: Option<ScratchOp>,
+    #[serde(default)]
+    pub scratch_b: Option<ScratchOp>,
 }
 
 impl PerformanceOffset {

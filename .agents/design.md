@@ -52,7 +52,7 @@ Mixless 是一款 Tauri 2 桌面 DJ 应用：两个拟物唱盘、完整本地�
 - 本地文件 metadata 解析与展示。
 - 离线预分析：单 BPM 与分段动态 BPM、主调性、彩色 waveform、按小节频谱、结构段、逐 bar 特征。
 - Mixing 工作台：两碟 + 3-band EQ + channel fader + crossfader + master；独立 key/pitch 与 BPM time-stretch。
-- 效果器：每碟 3 insert + Echo/Reverb send + Roll/Reverse/Brake。
+- 效果器：每碟 4 insert + Echo/Reverb send + Roll/Reverse/Brake。
 - AI Mixing：按列表顺序（可 shuffle）规划**下一 1–2 对**过渡；无显式 mix-in/out 时自动选点；有 `kind=in|out` 时按分轨约束只可向外扩展；hot cue 只作软锚；输出 bar-quantized 自动化包络。
 - 默认输出：系统默认设备，跟随系统；device-change 热切换。
 - 延迟：v1 jog **< 30 ms p99**（128 frames，scratch 重采样路径）。算术见 §4.7。
@@ -95,7 +95,7 @@ Mixless 是一款 Tauri 2 桌面 DJ 应用：两个拟物唱盘、完整本地�
 | D8 | 前端 Tauri 2 + **Svelte 5** + SCSS + canvas waveform；Svelte store 只镜像，**播放真相在 Rust**。`EngineSnapshot` 含 playhead，30–60 Hz 推一次。 | 用户指定 Svelte+SCSS；高密度拟物用组件+SCSS，waveform 自己画。 |
 | D9 | Master = 系统默认。**PFL 进 v1**（第二 CoreAudio）。无第二设备 **只禁 PFL**。Hot Cue 跳转与监听设备无关。 | 用户：没耳机也要能跳到 cue 点，只是不能预听。 |
 | D10 | 只有 `kind=in\|out` 硬约束规划器，且 **分轨**：A 的 out 与 B 的 in 分开判定。Hot cue 只是软锚（±2 bar 内加分），**不是** `[first hot, last hot]` 最小跨度。v1 右键可设 mix-in / mix-out。 | 把 8 个 hot cue 当必须覆盖的区间会逼出整轨 blend，Automix 名存实亡。 |
-| D11 | Mixer / FX 按 `.agents/10-mixer-fx.md` 齐备：isolator+kill、filter、3 insert、Echo/Reverb send、Roll/Reverse/Brake。全开 callback p99 < 50% block。不用 `fundsp` 当 mixer 核心。 | 用户要求能力齐备且性能优秀；bypass 与预分配是前提。 |
+| D11 | Mixer / FX 按 `.agents/10-mixer-fx.md` 齐备：isolator+kill、filter、4 insert、Echo/Reverb send、Roll/Reverse/Brake。全开 callback p99 < 50% block。不用 `fundsp` 当 mixer 核心。 | 用户要求能力齐备且性能优秀；bypass 与预分配是前提。 |
 | D12 | v1 只 2 deck；shuffle 只打乱顺序；生产路径每次只规划下一 1–2 对。 | 范围控制；smart shuffle 列为 P1。 |
 | D13 | v1 提供一键 **SYNC**：把本碟 sounding BPM 贴到对面碟，并量化到对面下一 downbeat；可选 keylock（只改 rate 不改 pitch）。 | 手动 `SetRate` 不是专业双碟工作流；Automix 不能代替人手 SYNC。 |
 | D14 | Vinyl / scratch 路径 = 播放头积分 + 线性重采样，**无 STFT**。切入/切出用延迟补偿短 xf，click-free。 | 音乐 stretch 的 20–40 ms 窗会毁掉搓碟；裸切会按 `inputLatency+outputLatency` 跳。 |
@@ -334,7 +334,7 @@ pub struct ScratchResample { /* 线性/hermite，延迟 0–2 ms */ }
 - Channel filter：LP+HP，给 `filter_sweep`。节点表里 `lp_hz`（20000 = 开）、`hp_hz`（20 = 开）。
 - Crossfader：`linear` / `equal_power` / `cut`，位置 `[-1, 1]`，-1 全 A。`SetXfCurve` 可改。
 - Master：gain + tanh soft clip。
-- Mixer / FX 完整规格见 `.agents/10-mixer-fx.md`（isolator+kill、3 insert、send、传输类、CPU 预算）。
+- Mixer / FX 完整规格见 `.agents/10-mixer-fx.md`（isolator+kill、4 insert、send、传输类、CPU 预算）。
 - Automix 的 gate / flanger 绑出碟 insert；`echo_out` 走 send echo freeze。
 - 全部 delay / FDN / limiter 按 `actual_sr` 预分配，callback 内不 `resize`。
 
@@ -397,7 +397,7 @@ coalesce          4–8 ms     （指针事件合并；禁止 16 ms）
 | Cue seek 可听缺口 | **< 8 ms** | 多块 6 ms xf |
 | `< 10 ms` 往返 | **P1**，非 v1 | stretch-bypass + 128 帧 + 原生指针钩子，不经 WebView |
 | xrun | **< 0.01%** 块 | 顶栏红灯 |
-| Callback p99 全 FX | **< 50%** of 256-frame block | 两碟 3 insert + send + stretch |
+| Callback p99 全 FX | **< 50%** of 256-frame block | 两碟 4 insert + send + stretch |
 | Callback p99 scratch | < 35% of 128-frame block | 无 STFT |
 
 **拒绝**：Web Audio 主混音；每帧 JSON IPC 传 PCM。
@@ -1057,7 +1057,7 @@ pub enum LaneId {
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
-pub enum FxSlot { Insert0, Insert1, Insert2, SendEcho, SendReverb }
+pub enum FxSlot { Insert0, Insert1, Insert2, Insert3, SendEcho, SendReverb }
 
 #[derive(Serialize, Deserialize)]
 pub struct FxParams {
@@ -1106,7 +1106,7 @@ pub struct DeckSnapshot {
     pub vinyl: bool,
     pub slip: bool,
     pub synced: bool,
-    pub insert: [Option<FxSlot>; 2],
+    pub insert: [Option<FxSlot>; 4],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1385,7 +1385,7 @@ CREATE UNIQUE INDEX idx_cues_out ON cues(track_id) WHERE kind='out';
 | PR06 | feat(engine): TimeStretch + Signalsmith 音乐档 | stretch.rs、third_party 或 `signalsmith-stretch` | PR04 | `splitComputation`；rate=1 透明；禁止 callback `read_at` |
 | PR07a | feat(engine): playhead + loop | playhead、loop | PR04 | 源域 loop、wrap xf、`LoopHalve/Double` |
 | PR07b | feat(engine): vinyl/slip scratch | jog、`ScratchResample` | PR06, PR07a | 惯性、负向、slip；两档切换补偿 xf |
-| PR08 | feat(engine): mixer FX 齐备 | `fx/*` | PR05 | 3 insert + send + kill/filter/roll；全开 offline 60 s 无 NaN；callback 预算 |
+| PR08 | feat(engine): mixer FX 齐备 | `fx/*` | PR05 | 4 insert + send + kill/filter/roll；全开 offline 60 s 无 NaN；callback 预算 |
 | PR09 | feat(desktop): 2-deck shell | `apps/desktop/src` | PR01 | 顶栏、Deck、Mixer、SYNC、Hot Cue 垫、PFL 键（无设备只禁 PFL） |
 | PR21 | feat(engine,ui): headphone cue | engine + UI | PR05, PR09 | 第二输出、`CueRing`、PFL、`SetPfl`/`SetCueGain`（勿与 hot-cue 的 `SetCue` 重名） |
 | PR22 | feat(acquire): YTM sidecar | acquire + yt | PR18, PR02 | Resolver 链、时长窗、落盘打标签、进度 UI |

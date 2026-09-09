@@ -1,14 +1,16 @@
 //! Conservative DJ policy: musical safety gates precede ranking. A scalar
 //! score cannot compensate for clashing foregrounds or an unreliable beat grid.
 use crate::{
-    candidates::candidates,
     constraints::{covers_user_range, user_range},
     grid::Grid,
+    musical::{average_rms, bass_handoff, feature, incoming_trim, percussion_only},
+    phrasing::{boundary_quality, points},
+    policy::{self, Evidence as FxEvidence, Technique},
     score::{key_match, section},
     PlanContext, PlannerOptions,
 };
 use mixless_protocol::{
-    AutomationLanes, BarFeature, BarMap, EqLane, FilterLane, MixPlan, MixPlanSummary, Polyline,
+    AutomationLanes, BarMap, EqLane, FilterLane, MixPlan, MixPlanSummary, Polyline, ScratchOp,
     StrategyId as S, TrackAnalysis, TransitionMode,
 };
 
@@ -22,10 +24,6 @@ fn line(nodes: &[(f32, f32)]) -> Polyline {
     Polyline {
         nodes: nodes.to_vec(),
     }
-}
-fn feature(track: &TrackAnalysis, sec: f32) -> Option<&BarFeature> {
-    let i = track.bars.partition_point(|b| b.end_sec <= sec);
-    track.bars.get(i).filter(|b| b.start_sec <= sec)
 }
 fn neutral() -> AutomationLanes {
     let zero = Polyline::constant(0.);
@@ -54,6 +52,8 @@ fn neutral() -> AutomationLanes {
         pitch_b: zero,
         loop_a: None,
         loop_b: None,
+        scratch_a: None,
+        scratch_b: None,
     }
 }
 fn grid_reliable(t: &TrackAnalysis, start: f32, end: f32) -> bool {
@@ -75,97 +75,33 @@ fn grid_reliable(t: &TrackAnalysis, start: f32, end: f32) -> bool {
             })
     })
 }
-fn average_rms(t: &TrackAnalysis, start: f32, end: f32) -> Option<f32> {
-    let mut sum = 0.;
-    let mut count = 0.;
-    for b in &t.bars {
-        if b.end_sec > start && b.start_sec < end && b.rms.is_finite() && b.rms > 0.0001 {
-            sum += b.rms * b.rms;
-            count += 1.;
-        }
-    }
-    (count > 0.).then(|| (sum / count).sqrt())
-}
-fn audible_end(t: &TrackAnalysis) -> f32 {
-    t.bars
-        .iter()
-        .rev()
-        .find(|b| b.rms > 0.001)
-        .map_or(t.duration_sec, |b| b.end_sec.min(t.duration_sec))
-}
-fn points(t: &TrackAnalysis, cues: &[mixless_protocol::Cue], out: bool) -> Vec<f32> {
-    let g = Grid(t);
-    let mut result = candidates(t, cues, out);
-    if out {
-        result.insert(0, g.floor_bar(audible_end(t)));
-    } else if let Some(first) = t.bars.iter().find(|b| b.rms > 0.001) {
-        result.insert(0, g.ceil_bar(first.start_sec));
-    }
-    // Add low-vocal phrase boundaries near beginning/end. Do not search arbitrary
-    // mid-verse points just because their BPM happens to fit.
-    for b in &t.bars {
-        let relative = b.start_sec / t.duration_sec;
-        if b.bar_index % 8 == 0
-            && b.rms > 0.001
-            && b.vocal_presence < 0.45
-            && if out {
-                relative > 0.55
-            } else {
-                relative < 0.35
-            }
-        {
-            result.push(g.floor_bar(b.start_sec));
-        }
-    }
-    result.retain(|beat| g.sec(*beat) >= 0. && g.sec(*beat) <= audible_end(t) + 0.001);
-    result.sort_by(|a, b| {
-        let cost = |beat: f32| {
-            let sec = g.sec(beat);
-            let vocal = feature(t, (sec - 0.01).max(0.)).map_or(0.6, |b| b.vocal_presence);
-            let position = if out {
-                1. - sec / t.duration_sec
-            } else {
-                sec / t.duration_sec
-            };
-            vocal + position * 0.4
-        };
-        cost(*a).total_cmp(&cost(*b))
-    });
-    // Hard cue anchors are always included ahead of the top-K soft candidates.
-    if let Some((start, end)) = user_range(cues, t.sample_rate) {
-        result.insert(
-            0,
-            if out {
-                g.ceil_bar(end)
-            } else {
-                g.floor_bar(start)
-            },
-        );
-    }
-    let mut unique = Vec::new();
-    for beat in result {
-        if !unique.iter().any(|v: &f32| (*v - beat).abs() < 0.01) {
-            unique.push(beat);
-        }
-    }
-    unique.truncate(8);
-    unique
-}
-
 pub(crate) fn plan(ctx: &PlanContext<'_>, options: &PlannerOptions) -> MixPlan {
     let a = ctx.outgoing;
     let b = ctx.incoming;
-    let outs = points(a, ctx.cues_out, true);
-    let ins = points(b, ctx.cues_in, false);
+    let outs = points(a, ctx.cues_out, true, options.earliest_outgoing_sec);
+    let ins = points(b, ctx.cues_in, false, 0.);
     let mut best: Option<MixPlan> = None;
     for &out in &outs {
         for &input in &ins {
-            for mode in [TransitionMode::BeatBlend, TransitionMode::PhraseBridge] {
-                if let Some(p) = pair(ctx, options, out, input, mode) {
-                    if best.as_ref().is_none_or(|old| {
-                        p.summary.as_ref().unwrap().score > old.summary.as_ref().unwrap().score
-                    }) {
-                        best = Some(p);
+            for mode in [
+                TransitionMode::BeatBlend,
+                TransitionMode::LoopRoll,
+                TransitionMode::PhraseBridge,
+            ] {
+                let lengths: &[u16] = if mode == TransitionMode::BeatBlend {
+                    &[16, 32, 8]
+                } else if mode == TransitionMode::LoopRoll {
+                    &[8, 16]
+                } else {
+                    &[4]
+                };
+                for &length in lengths {
+                    if let Some(p) = pair(ctx, options, out, input, mode, length) {
+                        if best.as_ref().is_none_or(|old| {
+                            p.summary.as_ref().unwrap().score > old.summary.as_ref().unwrap().score
+                        }) {
+                            best = Some(p);
+                        }
                     }
                 }
             }
@@ -180,6 +116,7 @@ fn pair(
     out: f32,
     input: f32,
     mode: TransitionMode,
+    length: u16,
 ) -> Option<MixPlan> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
     let ga = Grid(a);
@@ -208,29 +145,27 @@ fn pair(
         ctx.offset_b.pitch_semitones,
     );
     let blend = mode == TransitionMode::BeatBlend;
-    let hold = options.strategy == Some(S::EnergyHold) && blend;
-    let correction = outgoing_bpm * factor / incoming_bpm;
-    if blend
-        && ((correction - 1.).abs() > 0.08
-            || shift != 0.
-            || key < 0.85
-            || a.key_confidence < 0.5
-            || b.key_confidence < 0.5)
-    {
+    let loop_roll = mode == TransitionMode::LoopRoll;
+    if options.strategy == Some(S::LoopConstruct) && !loop_roll {
         return None;
     }
-    // At maximum slope a quintic ramp moves 1.875x faster than its average.
-    let mut n = if blend { 16u16 } else { 4 };
-    if blend
-        && correction.ln().abs() * 1.875 / (16. * ga.meter() * 60. / outgoing_bpm)
-            > MAX_LOG_TEMPO_PER_SEC
-    {
-        n = 32;
+    if options.strategy == Some(S::ScratchCut) && (blend || loop_roll) {
+        return None;
     }
+    let hold = options.strategy == Some(S::EnergyHold) && blend;
+    let correction = outgoing_bpm * factor / incoming_bpm;
+    let harmonic = shift == 0. && key >= 0.85 && a.key_confidence >= 0.5 && b.key_confidence >= 0.5;
+    if blend && ((correction - 1.).abs() > 0.08 || ga.meter() != gb.meter()) {
+        return None;
+    }
+    if loop_roll && ((correction - 1.).abs() > 0.12 || ga.meter() != gb.meter()) {
+        return None;
+    }
+    let mut n = length;
     if let Some((min, _)) = user_range(ctx.cues_out, a.sample_rate) {
         n = n.max(((out - ga.floor_bar(min)) / ga.meter()).ceil().max(1.) as u16);
     }
-    if blend {
+    if blend || loop_roll {
         if let Some((_, max)) = user_range(ctx.cues_in, b.sample_rate) {
             n = n.max(
                 ((gb.ceil_bar(max) - input) / (ga.meter() * factor))
@@ -243,7 +178,7 @@ fn pair(
         + 0.00001)
         .floor()
         .max(0.) as u16;
-    if !blend {
+    if !blend && !loop_roll {
         n = n.min(available);
     }
     if n == 0 || n > available || n > 64 {
@@ -254,6 +189,19 @@ fn pair(
     let start = ga.sec(start_beat);
     let end = ga.sec(out);
     let bin = gb.sec(input);
+    let out_phrase = boundary_quality(a, end);
+    let in_phrase = boundary_quality(b, bin);
+    let start_phrase = boundary_quality(a, start);
+    let explicit_out = user_range(ctx.cues_out, a.sample_rate).is_some();
+    let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
+    // A metrical downbeat is not automatically the beginning of a phrase.
+    // Strong structural evidence takes precedence over the old fixed offsets.
+    if (!a.phrase_boundaries.is_empty() && !explicit_out && out_phrase < 0.5)
+        || (!b.phrase_boundaries.is_empty() && !explicit_in && in_phrase < 0.5)
+        || (blend && !a.phrase_boundaries.is_empty() && !explicit_out && start_phrase < 0.5)
+    {
+        return None;
+    }
     if feature(b, bin + 0.001).is_some_and(|bar| bar.rms <= 0.001)
         || feature(a, end - 0.001).is_some_and(|bar| bar.rms <= 0.001)
     {
@@ -342,7 +290,7 @@ fn pair(
     // Keep the plan alive for one incoming beat after the cut. This lets the
     // engine launch B exactly at n even when A finishes at the file boundary.
     let bridge_tail = 60. / incoming_bpm;
-    let b_end = if blend {
+    let mut b_end = if blend {
         gb.sec(input + n * ga.meter() * factor)
     } else {
         bin + bridge_tail * ctx.offset_b.rate
@@ -356,12 +304,83 @@ fn pair(
         source_b = Polyline::default();
         clock.nodes.push((n + 0.25, wall as f32 + bridge_tail));
     }
+    if loop_roll {
+        let incoming = feature(b, bin + 0.01);
+        let outgoing = feature(a, end - 0.01);
+        if !grid_reliable(a, start, end)
+            || !grid_reliable(b, bin, (bin + 8. * 60. / incoming_bpm).min(b.duration_sec))
+            || !incoming.is_some_and(|f| {
+                f.rms > 0.001
+                    && f.kick_salience >= 0.45
+                    && f.vocal_presence < 0.35
+                    && f.vocal_confidence.is_none_or(|v| v < 0.35)
+            })
+            || !outgoing.is_some_and(|f| f.vocal_presence < 0.5)
+        {
+            return None;
+        }
+        let bars = if factor == 1. { 1 } else { 2 };
+        let loop_length = gb.sec(input + bars as f32 * gb.meter()) - bin;
+        let off_bar = (n * 0.625).max(4.0).min(n - 1.0);
+        lanes.loop_b = Some(mixless_protocol::LoopOp {
+            start_src_frame: (bin * b.sample_rate as f32).round() as u64,
+            length_bars: bars,
+            on_bar: 0.0,
+            off_bar,
+            length_src_frames: (loop_length * b.sample_rate as f32).round() as u64,
+        });
+        let exit_beat =
+            input + (off_bar * ga.meter() * factor).rem_euclid(bars as f32 * gb.meter());
+        b_end = gb.sec(exit_beat + (n - off_bar) * ga.meter() * factor);
+        lanes.filter_a.lp_hz = line(&[
+            (0., 20000.),
+            ((off_bar - 2.).max(0.), 20000.),
+            ((off_bar - 1.).max(0.), 1200.),
+            (off_bar, 500.),
+        ]);
+        lanes.fx_send_a = line(&[
+            (0., 0.),
+            ((off_bar - 1.).max(0.), 0.),
+            ((off_bar - 0.5).max(0.), 0.22),
+            (off_bar, 0.),
+        ]);
+        lanes.gain_a = line(&[
+            (0., 0.),
+            ((off_bar - 0.5).max(0.), 0.),
+            (off_bar, KILL),
+            (n, KILL),
+        ]);
+        lanes.xfader = line(&[
+            (0., -1.),
+            ((off_bar - 0.5).max(0.), -1.),
+            (off_bar, 1.),
+            (n, 1.),
+        ]);
+        if b_end > b.duration_sec + 0.001
+            || !covers_user_range(bin, b_end, ctx.cues_in, b.sample_rate)
+        {
+            return None;
+        }
+        if !harmonic && !percussion_only(a, start, end) && !percussion_only(b, bin, b_end) {
+            return None;
+        }
+    }
     if blend && (!grid_reliable(a, start, end) || !grid_reliable(b, bin, b_end)) {
+        return None;
+    }
+    if blend && !harmonic && !percussion_only(a, start, end) && !percussion_only(b, bin, b_end) {
+        return None;
+    }
+    // Do not let a long intro blend consume the start of an incoming vocal hook
+    // merely because the outgoing side is instrumental. End it on a phrase.
+    let end_phrase = boundary_quality(b, b_end);
+    if blend && !b.phrase_boundaries.is_empty() && !explicit_in && end_phrase < 0.5 {
         return None;
     }
     let mut clash = 0.;
     let mut vocal_a = 0.;
     let mut vocal_b = 0.;
+    let mut clash_run = 0.;
     let samples = (n * ga.meter() * 4.) as usize;
     for j in 0..samples {
         let t = (j as f32 + 0.5) / samples as f32;
@@ -376,63 +395,167 @@ fn pair(
         vocal_a += va / samples as f32;
         vocal_b += vb / samples as f32;
         if va > 0.5 && vb > 0.5 {
-            if section(a, ta) == mixless_protocol::SectionLabel::Verse
-                && section(b, tb) == mixless_protocol::SectionLabel::Chorus
-            {
+            if matches!(
+                (section(a, ta), section(b, tb)),
+                (
+                    mixless_protocol::SectionLabel::Verse,
+                    mixless_protocol::SectionLabel::Chorus
+                ) | (
+                    mixless_protocol::SectionLabel::Chorus,
+                    mixless_protocol::SectionLabel::Verse
+                )
+            ) {
                 return None;
             }
             clash += 1. / samples as f32;
+            clash_run += ga.meter() * n / samples as f32;
+            // A long overlap must not dilute a whole colliding vocal line to
+            // an acceptable percentage. Allow at most one beat of spillover.
+            if blend && clash_run > 1. {
+                return None;
+            }
+        } else {
+            clash_run = 0.;
         }
     }
     if blend && clash > 0.0625 {
         return None;
     }
-    let rms_a = average_rms(
-        a,
-        (end - 4. * ga.meter() * 60. / outgoing_bpm).max(start),
-        end,
-    );
-    let rms_b = average_rms(
-        b,
-        bin,
-        (bin + 4. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec),
-    );
-    // Match local program level within 6 dB, reserving at least 3 dB source
-    // peak headroom. Unknown peaks never authorize positive gain.
-    let peak_b = b
-        .bars
-        .iter()
-        .filter(|bar| bar.end_sec > bin && bar.start_sec < (bin + 8.).min(b.duration_sec))
-        .map(|bar| bar.rms * bar.crest)
-        .filter(|peak| peak.is_finite())
-        .fold(0., f32::max);
-    let headroom = if peak_b > 0. {
-        (20. * (0.707 / peak_b).log10()).clamp(0., 6.)
+    let sa = section(a, end - 0.001);
+    let sb = section(b, bin + 0.001);
+    let drop_cut = !blend
+        && matches!(sa, mixless_protocol::SectionLabel::BuildUp)
+        && matches!(
+            sb,
+            mixless_protocol::SectionLabel::Drop | mixless_protocol::SectionLabel::Chorus
+        )
+        && out_phrase >= 0.6
+        && in_phrase >= 0.6
+        && feature(b, bin + 0.01).is_some_and(|f| f.kick_salience >= 0.5);
+    // Scratch cuts are rare, cueable accents. Require reliable grids,
+    // phrase edges, strong kicks and a user hot cue at the incoming hit.
+    let scratch_cut = !blend
+        && !loop_roll
+        && out_phrase >= 0.75
+        && in_phrase >= 0.75
+        && grid_reliable(a, start, end)
+        && grid_reliable(b, bin, (bin + 4. * 60. / incoming_bpm).min(b.duration_sec))
+        && feature(a, end - 0.01)
+            .is_some_and(|f| f.kick_salience >= 0.55 && f.vocal_presence < 0.35)
+        && feature(b, bin + 0.01)
+            .is_some_and(|f| f.kick_salience >= 0.55 && f.vocal_presence < 0.65)
+        && ctx.cues_in.iter().any(|cue| {
+            cue.user_set
+                && matches!(cue.kind, mixless_protocol::CueKind::Hot)
+                && (cue.frame as f32 / b.sample_rate as f32 - bin).abs() <= 60. / incoming_bpm
+        })
+        && (options.strategy == Some(S::ScratchCut) || drop_cut || out_phrase >= 0.9);
+    let fx_decision = if blend {
+        policy::Decision {
+            technique: Technique::DryCut,
+            confidence: 1.0,
+        }
     } else {
-        0.
+        policy::choose(FxEvidence {
+            loop_roll,
+            scratch: scratch_cut,
+            drop: drop_cut,
+            grid_reliable: grid_reliable(a, start, end)
+                && grid_reliable(b, bin, (bin + 4. * 60. / incoming_bpm).min(b.duration_sec)),
+            phrase_reliable: out_phrase >= 0.6 && in_phrase >= 0.6,
+            harmonic_compatible: harmonic,
+            vocal_overlap: clash,
+            outgoing_kick: feature(a, end - 0.01).map_or(0.0, |f| f.kick_salience),
+            incoming_kick: feature(b, bin + 0.01).map_or(0.0, |f| f.kick_salience),
+            outgoing_vocal: vocal_a,
+            incoming_vocal: vocal_b,
+            outgoing_section: sa,
+        })
     };
-    let trim_b = match (rms_a, rms_b) {
-        (Some(a), Some(b)) => (20. * (a / b).log10()).clamp(-6., headroom),
-        _ => 0.,
+    if (loop_roll && fx_decision.technique != Technique::LoopRoll)
+        || (options.strategy == Some(S::ScratchCut)
+            && fx_decision.technique != Technique::ScratchCut)
+    {
+        return None;
+    }
+    let handoff = if blend {
+        bass_handoff(a, b, &source_a, &source_b, n)?
+    } else {
+        start_b
     };
+    let rms_a = if blend {
+        average_rms(
+            a,
+            source_a.sample((handoff - 2.).max(0.)),
+            source_a.sample((handoff + 2.).min(n)),
+        )
+    } else {
+        average_rms(
+            a,
+            (end - 4. * ga.meter() * 60. / outgoing_bpm).max(start),
+            end,
+        )
+    };
+    let rms_b = if blend {
+        average_rms(
+            b,
+            source_b.sample((handoff - 2.).max(0.)),
+            source_b.sample((handoff + 2.).min(n)),
+        )
+    } else {
+        average_rms(
+            b,
+            bin,
+            (bin + 4. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec),
+        )
+    };
+    // Match the material heard at the exchange, preserving source dynamics.
+    let trim_b = incoming_trim(b, bin, rms_a, rms_b);
+    let rhythmic_handoff = blend
+        && (feature(a, source_a.sample(handoff) - 0.01).is_some_and(|f| f.kick_salience >= 0.5)
+            || feature(b, source_b.sample(handoff) + 0.01).is_some_and(|f| f.kick_salience >= 0.5));
     if blend {
-        let middle = (n / 2.).floor();
-        let width = 0.5 / ga.meter();
+        let middle = handoff;
+        let width = if rhythmic_handoff {
+            0.5 / ga.meter()
+        } else {
+            (n * 0.125).min(2.)
+        };
         // One bass foreground until the phrase downbeat. The old -96 dB ramp
         // spread across 8 bars created a long bass hole; exchange within one beat.
-        lanes.xfader = line(&[
-            (0., -1.),
-            (n * 0.25, -0.55),
-            (middle, 0.),
-            (n * 0.75, 0.55),
-            (n, 1.),
-        ]);
+        // Smooth both sides independently, so the actual exchange is centered
+        // at unity-power even when its phrase is away from n/2.
+        lanes.xfader.nodes = (0..=n as usize * 64)
+            .map(|j| {
+                let u = j as f32 / 64.;
+                let value = if u <= middle {
+                    -1. + ease(u / middle)
+                } else {
+                    ease((u - middle) / (n - middle))
+                };
+                (u, value)
+            })
+            .collect();
         lanes.gain_a = line(&[(0., 0.), (n - 0.001, 0.), (n, KILL)]);
         lanes.gain_b = Polyline::constant(trim_b);
         lanes.eq_a.low.nodes.clear();
         lanes.eq_b.low.nodes.clear();
+        lanes.eq_a.high.nodes.clear();
+        lanes.eq_b.high.nodes.clear();
         for j in 0..=n as usize * 64 {
             let u = j as f32 / 64.;
+            // Introduce the incoming hats gently before exchanging the bass.
+            // A's initial tone and B's final tone stay neutral.
+            lanes
+                .eq_b
+                .high
+                .nodes
+                .push((u, -3. * (1. - ease(u / middle))));
+            lanes
+                .eq_a
+                .high
+                .nodes
+                .push((u, -3. * ease((u - middle * 0.5) / (n - middle * 0.5))));
             let x = (lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
             let handoff = ease((u - (middle - width)) / (2. * width)) * std::f32::consts::FRAC_PI_2;
             let low_a = handoff.cos().max(0.);
@@ -463,11 +586,11 @@ fn pair(
         if vocal_b > 0.5 {
             lanes.eq_a.mid = line(&[(0., 0.), (middle, -6.), (n, -12.)]);
         }
-    } else {
+    } else if !loop_roll {
         let handoff = start_b;
         // Finish the dry fade just before the downbeat, then open B fully on
-        // its first kick. Filtered echo carries the short gap, with no overlap
-        // of independent drum grids or incompatible melodic foregrounds.
+        // its first kick. FX is inserted only when the policy says the gap or
+        // tonal conflict needs it; clean rhythmic cuts stay dry.
         let fade = (0.04 * outgoing_bpm / (60. * ga.meter())).min(0.125);
         lanes.xfader = line(&[(0., -1.), (handoff - fade, -1.), (handoff, 1.)]);
         lanes.gain_a = line(&[(0., 0.), (handoff - fade, 0.), (handoff, KILL)]);
@@ -480,20 +603,50 @@ fn pair(
         ]);
         // Avoid duplicate knots for exceptionally short bridges.
         lanes.eq_a.low.nodes.dedup_by(|a, b| a.0 == b.0);
-        lanes.filter_a.lp_hz = line(&[
-            (0., 20000.),
-            ((handoff - 0.5).max(0.), 20000.),
-            (handoff - 0.25, 2000.),
-            (handoff, 1200.),
-        ]);
-        lanes.filter_a.lp_hz.nodes.dedup_by(|a, b| a.0 == b.0);
-        lanes.fx_send_a = line(&[
-            (0., 0.),
-            ((handoff - 0.5).max(0.), 0.),
-            (handoff - 0.25, 0.18),
-            (handoff, 0.),
-        ]);
-        lanes.fx_send_a.nodes.dedup_by(|a, b| a.0 == b.0);
+        if matches!(
+            fx_decision.technique,
+            Technique::EchoOut | Technique::FilterBridge
+        ) {
+            lanes.filter_a.lp_hz = line(&[
+                (0., 20000.),
+                ((handoff - 0.5).max(0.), 20000.),
+                (handoff - 0.25, 2000.),
+                (handoff, 1200.),
+            ]);
+            lanes.filter_a.lp_hz.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.fx_send_a = line(&[
+                (0., 0.),
+                ((handoff - 0.5).max(0.), 0.),
+                (handoff - 0.25, 0.18),
+                (handoff, 0.),
+            ]);
+            lanes.fx_send_a.nodes.dedup_by(|a, b| a.0 == b.0);
+        }
+        if matches!(
+            fx_decision.technique,
+            Technique::DryCut | Technique::DropCut | Technique::ScratchCut
+        ) {
+            // A completed build can hand directly to the new drop. Keep its
+            // buildup intact and avoid an FX tail masking the incoming first kick.
+            lanes.filter_a = neutral().filter_a;
+            lanes.fx_send_a = Polyline::constant(0.);
+            lanes.eq_a.low = line(&[(0., 0.), (handoff - fade, 0.), (handoff, KILL)]);
+        }
+    }
+    if scratch_cut {
+        let on_bar = (n - 0.5).max(0.0);
+        let peak_bar = (n - 0.25).max(on_bar + 0.0625);
+        let start_src_frame = (source_a.sample(on_bar) * a.sample_rate as f32)
+            .round()
+            .max(0.0) as u64;
+        let delta = (0.5 * a.sample_rate as f32 * 60. / outgoing_bpm).round() as i64;
+        lanes.scratch_a = Some(ScratchOp {
+            start_src_frame,
+            peak_delta_frames: -delta,
+            on_bar,
+            peak_bar,
+            off_bar: n,
+        });
     }
     // A never jumps on the first sample; B's pitch is set while inaudible and
     // held thereafter. A key change is made by handing over musical material.
@@ -509,10 +662,56 @@ fn pair(
             | mixless_protocol::SectionLabel::Chorus
     );
     let position = 0.03 * end / a.duration_sec - 0.03 * bin / b.duration_sec;
+    // Phrase-compatible pairings are preferred even when BPM/key are equal.
+    // The vocal rule is hard: a verse and a chorus with two foregrounds never
+    // share the same overlap window.
+    if sa == mixless_protocol::SectionLabel::Verse
+        && sb == mixless_protocol::SectionLabel::Chorus
+        && vocal_a > 0.45
+        && vocal_b > 0.45
+    {
+        return None;
+    }
+    let structural_score = match (sa, sb) {
+        (mixless_protocol::SectionLabel::Outro, mixless_protocol::SectionLabel::Intro)
+        | (mixless_protocol::SectionLabel::Drop, mixless_protocol::SectionLabel::Intro)
+        | (mixless_protocol::SectionLabel::BuildUp, mixless_protocol::SectionLabel::Drop)
+        | (mixless_protocol::SectionLabel::Break, mixless_protocol::SectionLabel::Intro) => 1.0,
+        (mixless_protocol::SectionLabel::Chorus, mixless_protocol::SectionLabel::Intro)
+        | (mixless_protocol::SectionLabel::Breakdown, mixless_protocol::SectionLabel::Intro) => {
+            0.85
+        }
+        (mixless_protocol::SectionLabel::Unknown, _)
+        | (_, mixless_protocol::SectionLabel::Unknown) => 0.55,
+        _ => 0.35,
+    };
     let quality = if blend {
-        0.78 + 0.1 * key - 0.1 * clash
+        0.57 + 0.10 * key + 0.10 * structural_score - 0.10 * clash
+    } else if loop_roll {
+        0.39 + 0.08 * structural_score + 0.05 * (1. - vocal_a.min(vocal_b))
     } else {
-        0.48 + 0.08 * (1. - vocal_a.min(vocal_b))
+        0.35 + 0.10 * structural_score
+            + 0.02 * fx_decision.confidence
+            + 0.08 * (1. - vocal_a.min(vocal_b))
+            + if drop_cut { 0.22 } else { 0. }
+    };
+    let phrase = if blend {
+        (out_phrase + in_phrase + start_phrase + end_phrase) / 4.
+    } else {
+        (out_phrase + in_phrase) / 2.
+    };
+    let energy = match (rms_a, rms_b) {
+        (Some(a), Some(b)) => (1. - (20. * (a / b).log10()).abs() / 18.).clamp(0., 1.),
+        _ => 0.5,
+    };
+    let kick = match (feature(a, end - 0.01), feature(b, bin + 0.01)) {
+        (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),
+        _ => 0.5,
+    };
+    let length_cost = if blend {
+        (n - 16.).abs() / 16. * 0.008
+    } else {
+        0.
     };
     Some(MixPlan {
         summary: Some(MixPlanSummary {
@@ -520,19 +719,40 @@ fn pair(
             strategy: if blend {
                 if hold {
                     S::EnergyHold
+                } else if !harmonic || !rhythmic_handoff {
+                    S::PhraseBlend
                 } else {
                     S::BassSwap
                 }
+            } else if loop_roll {
+                S::LoopConstruct
             } else {
-                S::EchoOut
+                match fx_decision.technique {
+                    Technique::DryCut => S::DryCut,
+                    Technique::ScratchCut => S::ScratchCut,
+                    Technique::DropCut => S::DropCut,
+                    Technique::FilterBridge => S::FilterSweep,
+                    _ => S::EchoOut,
+                }
             },
-            score: (quality + position + if structural { 0.03 } else { 0. }).clamp(0., 1.),
-            used_fallback: !blend,
+            score: (quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 - length_cost
+                + if structural { 0.03 } else { 0. })
+            .clamp(0., 1.),
+            used_fallback: !blend
+                && !loop_roll
+                && !matches!(
+                    fx_decision.technique,
+                    Technique::DropCut | Technique::ScratchCut | Technique::DryCut
+                ),
             length_bars: n as u16,
         }),
         incoming_offset_end: ending,
         outgoing_offset: ctx.offset_a,
-        bar_map: if blend { map } else { BarMap::OneToOne },
+        bar_map: if blend || loop_roll {
+            map
+        } else {
+            BarMap::OneToOne
+        },
         t_in_a: start,
         t_out_a: end,
         t_in_b: bin,
@@ -544,7 +764,7 @@ fn pair(
         transition_mode: Some(mode),
         master_bpm: master,
         lanes,
-        handoff_bar: Some(if blend { n / 2. } else { start_b }),
+        handoff_bar: Some(if loop_roll { n } else { handoff }),
         literal_half_double: false,
         failure_reason: None,
     })

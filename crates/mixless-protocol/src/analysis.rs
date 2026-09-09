@@ -71,8 +71,22 @@ pub struct BarFeature {
     pub kick_salience: f32,
     pub hat_salience: f32,
     pub vocal_presence: f32,
+    /// Optional model evidence for human voice. `vocal_presence` also includes
+    /// sustained instruments and remains the conservative overlap risk.
+    #[serde(default)]
+    pub vocal_confidence: Option<f32>,
     pub energy_slope: f32,
     pub section: SectionLabel,
+}
+
+/// Measured structural change or a phrase inferred relative to that change.
+/// Confidence describes the boundary, not a claim that a section label is exact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhraseBoundary {
+    pub time_sec: f32,
+    pub confidence: f32,
+    /// Zero for a metrical subdivision; positive for measured timbral change.
+    pub novelty: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +99,8 @@ pub struct TrackAnalysis {
     pub camelot: Option<String>,
     pub key_confidence: f32,
     pub sections: Vec<Section>,
+    #[serde(default)]
+    pub phrase_boundaries: Vec<PhraseBoundary>,
     pub bars: Vec<BarFeature>,
     pub waveform_path: Option<String>,
     pub partial: bool,

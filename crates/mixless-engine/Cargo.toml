@@ -12,6 +12,7 @@ rtrb = { workspace = true }
 symphonia = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+serde = { workspace = true }
 
 [build-dependencies]
 cc = "1"

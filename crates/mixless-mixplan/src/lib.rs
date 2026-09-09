@@ -1,8 +1,13 @@
 //! Pure next-pair planning. No decoding, devices, I/O or playlist-wide search.
+mod handoff;
+pub use handoff::short_handoff;
 mod candidates;
 mod compile;
 pub mod constraints;
 mod grid;
+mod musical;
+mod phrasing;
+mod policy;
 pub mod score;
 mod smooth;
 
@@ -14,13 +19,14 @@ use mixless_protocol::{
 
 pub const SCORE_THRESHOLD: f32 = 0.35;
 // Bass swap wins ties for stable kicks, as in the documented 128/126 fixture.
-pub const STRATEGIES: [StrategyId; 8] = [
+pub const STRATEGIES: [StrategyId; 9] = [
     StrategyId::BassSwap,
     StrategyId::PhraseBlend,
     StrategyId::DropCut,
     StrategyId::EchoOut,
     StrategyId::FilterSweep,
     StrategyId::LoopConstruct,
+    StrategyId::ScratchCut,
     StrategyId::BreakToIntro,
     StrategyId::EnergyHold,
 ];
@@ -118,6 +124,43 @@ impl Planner {
         };
         let (a, b) = (ctx.outgoing, ctx.incoming);
         for track in [a, b] {
+            if track.bars.iter().any(|b| {
+                !b.start_sec.is_finite()
+                    || !b.end_sec.is_finite()
+                    || b.start_sec < 0.
+                    || b.end_sec <= b.start_sec
+                    || b.end_sec > track.duration_sec + 0.1
+                    || !b.rms.is_finite()
+                    || b.rms < 0.
+                    || !b.crest.is_finite()
+                    || b.crest < 0.
+                    || !b.onset_density.is_finite()
+                    || b.onset_density < 0.
+                    || [b.low_db, b.mid_db, b.high_db, b.energy_slope]
+                        .iter()
+                        .any(|v| !v.is_finite())
+                    || [b.vocal_presence, b.kick_salience, b.hat_salience]
+                        .iter()
+                        .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+                    || b.vocal_confidence
+                        .is_some_and(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
+                    || b.chroma.iter().any(|v| !v.is_finite() || *v < 0.)
+            }) || track
+                .bars
+                .windows(2)
+                .any(|p| p[1].start_sec < p[0].end_sec - 0.001)
+            {
+                return fail("Invalid or overlapping bar features");
+            }
+            if track.sections.iter().any(|s| {
+                !s.start_sec.is_finite()
+                    || !s.end_sec.is_finite()
+                    || s.start_sec < 0.
+                    || s.end_sec <= s.start_sec
+                    || s.end_sec > track.duration_sec + 0.1
+            }) {
+                return fail("Invalid section bounds");
+            }
             if !track.duration_sec.is_finite()
                 || track.duration_sec <= 0.0
                 || track.sample_rate == 0
@@ -130,6 +173,15 @@ impl Planner {
                     .iter()
                     .any(|t| !t.is_finite() || *t < 0.0)
                 || track.tempo.downbeats.windows(2).any(|p| p[1] <= p[0])
+                || track.phrase_boundaries.iter().any(|p| {
+                    !p.time_sec.is_finite()
+                        || p.time_sec < 0.
+                        || p.time_sec > track.duration_sec + 0.1
+                        || !p.confidence.is_finite()
+                        || !(0.0..=1.0).contains(&p.confidence)
+                        || !p.novelty.is_finite()
+                        || p.novelty < 0.
+                })
             {
                 return fail("Invalid duration, source sample rate or beat grid");
             }

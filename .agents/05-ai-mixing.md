@@ -8,7 +8,13 @@
 
 不满足长混条件时使用 `PhraseBridge`：出碟末段滤波／轻 Echo，在其乐句结束重拍启动原速、原调的入碟。出碟干声在重拍前约 40 ms 内淡出，入碟第一拍直接接管；不把两条不兼容的鼓点或主旋律长时间叠加。用户 In/Out、前景 Verse → Chorus 禁区和音频边界约束同样适用。已测出的静音不能成为接入点。
 
-下述九种目录表及归一化评分保留在 `smooth=false` 路径，金样继续验证。平滑路径目前仅使用 BassSwap、EnergyHold 和 EchoOut；`who_stretches`、literal 和其他显式目录选择属于目录路径。完整现状、试用和验收限制见根目录 `AUTOMIX.md`；主设计 §7 同步记录本补充。
+目前支持十一种策略；其中十种目录表及归一化评分保留在 `smooth=false` 路径，金样继续验证，DryCut 仅作为平滑路径的安全策略。平滑路径使用 DryCut、BassSwap、PhraseBlend、EnergyHold、EchoOut 和受结构约束的 DropCut；ScratchCut 只有完整 cue 证据才会进入。`who_stretches`、literal 和其他显式目录选择属于目录路径。完整现状、试用和验收限制见根目录 `AUTOMIX.md`；主设计 §7 同步记录本补充。
+
+2026-09-09 修订：低频交接搜索共同 downbeat，优先共同乐句，不再固定中点；有底鼓时一拍交接，两侧底鼓都弱时渐进叠混。入碟高频轻度渐入，局部 RMS 按真实窗口时长加权，正增益检查入点后完整峰值覆盖。具备整段保守打击乐证据时允许跨调 layering；缺失证据不授权。连续超过一拍的双前景不能被长窗口平均值掩盖。实现、八项新增回归、教学来源和真实样本渲染边界见 `AUTOMIX.md`。
+
+2026-09-09 性能动作修订：Loop Roll 只在稳定 grid、连续 kick、低 vocal 风险和乐句尾部建立 1／2 小节真实 loop，并在释放前协同 filter／echo。`ScratchCut` 只接受可靠 grid、出入边界、强 kick、出碟低人声和入碟用户 Hot cue；生成半小节三阶段 `ScratchOp`（touch、半拍回拉峰值、slip release），通过引擎现有 jog target 执行，释放后恢复原播放头。任一条件失败都回退安全桥接，禁止把随机 jog 或长时间搓碟自动化。
+
+FX 决策层位于平滑规划器之前：先做 grid、phrase、vocal、kick、harmonic 和 cue 的硬否决，再选择 DryCut、EchoOut、FilterBridge、DropCut、LoopRoll 或 ScratchCut。干净的和声／节奏交接不叠 FX；Outro/Break 的尾句优先 Echo；调性冲突的短桥优先 Filter；FX 不能修复不可靠节拍或连续双前景。
 
 ## Mix 时钟
 
@@ -55,7 +61,7 @@ r = sounding_bpm_A / sounding_bpm_B
 
 ## 过渡目录与编译
 
-策略与默认 N：`phrase_blend` 32、`bass_swap` 16、`drop_cut` 4、`echo_out` 8、`filter_sweep` 16、`loop_construct` 16、`break_to_intro` 32、`energy_hold` 16、**`fallback_swap_filter` 16**（一等目标）。
+策略与默认 N：`dry_cut` 4、`phrase_blend` 32、`bass_swap` 16、`drop_cut` 4、`echo_out` 8、`filter_sweep` 16、`loop_construct` 16、`scratch_cut` 4、`break_to_intro` 32、`energy_hold` 16、**`fallback_swap_filter` 16**（一等目标）。
 
 **插值**：xf equal-power；dB / send / rate / pitch 线性；lp/hp **对数频率**线性；loop / insert 阶跃。
 

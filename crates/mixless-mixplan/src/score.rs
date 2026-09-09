@@ -169,10 +169,36 @@ pub(crate) fn score(
     // strategies rather than selecting the first of eight identical scores.
     let kicks = (features(a, c.out_sec - 0.01).1 + features(b, c.in_sec + 0.01).1) * 0.5;
     let eligible = match c.strategy {
+        Id::DryCut => {
+            features(a, c.out_sec - 0.01).1 >= 0.55
+                && features(b, c.in_sec + 0.01).1 >= 0.55
+                && features(a, c.out_sec - 0.01).2 < 0.35
+                && features(b, c.in_sec + 0.01).2 < 0.65
+        }
         Id::BassSwap => kicks >= 0.5 || matches!(sa, S::Break | S::Breakdown | S::Chorus),
         Id::DropCut => matches!((sa, sb), (S::BuildUp | S::Drop, S::Drop | S::Chorus)),
         Id::EchoOut => sa == S::Outro,
         Id::LoopConstruct => sb == S::Intro && features(b, c.in_sec + 0.01).1 < 0.4,
+        Id::ScratchCut => {
+            let hot_in = cb.iter().any(|cue| {
+                cue.user_set
+                    && cue.kind == CueKind::Hot
+                    && (cue.frame as f32 / b.sample_rate as f32 - c.in_sec).abs()
+                        <= 60. / gb.bpm(c.in_beat)
+            });
+            c.n <= 8
+                && a.tempo.beats.len() >= 8
+                && b.tempo.beats.len() >= 8
+                && a.tempo.downbeats.len() >= 2
+                && b.tempo.downbeats.len() >= 2
+                && a.tempo.segments.iter().any(|s| s.confidence >= 0.65)
+                && b.tempo.segments.iter().any(|s| s.confidence >= 0.65)
+                && features(a, c.out_sec - 0.01).1 >= 0.55
+                && features(b, c.in_sec + 0.01).1 >= 0.55
+                && features(a, c.out_sec - 0.01).2 < 0.35
+                && features(b, c.in_sec + 0.01).2 < 0.65
+                && hot_in
+        }
         Id::EnergyHold => (c.ratio - 1.0).abs() > 0.08,
         Id::PhraseBlend | Id::BreakToIntro => true,
         Id::FilterSweep => c.key_score < 0.85,

@@ -54,7 +54,7 @@ payload: IEEE f16 [rms, peak, low, mid, high] × n
 
 `Silence | Intro | Verse | BuildUp | Drop | Break | Breakdown | Chorus | Bridge | Outro | Unknown`
 
-ONNX 优先；失败能量切段 + `Unknown`。Chorus 能量峰视作 drop-equivalent。
+当前默认使用 2/4/8 小节多尺度音色变化与重复关系，生成带置信度的 `phrase_boundaries`；弱起和乐段偏移按实际 downbeat 处理。macOS 12+ 使用 Apple Sound Analysis 系统分类器补充人声证据，2 秒分块预算、单任务、超过 10 分钟跳过。未接入自定义 ONNX 结构权重；未知结构继续为 `Unknown`，分析保持 `partial`。部署与实测见根目录 `ANALYSIS_ENHANCEMENT.md`。
 
 自动 cue 生成在本阶段（M4 / PR14），`user_set=0`，不覆盖用户垫。
 

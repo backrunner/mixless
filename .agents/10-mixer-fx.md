@@ -32,10 +32,10 @@ Deck 传输（本来就有，列在这里算齐）：vinyl / slip、独立 rate 
 
 ## 效果器（v1 目录）
 
-拓扑不变：每碟 **3 个预分配 insert** + **共享 Echo / Reverb send** + **传输类 FX**（不进 insert，改播放头）。
+拓扑不变：每碟 **4 个预分配 insert** + **共享 Echo / Reverb send** + **传输类 FX**（不进 insert，改播放头）。
 
 ```
-Playhead+Loop → Stretch/Resample → EQ+Kill+Filter → Insert0..2 → Send tap
+Playhead+Loop → Stretch/Resample → EQ+Kill+Filter → Insert0..3 → Send tap
                                                               → Fader → XF → Master+Limiter
 Send tap → Echo + Reverb → Master
 Insert 后、Fader 前 → PFL（仅第二设备）
@@ -80,7 +80,7 @@ Automix `echo_out` 走 send echo 的 freeze，不另开图。
 |------|------|
 | 稳跑块 | 256 frames @ 48 k |
 | jog 块 | 128 frames |
-| Callback p99，**两碟 + 每碟 3 insert + 双 send + limiter + stretch 音乐档** | **< 50% block**（256 帧 → < 2.67 ms） |
+| Callback p99，**两碟 + 每碟 4 insert + 双 send + limiter + stretch 音乐档** | **< 50% block**（256 帧 → < 2.67 ms） |
 | 同上，scratch 档（无 STFT） | **< 35% block** |
 | 单 insert | < 0.12 ms / 256 帧 |
 | Echo + Reverb 合计 | < 0.25 ms / 256 帧 |
@@ -110,11 +110,11 @@ SetChannelFilter { deck, amount } // -1..1
 SetXfReverse { on }
 SetQuantize { on }
 BeatJump { deck, bars }           // 有符号
-SetFx { deck, slot: Insert0..2 | SendEcho | SendReverb, kind, params }
+SetFx { deck, slot: Insert0..3 | SendEcho | SendReverb, kind, params }
 SetFxBypass { deck, slot, on }
 SetRoll { deck, division, on }
 SetReverse { deck, on }
 SetBrake { deck, on }
 ```
 
-`FxSlot`：`Insert0 | Insert1 | Insert2 | SendEcho | SendReverb`。
+`FxSlot`：`Insert0 | Insert1 | Insert2 | Insert3 | SendEcho | SendReverb`。

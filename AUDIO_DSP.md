@@ -7,7 +7,7 @@ they never synthesize PCM or own the audible playback position.
 
 Per deck: source-rate conversion + source-domain loop → independent music
 tempo/key processing (or low-latency scratch resampling) → transport envelope →
-phase-aligned LR4 three-band isolator → resonant channel filter → three stereo
+phase-aligned LR4 three-band isolator → resonant channel filter → four stereo
 insert effects → smoothed trim/channel fader → smoothed crossfader.
 
 Post-fader/crossfader sends feed shared wet-only Echo and Reverb returns. Those
@@ -78,23 +78,49 @@ limiter. Signals below the limiter ceiling are not continuously waveshaped.
 
 ### FX
 
-The five currently selectable UI effects all execute real DSP:
+Each deck has four independent preallocated insert slots. The shared protocol
+catalogue exposes **70 selectable types in 10 groups**; the desktop's `⋯`
+button opens a grouped selector, description, beat controls and parameter knobs.
+See [FX_CATALOGUE.md](FX_CATALOGUE.md) for sources, the full list and mappings.
 
-| Effect | Processing |
+| Family | Processing |
 | --- | --- |
-| Echo | Tempo-derived stereo delay, bounded feedback, crossfaded delay-time changes |
-| Flanger | Stereo LFO-modulated fractional delay and bounded feedback |
-| Gate | Beat-duration rhythmic gate with 2 ms edge ramps |
-| Reverb | Four-line orthogonal feedback network with high-frequency damping |
-| Phaser | Six all-pass stages per channel, modulated cutoff and feedback |
+| Echo / Delay | Stereo feedback, ping-pong routing, filtered/saturated tape repeats, multi-tap patterns, pitch feedback and reverse chunks |
+| Reverb | Four-line orthogonal feedback network; large-room reflections and freeze feedback |
+| Modulation | Flanger/Jet, six-stage phaser, chorus, tremolo, auto-pan and three overlapping Mobius combs |
+| Filter | Low/high/band-pass, beat sweep, envelope follower and two-formant vowel filter |
+| Rhythm / Loop | Double-buffer capture, reverse order, repeat, stutter and slice permutations; independent live deck timeline |
+| Pitch / Spectral | Signalsmith insert pitch, overlapping granular read heads, 12-band vocoder, ring modulation, tuned combs and 256-point spectral transform |
+| Texture / Dynamics | Quantisation, sample hold, saturation, DC blocking, envelope compression and gate hysteresis |
+| Noise / Sweep | Stereo PRNG noise with filter, gate, beat pumping, input-envelope following or one-shot rise |
+| Release | Echo/reverb input closure, captured playback slowdown/backspin, one-shot and fade-out |
+| Macro | One depth control combines filter, echo, room and noise |
 
-Insert dry/wet and bypass transitions use 5 ms ramps. A held FX restores its
-previous latch state on release. Send returns contain no extra dry signal.
-Mix zero is dry for inserts and silent for returns. Echo/reverb buffers continue
-advancing when bypassed, so bypass does not freeze stale audio in time.
-Changing effect type first fades out, invalidates delay history in constant
-time, then fades the selected effect in. Unknown FX names and non-finite
-parameters are rejected.
+Insert mix/bypass transitions use 5 ms ramps. HOLD restores the previous latch
+state on release. Send returns are wet-only. Mix zero is dry for inserts and
+silent for returns. Echo/reverb tails continue advancing while bypassed. A type
+change first fades out, invalidates histories, then fades in. Capture resets
+invalidate counters without clearing large sample banks. Unknown names and
+non-finite controls are rejected by the host.
+
+Pitch inserts use the already-vendored Signalsmith engine with a 32 ms window,
+8 ms hop and 128-frame streaming blocks. They process equal input/output frame
+counts and add wet-path latency (approximately 36 ms plus 128 frames at 48 kHz);
+there is no source lookahead inside an insert. Granulizer uses overlapping
+windowed read heads; Spectralizer uses four Hann overlaps with 256 frames of
+latency. Wet latency is not compensated in the dry path.
+
+Capture FX first collect the selected interval while passing live input, then
+play the captured sound. Reverse/repeat/stop inserts do not alter the source
+playhead: bypass returns to the continuing deck timeline. The separate source
+transport Roll/Reverse/Brake commands retain their existing behavior. BEATS
+limits capture and delay types to four beats (12 seconds at 20 BPM). Captured
+interval length is latched until the next activation; a new beat setting takes
+effect when rearmed. Release FX are rearmed by toggling OFF/ON or HOLD.
+
+These are Mixless algorithms covering DJ audio effect categories. They do not
+claim sample-identical recreation of proprietary presets or reproduce vendor
+pad banks, Merge FX routing, video FX, Neural Mix stems or Audio Unit hosting.
 
 ## Real-time work
 
@@ -118,7 +144,7 @@ On this machine, set `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Develo
 ```sh
 cargo test -p mixless-engine
 cargo test --workspace --exclude mixless-desktop
-cargo test -p mixless-engine --release audio_callback_budget -- --ignored --nocapture
+cargo test -p mixless-engine --release callback_budget -- --ignored --nocapture --test-threads=1
 cargo check -p mixless-desktop
 cargo build -p mixless-desktop --release
 ```
@@ -132,7 +158,7 @@ effect bypass, echo timing and feedback, reverb decay, fast-scratch alias
 rejection, forward/reverse/held/released scratching, slip, cue continuity,
 source lock contention, and full effect-chain finite/bounded output.
 The ignored benchmark renders 60 seconds per workload with preallocated output:
-two decks with independent tempo/key offsets, six inserts, filters and both
+two decks with independent tempo/key offsets, eight inserts, filters and both
 Echo/Reverb send returns, at 256 frames in music playback and 128 frames alternating scratch
 with released music playback. Jog commands are emitted only while touching.
 It reports p50/p99 DSP callback time separately from device latency, UI rendering
@@ -149,10 +175,12 @@ and OS scheduling. Its acceptance bounds are
 - The limiter bounds discrete sample peaks; it is not a lookahead/oversampled
   true-peak mastering limiter. The scratch filter is finite-length, not an
   ideal brick-wall anti-alias filter.
-- Shared sends are post-fader/crossfader. Gate timing is tempo-synchronized but
-  its LFO phase is local to the effect, not locked to an analyzed beat grid.
+- Shared sends are post-fader/crossfader. Insert modulation follows the supplied
+  deck beat grid; without a grid it uses the local tempo clock. Capture starts
+  when activated; it is not quantized to the next grid boundary.
 - Reverb is a compact FDN implementation, not a modeled room or convolution
-  reverb. FX currently outside the five-item UI are not implemented here.
+  reverb. Echo variants share the same preallocated delay network, and the
+  current catalogue does not attempt to reproduce vendor-specific presets.
 - Hardware loopback latency, real-device xrun rates, headphones/PFL routing and
   subjective listening with representative tracks still require validation.
   Offline callback timing cannot certify audible quality or 60 fps UI rendering.

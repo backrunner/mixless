@@ -70,7 +70,7 @@ Vinyl 切入/切出：按两档 `latency_frames` 差补偿播放头 + 2–6 ms x
 完整目录、参数、CPU 预算见 [10-mixer-fx.md](./10-mixer-fx.md)。摘要：
 
 - 3-band isolator + kill；channel filter；XF 四条曲线 + reverse；master limiter。
-- 每碟 **3 insert**（Gate / Flanger / Phaser / Crush / Dist / Chorus）。
+- 每碟 **4 insert**（Gate / Flanger / Phaser / Crush / Dist / Chorus）。
 - 共享 Echo（含 echo-out freeze）+ Reverb。
 - 传输类：Roll / Reverse / Brake。`mix==0` 整段 bypass。
 - Delay / FDN / limiter 全部按 `actual_sr` 预分配。

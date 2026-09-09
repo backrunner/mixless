@@ -9,6 +9,7 @@ use gpui::{
 };
 use mixless_protocol::DeckId;
 
+use crate::fader::{CAP_HEIGHT, FaderLane};
 use crate::state::{FaderCtl, KnobCtl, UiState};
 use crate::theme;
 
@@ -161,6 +162,7 @@ pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
 
     let down = cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
         window.prevent_default();
+        cx.stop_propagation();
         if ev.click_count >= 2 {
             s.reset_knob(ctl);
         } else {
@@ -270,7 +272,7 @@ pub struct FaderSpec {
     pub ticks: bool,
 }
 
-/// Vertical fader: click anywhere in the lane to jump, then drag. The
+/// Vertical fader: grab the cap without jumping, or click the lane to jump. The
 /// wrapper's height is left to the caller (`.h_full()` / `.flex_1()`).
 pub fn fader_v(spec: FaderSpec, cx: &mut Context<UiState>) -> gpui::Stateful<gpui::Div> {
     let FaderSpec {
@@ -294,11 +296,12 @@ pub fn fader_v(spec: FaderSpec, cx: &mut Context<UiState>) -> gpui::Stateful<gpu
 
     let down = cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
         window.prevent_default();
+        cx.stop_propagation();
         if ev.click_count >= 2 {
             s.reset_fader(ctl);
         } else {
             let b = *cell_down.lock().unwrap();
-            s.begin_fader(ctl, ev.position.y.into(), b);
+            s.begin_fader(ctl, ev.position.y.into(), b, t);
         }
         cx.notify();
     });
@@ -318,7 +321,14 @@ pub fn fader_v(spec: FaderSpec, cx: &mut Context<UiState>) -> gpui::Stateful<gpu
                 move |_, _, _| {},
                 move |bounds, _, window, _| {
                     *cell_paint.lock().unwrap() = bounds;
-                    paint_fader_v(window, bounds, t, width, color, ticks);
+                    paint_fader_v(
+                        window,
+                        bounds,
+                        t,
+                        width,
+                        color,
+                        ticks.then_some((ctl.reset_value() - min) / (max - min)),
+                    );
                 },
             )
             .h_full()
@@ -332,7 +342,7 @@ fn paint_fader_v(
     t: f32,
     width: f32,
     color: Rgba,
-    ticks: bool,
+    reference: Option<f32>,
 ) {
     let cx = pf(bounds.origin.x) + pf(bounds.size.width) / 2.0;
     let top = pf(bounds.origin.y);
@@ -371,26 +381,30 @@ fn paint_fader_v(
         theme::with_alpha(gpui::white(), 0.045),
     );
 
-    /* concise scale ticks along both sides; center detent is brighter */
-    if ticks {
-        let n_ticks = 7;
+    let lane = FaderLane::new(top, h);
+
+    /* Scale and reset marker share the cap center's usable travel. */
+    if reference.is_some() {
+        // Channel level is a unipolar 0–100 scale in ten-point increments.
+        let n_ticks = if reference == Some(0.0) { 11 } else { 7 };
         for i in 0..n_ticks {
-            let ty = top + h * (i as f32 / (n_ticks - 1) as f32);
-            let center = i == n_ticks / 2;
-            let (tw, th, col) = if center {
-                (4.5, 1.2, theme::MUTED)
-            } else {
-                (3.0, 1.0, theme::TRACK_DARK)
-            };
+            let ty = lane.center(i as f32 / (n_ticks - 1) as f32);
+            let (tw, th, col) = (3.0, 1.0, theme::TRACK_DARK);
             quad_fill(window, sx - 3.0 - tw, ty - th / 2.0, tw, th, col);
             quad_fill(window, sx + width + 3.0, ty - th / 2.0, tw, th, col);
         }
     }
 
+    if let Some(reference) = reference {
+        let y = lane.center(reference);
+        quad_fill(window, sx - 7.5, y - 0.6, 4.5, 1.2, theme::MUTED);
+        quad_fill(window, sx + width + 3.0, y - 0.6, 4.5, 1.2, theme::MUTED);
+    }
+
     /* cap: one shadow, crisp bevels and a recessed deck-colored stripe */
-    let cap_h = 26.0f32;
+    let cap_h = CAP_HEIGHT;
     let cap_w = width + 11.0;
-    let cap_y = top + (1.0 - t) * (h - cap_h);
+    let cap_y = lane.center(t) - cap_h / 2.0;
     let cap_x = cx - cap_w / 2.0;
     let r = 3.5f32;
 
@@ -470,6 +484,7 @@ pub fn xfader(value: f32, cx: &mut Context<UiState>) -> impl IntoElement {
 
     let down = cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
         window.prevent_default();
+        cx.stop_propagation();
         if ev.click_count >= 2 {
             s.reset_xfader();
         } else {
@@ -716,6 +731,7 @@ pub struct JogSpec {
     pub playing: bool,
     pub color: Rgba,
     pub initial: char,
+    pub end_warning: Option<f32>,
 }
 
 /// Jog wheel that fills its container. Scrubbing is angular: circular pointer
@@ -730,6 +746,7 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
         playing,
         color,
         initial,
+        end_warning,
     } = spec;
 
     let cell = Arc::new(Mutex::new(Bounds::<Pixels>::default()));
@@ -738,6 +755,7 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
 
     let down = cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
         window.prevent_default();
+        cx.stop_propagation();
         let b = *cell_down.lock().unwrap();
         s.begin_jog(deck, ev.position.x.into(), ev.position.y.into(), b);
         cx.notify();
@@ -776,6 +794,7 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
                         src_sample_rate,
                         playing,
                         color,
+                        end_warning,
                     );
                 },
             )
@@ -793,6 +812,11 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
                 .text_color(theme::TEXT)
                 .child(initial.to_string()),
         )
+        .when_some(end_warning, |el, seconds| el.child(
+            div().absolute().bottom(px(8.)).w_full().flex().justify_center()
+                .text_size(px(10.)).text_color(theme::LED_RED)
+                .child(format!("-{:.0}s", seconds.ceil()))
+        ))
 }
 
 fn paint_jog(
@@ -803,6 +827,7 @@ fn paint_jog(
     src_sr: u32,
     playing: bool,
     color: Rgba,
+    end_warning: Option<f32>,
 ) {
     let cx = pf(bounds.origin.x) + pf(bounds.size.width) / 2.0;
     let cy = pf(bounds.origin.y) + pf(bounds.size.height) / 2.0;
@@ -883,6 +908,12 @@ fn paint_jog(
             2.0,
             theme::with_alpha(color, 0.45).into(),
         );
+    }
+
+    if let Some(seconds) = end_warning {
+        let speed = if seconds <= 10. { 2. } else { 1. };
+        let pulse = 0.5 + 0.5 * (seconds * speed * std::f32::consts::TAU).sin();
+        quad_ring(window, cx, cy, r - 1., 3.5, theme::with_alpha(theme::LED_RED, 0.3 + pulse * 0.7).into());
     }
 
     // Center label: recessed well with a deck-colored ring.

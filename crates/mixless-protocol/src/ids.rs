@@ -105,8 +105,13 @@ pub enum FxSlot {
     Insert0,
     Insert1,
     Insert2,
+    Insert3,
     SendEcho,
     SendReverb,
+}
+
+impl FxSlot {
+    pub const INSERTS: [Self; 4] = [Self::Insert0, Self::Insert1, Self::Insert2, Self::Insert3];
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +122,16 @@ pub struct FxParams {
     pub rate_hz: Option<f32>,
     pub threshold_db: Option<f32>,
     pub kind: Option<String>,
+    /// Modulation depth (0..1), used by chorus/flanger/phaser/tremolo/filter.
+    pub depth: Option<f32>,
+    /// Drive amount (0..1), used by distortion/bitcrusher/noise.
+    pub drive: Option<f32>,
+    /// Reverb T60 in seconds (0.2..8), independent of room size.
+    pub decay_seconds: Option<f32>,
+    /// Reverb room size (0..1).
+    pub size: Option<f32>,
+    /// Reverb high-frequency damping (0..1).
+    pub damping: Option<f32>,
 }
 
 impl Default for FxParams {
@@ -128,6 +143,11 @@ impl Default for FxParams {
             rate_hz: None,
             threshold_db: None,
             kind: None,
+            depth: None,
+            drive: None,
+            decay_seconds: None,
+            size: None,
+            damping: None,
         }
     }
 }

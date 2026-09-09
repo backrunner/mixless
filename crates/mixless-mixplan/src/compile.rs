@@ -1,7 +1,7 @@
 use crate::{grid::Grid, Candidate};
 use mixless_protocol::{
     AutomationLanes, EqLane, FilterLane, LoopOp, MixPlan, MixPlanSummary, PerformanceOffset,
-    Polyline, StrategyId as S, TrackAnalysis,
+    Polyline, ScratchOp, StrategyId as S, TrackAnalysis,
 };
 
 pub const KILL: f32 = -96.0;
@@ -41,6 +41,16 @@ fn rows(strategy: S) -> Vec<Row> {
             }
             r
         }
+        S::DryCut => vec![
+            [0., -1., 0., -6., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
+            [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
+            [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
+        ],
+        S::ScratchCut => vec![
+            [0., -1., 0., -6., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
+            [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
+            [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
+        ],
         S::DropCut => vec![
             [0., -1., 0., -12., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.6],
@@ -123,6 +133,8 @@ pub(crate) fn compile(
         pitch_b: constant(c.offset_b.pitch_semitones + c.shift_b),
         loop_a: None,
         loop_b: None,
+        scratch_a: None,
+        scratch_b: None,
     };
     if c.strategy == S::PhraseBlend {
         lanes.pitch_b.nodes = vec![
@@ -163,6 +175,21 @@ pub(crate) fn compile(
         let exit_beat = c.in_beat
             + (n * 0.625 * ga.meter() * c.beat_factor).rem_euclid(bars as f32 * gb.meter());
         t_end_b = gb.sec(exit_beat + n * 0.375 * ga.meter() * c.beat_factor);
+    }
+    if c.strategy == S::ScratchCut {
+        let on_bar = (n - 0.5).max(0.0);
+        let peak_bar = (n - 0.25).max(on_bar + 0.0625);
+        let start_beat = c.start_beat + on_bar * ga.meter();
+        let start_src_frame = (ga.sec(start_beat) * a.sample_rate as f32).round().max(0.0) as u64;
+        let bpm = ga.bpm(start_beat) * c.rate_a;
+        let delta = (0.5 * a.sample_rate as f32 * 60. / bpm).round() as i64;
+        lanes.scratch_a = Some(ScratchOp {
+            start_src_frame,
+            peak_delta_frames: -delta,
+            on_bar,
+            peak_bar,
+            off_bar: n,
+        });
     }
     let held_rate = lanes.rate_b.sample(n);
     let held_pitch = lanes.pitch_b.sample(n);

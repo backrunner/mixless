@@ -6,94 +6,105 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-use gpui::{Bounds, Context, FocusHandle, Keystroke, Pixels, SharedString, Window};
+use crate::fader::FaderLane;
+
+use gpui::{AppContext, Bounds, Context, FocusHandle, Keystroke, Pixels, SharedString, Window};
 use mixless_acquire::imports::{ImportReport, ImportService};
 use mixless_acquire_yt::YoutubeMusicAcquire;
 use mixless_protocol::{
-    Command, CueKind, DeckId, EngineSnapshot, EqBand, FxParams, FxSlot, PlaylistId, TempoMap,
-    Track, TrackId, Waveform,
+    Command, CueKind, DeckId, EngineSnapshot, EqBand, FxKind, FxSlot, FxState, PlaylistId,
+    TempoMap, Track, TrackId, Waveform,
 };
 use mixless_spotify::SpotifyClient;
 
 pub struct AppCore {
+    pub analysis: crate::analysis::AnalysisJobs,
+    pub mix_preparation: crate::automix::Preparation,
+    pub automix_commit: Mutex<()>,
+    pub settings: crate::settings::SettingsStore,
+    pub midi_error: Mutex<Option<String>>,
+    pub settings_apply: Mutex<()>,
     pub engine: mixless_engine::Engine,
     pub library: mixless_library::Library,
     pub analyzer: mixless_analyze::Analyzer,
     pub acquired_dir: PathBuf,
-    pub midi: Mutex<Option<mixless_midi::MidiHub>>,
+    pub midi: Mutex<Option<Arc<mixless_midi::MidiHub>>>,
     /// Serializes background loads so a cancelled worker cannot overwrite a manual load.
     pub deck_load: Mutex<()>,
 }
 
 pub enum ImportMsg {
     Progress(String),
+    LibraryChanged,
     Done(Result<ImportReport, String>),
+}
+
+enum ImportRequest {
+    Local(Vec<PathBuf>),
+    Spotify(String),
 }
 
 pub fn app_core() -> Arc<AppCore> {
     // Same data dir as the previous Tauri build, so libraries carry over.
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("app.mixless.desktop");
+    let data_dir = std::env::var_os("MIXLESS_DATA_DIR").map(PathBuf::from).unwrap_or_else(||
+        dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("app.mixless.desktop"));
     std::fs::create_dir_all(&data_dir).ok();
     let acquired_dir = data_dir.join("acquired");
     std::fs::create_dir_all(&acquired_dir).ok();
 
     let library =
         mixless_library::Library::open(&data_dir.join("library.db")).expect("open library");
-    let engine =
-        mixless_engine::Engine::new(mixless_engine::EngineConfig::default()).expect("engine");
-    let midi = mixless_midi::MidiHub::start(data_dir.join("midi.json")).ok();
+    let settings = crate::settings::SettingsStore::load(data_dir.join("preferences.json"));
+    let initial = settings.get();
+    let engine = mixless_engine::Engine::new_with_audio(
+        mixless_engine::EngineConfig {
+            offline: std::env::var_os("MIXLESS_OFFLINE").is_some(),
+            ..Default::default()
+        },
+        initial.audio.clone(),
+    )
+    .expect("engine");
+    initial.apply_playback(&engine);
+    // Open the desktop mixer with both channel caps at their bottom zero mark.
+    // Initialize the engine too, so the first snapshot and actual level agree.
+    for deck in [DeckId::A, DeckId::B] {
+        engine
+            .dispatch(Command::SetChannelFader {
+                deck,
+                value: FaderCtl::Channel(deck).reset_value(),
+            })
+            .expect("initialize channel level");
+    }
+    let midi = mixless_midi::MidiHub::start_with_config(data_dir.join("midi.json"), initial.midi);
+    let midi_error = midi.as_ref().err().map(ToString::to_string);
     Arc::new(AppCore {
+        analysis: crate::analysis::AnalysisJobs::default(),
+        mix_preparation: Default::default(),
+        automix_commit: Mutex::new(()),
         engine,
         library,
         analyzer: mixless_analyze::Analyzer::new(),
         acquired_dir,
-        midi: Mutex::new(midi),
+        settings,
+        midi_error: Mutex::new(midi_error),
+        settings_apply: Mutex::new(()),
+        midi: Mutex::new(midi.ok().map(Arc::new)),
         deck_load: Mutex::new(()),
     })
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WaveLayout {
     Top,
     Center,
 }
 
-#[derive(Clone)]
-pub struct FxUi {
-    pub kind: &'static str,
-    pub on: bool,
-    pub mix: f32,
-}
-
-pub const FX_KINDS: [&str; 5] = ["Echo", "Flanger", "Gate", "Reverb", "Phaser"];
-
-pub fn default_fx() -> [FxUi; 3] {
-    [
-        FxUi {
-            kind: "Echo",
-            on: false,
-            mix: 0.5,
-        },
-        FxUi {
-            kind: "Flanger",
-            on: false,
-            mix: 0.5,
-        },
-        FxUi {
-            kind: "Gate",
-            on: false,
-            mix: 0.5,
-        },
-    ]
-}
-
 /// One drag in progress. Started by a control's mouse-down, tracked by the
 /// root element's mouse-move/up handlers so drags survive leaving the control.
-/// Faders and the crossfader map the pointer position absolutely inside the
-/// captured lane bounds (jump-to-position, like a hardware fader); knobs, the
-/// jog wheel and the waveform use relative motion.
+/// Vertical faders preserve the grab point on the cap; clicking the lane jumps
+/// to that position. The crossfader maps absolutely inside its captured bounds;
+/// knobs, the jog wheel and the waveform use relative motion.
 pub enum DragCtl {
     Knob {
         ctl: KnobCtl,
@@ -102,7 +113,8 @@ pub enum DragCtl {
     },
     Fader {
         ctl: FaderCtl,
-        bounds: Bounds<Pixels>,
+        lane: FaderLane,
+        grab_offset: f32,
     },
     Xfader {
         bounds: Bounds<Pixels>,
@@ -142,6 +154,7 @@ pub enum KnobCtl {
     Resonance(DeckId),
     Eq(DeckId, EqBand),
     FxMix(DeckId, usize),
+    FxParam(DeckId, usize, crate::fx::FxParam),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -159,12 +172,19 @@ impl KnobCtl {
             KnobCtl::Filter(_) => (-1.0, 1.0, 0.01),
             KnobCtl::Resonance(_) => (0.0, 1.0, 0.01),
             KnobCtl::Eq(_, _) => (-12.0, 12.0, 0.1),
-            KnobCtl::FxMix(_, _) => (0.0, 1.0, 0.01),
+            KnobCtl::FxMix(_, _) | KnobCtl::FxParam(_, _, _) => (0.0, 1.0, 0.01),
         }
     }
 }
 
 impl FaderCtl {
+    pub fn reset_value(self) -> f32 {
+        match self {
+            Self::Tempo(_) => 1.0,
+            Self::Channel(_) => 0.0,
+        }
+    }
+
     pub fn range(self) -> (f32, f32, f32) {
         match self {
             FaderCtl::Tempo(_) => (0.88, 1.12, 0.001),
@@ -174,6 +194,10 @@ impl FaderCtl {
 }
 
 pub struct UiState {
+    pub library_view: gpui::Entity<crate::views::library::LibraryView>,
+    pub library_key: Option<crate::views::library::LibraryKey>,
+    settings_revision: u64,
+    pub analysis_revision: u64,
     pub core: Arc<AppCore>,
     pub snapshot: EngineSnapshot,
     pub tracks: Arc<Vec<Track>>,
@@ -183,6 +207,8 @@ pub struct UiState {
     pub focus: DeckId,
     pub url: String,
     pub url_focus: FocusHandle,
+    pub keyboard_focus: FocusHandle,
+    pub show_shortcuts: bool,
     pub show_import_modal: bool,
     pub error: SharedString,
     pub acquire: SharedString,
@@ -192,18 +218,24 @@ pub struct UiState {
     pub picker_open: bool,
     pub show_fx: bool,
     pub wave_layout: WaveLayout,
-    pub fx: [[FxUi; 3]; 2],
+    pub fx: [[FxState; FxSlot::INSERTS.len()]; 2],
+    pub fx_editor: Option<(DeckId, usize)>,
     pub wave: [Option<(i64, Arc<Waveform>)>; 2],
     pub wave_tempo: [Option<Arc<TempoMap>>; 2],
-    grid_rx: [Option<Receiver<Option<TempoMap>>>; 2],
+    grid_rx: [Option<Receiver<Result<TempoMap, String>>>; 2],
+    deck_load_rx: Option<Receiver<Result<(), String>>>,
+    sync_request: Option<crate::beat_sync::SyncRequest>,
     pub drag: Option<DragCtl>,
+    pub pending_drag: Option<(f32, f32)>,
     /// `(deck, slot, was_on)` for the FX button currently held by the mouse.
     /// The root mouse-up capture restores `was_on` even when the pointer leaves
     /// the small HOLD hitbox.
     momentary_fx: Option<(DeckId, usize, bool)>,
     import_rx: Option<Receiver<ImportMsg>>,
+    import_queue: std::collections::VecDeque<ImportRequest>,
     artwork_rx: Option<Receiver<Result<usize, String>>>,
     pub automix_active: bool,
+    pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
     automix_epoch: Arc<AtomicU64>,
     automix_rx: Option<Receiver<crate::automix::AutomixMsg>>,
@@ -220,7 +252,13 @@ impl UiState {
                 .map_err(|error| error.to_string());
             let _ = artwork_tx.send(result);
         });
+        let owner = cx.entity().downgrade();
+        let library_view = cx.new(|_| crate::views::library::LibraryView { owner });
         Self {
+            library_view,
+            library_key: None,
+            settings_revision: 0,
+            analysis_revision: 0,
             core: core.clone(),
             snapshot: core.engine.snapshot(),
             tracks: Arc::new(Vec::new()),
@@ -230,6 +268,8 @@ impl UiState {
             focus: DeckId::A,
             url: String::new(),
             url_focus: cx.focus_handle(),
+            keyboard_focus: cx.focus_handle(),
+            show_shortcuts: false,
             show_import_modal: false,
             error: "".into(),
             acquire: "".into(),
@@ -239,15 +279,24 @@ impl UiState {
             picker_open: false,
             show_fx: true,
             wave_layout: WaveLayout::Top,
-            fx: [default_fx(), default_fx()],
+            fx: [
+                mixless_protocol::default_fx(),
+                mixless_protocol::default_fx(),
+            ],
+            fx_editor: None,
             wave: [None, None],
             wave_tempo: [None, None],
             grid_rx: [None, None],
+            deck_load_rx: None,
+            sync_request: None,
             drag: None,
+            pending_drag: None,
             momentary_fx: None,
             import_rx: None,
+            import_queue: Default::default(),
             artwork_rx: Some(artwork_rx),
             automix_active: false,
+            automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
             automix_epoch: Arc::new(AtomicU64::new(0)),
             automix_rx: None,
@@ -261,6 +310,13 @@ impl UiState {
     /* ---- engine commands ------------------------------------------------ */
 
     pub fn dispatch(&mut self, cmd: Command) {
+        if self
+            .sync_request
+            .as_ref()
+            .is_some_and(|r| r.cancelled_by(&cmd))
+        {
+            self.sync_request = None;
+        }
         if let Err(e) = self.core.engine.dispatch(cmd) {
             self.error = e.to_string().into();
         }
@@ -270,11 +326,37 @@ impl UiState {
         self.dispatch(Command::PlayPause { deck });
     }
 
+    pub fn grid_pending(&self, deck: DeckId) -> bool {
+        self.grid_rx[deck.index()].is_some()
+    }
+
     pub fn sync(&mut self, deck: DeckId) {
-        self.dispatch(Command::Sync {
-            deck,
-            keylock: self.deck(deck).keylock,
-        });
+        let snapshot = self.core.engine.snapshot();
+        let d = snapshot.deck(deck);
+        self.error = "".into();
+        if self.sync_waiting(deck) {
+            self.sync_request = None;
+            return;
+        }
+        self.sync_request = None;
+        if d.synced {
+            self.dispatch(Command::DisableSync { deck });
+            return;
+        }
+        // Cancel the host planner as well as its active audio plan, so a
+        // background transition cannot take timing back after manual Sync.
+        if let Some(request) = crate::beat_sync::SyncRequest::new(deck, &snapshot) {
+            self.stop_automix();
+            self.sync_request = Some(request);
+        } else {
+            self.error = "Load two tracks and turn off reverse before syncing".into();
+        }
+    }
+
+    pub fn sync_waiting(&self, deck: DeckId) -> bool {
+        self.sync_request
+            .as_ref()
+            .is_some_and(|r| r.follower == deck)
     }
 
     pub fn jump_cue(&mut self, deck: DeckId, index: usize) {
@@ -284,19 +366,40 @@ impl UiState {
         });
     }
 
-    pub fn set_cue_now(&mut self, deck: DeckId, index: usize) {
-        let frame = self.deck(deck).frame;
-        self.core.engine.set_cue_frame(deck, index as u8, frame);
-        if let Some(id) = self.deck(deck).track_id {
-            let _ = self
-                .core
-                .library
-                .set_cue(id, index as u8, frame, CueKind::Hot, true);
+    /// Empty pads set a cue; populated pads jump without changing playback.
+    pub fn trigger_cue(&mut self, deck: DeckId, index: usize, replace: bool) {
+        let snapshot = self.core.engine.snapshot();
+        let d = &snapshot.decks[deck.index()];
+        if index >= d.cues.len() || d.track_id.is_none() {
+            return;
+        }
+        if replace || d.cues[index].is_none() {
+            self.set_cue_now(deck, index);
+        } else {
+            self.jump_cue(deck, index);
         }
     }
 
-    pub fn set_loop(&mut self, deck: DeckId, bars: u16, on: bool) {
-        self.dispatch(Command::SetLoop { deck, bars, on });
+    pub fn set_cue_now(&mut self, deck: DeckId, index: usize) {
+        let snapshot = self.core.engine.snapshot();
+        let d = &snapshot.decks[deck.index()];
+        let Some(id) = d.track_id else { return };
+        if index >= d.cues.len() {
+            return;
+        }
+        let frame = d.frame;
+        self.core.engine.set_cue_frame(deck, index as u8, frame);
+        if let Err(error) = self
+            .core
+            .library
+            .set_cue(id, index as u8, frame, CueKind::Hot, true)
+        {
+            self.error = format!("Could not save cue {}: {error}", index + 1).into();
+        }
+    }
+
+    pub fn set_loop(&mut self, deck: DeckId, beats: f32, on: bool) {
+        self.dispatch(Command::SetLoopBeats { deck, beats, on });
     }
 
     pub fn set_pfl(&mut self, deck: DeckId, on: bool) {
@@ -308,14 +411,13 @@ impl UiState {
     }
 
     pub fn cycle_fx(&mut self, deck: DeckId, slot: usize, dir: i32) {
-        let kinds = FX_KINDS;
+        let kinds = FxKind::ALL;
         let idx = kinds
             .iter()
             .position(|k| *k == self.fx[deck.index()][slot].kind)
             .unwrap_or(0);
         let next = kinds[(idx as i32 + dir).rem_euclid(kinds.len() as i32) as usize];
-        self.fx[deck.index()][slot].kind = next;
-        self.apply_fx(deck, slot);
+        self.select_fx(deck, slot, next);
     }
 
     pub fn toggle_fx(&mut self, deck: DeckId, slot: usize) {
@@ -388,31 +490,25 @@ impl UiState {
             KnobCtl::Resonance(_) => 0.35,
             KnobCtl::Eq(_, _) => 0.0,
             KnobCtl::FxMix(_, _) => 0.5,
+            KnobCtl::FxParam(deck, slot, param) => {
+                param.value(&FxState::new(self.fx[deck.index()][slot].kind))
+            }
         };
         self.set_knob_value(ctl, value);
     }
 
     pub fn reset_fader(&mut self, ctl: FaderCtl) {
-        let value = match ctl {
-            FaderCtl::Tempo(_) => 1.0,
-            // The engine's neutral channel level is 0.8, matching its startup
-            // snapshot and leaving a little headroom for live mixing.
-            FaderCtl::Channel(_) => 0.8,
-        };
-        self.set_fader_value(ctl, value);
+        self.end_drag();
+        self.set_fader_value(ctl, ctl.reset_value());
     }
 
     pub fn reset_xfader(&mut self) {
         self.dispatch(Command::SetCrossfader { value: 0.0 });
     }
 
-    fn apply_fx(&mut self, deck: DeckId, slot: usize) {
+    pub(crate) fn apply_fx(&mut self, deck: DeckId, slot: usize) {
         let fx = &self.fx[deck.index()][slot];
-        let params = FxParams {
-            mix: fx.mix,
-            kind: Some(fx.kind.to_lowercase()),
-            ..Default::default()
-        };
+        let params = fx.params();
         self.dispatch(Command::SetFx {
             deck: Some(deck),
             slot: fx_slot(slot),
@@ -431,12 +527,18 @@ impl UiState {
         });
     }
 
-    pub fn begin_fader(&mut self, ctl: FaderCtl, y: f32, bounds: Bounds<Pixels>) {
-        let (min, max, _) = ctl.range();
-        let t = 1.0
-            - ((y - f32::from(bounds.origin.y)) / f32::from(bounds.size.height)).clamp(0.0, 1.0);
-        self.set_fader_value(ctl, min + t * (max - min));
-        self.drag = Some(DragCtl::Fader { ctl, bounds });
+    pub fn begin_fader(&mut self, ctl: FaderCtl, y: f32, bounds: Bounds<Pixels>, displayed: f32) {
+        let lane = FaderLane::new(bounds.origin.y.into(), bounds.size.height.into());
+        let grab = lane.grab_offset(y, displayed);
+        if grab.is_none() {
+            let (min, max, _) = ctl.range();
+            self.set_fader_value(ctl, min + lane.value(y) * (max - min));
+        }
+        self.drag = Some(DragCtl::Fader {
+            ctl,
+            lane,
+            grab_offset: grab.unwrap_or(0.0),
+        });
     }
 
     pub fn begin_xfader(&mut self, x: f32, bounds: Bounds<Pixels>) {
@@ -451,6 +553,10 @@ impl UiState {
     /// circular gesture scrub exactly 1.8 s of audio, matching the marker.
     pub fn begin_jog(&mut self, deck: DeckId, x: f32, y: f32, bounds: Bounds<Pixels>) {
         self.end_drag();
+        if self.deck(deck).frames == 0 {
+            return;
+        }
+        self.focus = deck;
         self.dispatch(Command::SetJogTouch {
             deck,
             touching: true,
@@ -488,6 +594,10 @@ impl UiState {
     /// Begin a waveform scrub along its time axis.
     pub fn begin_wave(&mut self, deck: DeckId, vertical: bool, pos: f32, frames_per_px: f32) {
         self.end_drag();
+        if self.deck(deck).frames == 0 {
+            return;
+        }
+        self.focus = deck;
         self.dispatch(Command::SetJogTouch {
             deck,
             touching: true,
@@ -518,13 +628,19 @@ impl UiState {
                     start_val,
                 });
             }
-            Some(DragCtl::Fader { ctl, bounds }) => {
+            Some(DragCtl::Fader {
+                ctl,
+                lane,
+                grab_offset,
+            }) => {
                 let (min, max, _) = ctl.range();
-                let t = 1.0
-                    - ((y - f32::from(bounds.origin.y)) / f32::from(bounds.size.height))
-                        .clamp(0.0, 1.0);
+                let t = lane.value(y - grab_offset);
                 self.set_fader_value(ctl, min + t * (max - min));
-                self.drag = Some(DragCtl::Fader { ctl, bounds });
+                self.drag = Some(DragCtl::Fader {
+                    ctl,
+                    lane,
+                    grab_offset,
+                });
             }
             Some(DragCtl::Xfader { bounds }) => {
                 let t = ((x - f32::from(bounds.origin.x)) / f32::from(bounds.size.width))
@@ -594,9 +710,9 @@ impl UiState {
                 frames_per_px,
                 mut last_pos,
             }) => {
-                // Horizontal lanes scrub forward on rightward motion; vertical
-                // lanes scrub forward on upward motion.
-                let delta = if vertical { last_pos - y } else { x - last_pos };
+                // Grab the waveform: moving content right/down moves source
+                // time backward under the fixed playhead in either layout.
+                let delta = last_pos - if vertical { y } else { x };
                 let frames = delta * frames_per_px;
                 if frames.abs() >= 0.01 {
                     self.dispatch(Command::Jog {
@@ -617,6 +733,7 @@ impl UiState {
     }
 
     pub fn end_drag(&mut self) {
+        self.pending_drag = None;
         if let Some(DragCtl::Jog { deck, .. } | DragCtl::Wave { deck, .. }) = self.drag.take() {
             self.dispatch(Command::SetJogTouch {
                 deck,
@@ -634,6 +751,7 @@ impl UiState {
             KnobCtl::Resonance(d) => self.deck(d).filter_resonance,
             KnobCtl::Eq(d, band) => self.deck(d).eq_db[band.index()],
             KnobCtl::FxMix(d, s) => self.fx[d.index()][s].mix,
+            KnobCtl::FxParam(d, s, param) => param.value(&self.fx[d.index()][s]),
         }
     }
 
@@ -656,6 +774,10 @@ impl UiState {
                 db: v,
             }),
             KnobCtl::FxMix(d, s) => self.set_fx_mix(d, s, v),
+            KnobCtl::FxParam(d, s, param) => {
+                param.set(&mut self.fx[d.index()][s], v);
+                self.apply_fx(d, s);
+            }
         }
     }
 
@@ -682,7 +804,7 @@ impl UiState {
                 window.blur();
             }
             "enter" => {
-                if !self.busy && !self.url.trim().is_empty() {
+                if !self.url.trim().is_empty() {
                     let url = self.url.trim().to_string();
                     self.import_spotify(url);
                 }
@@ -729,8 +851,16 @@ impl UiState {
         } else {
             self.core.library.list_tracks().map_err(|e| e.to_string())
         } {
-            Ok(list) => self.tracks = Arc::new(list),
-            Err(e) => self.error = e.to_string().into(),
+            Ok(list) => {
+                crate::analysis::schedule(&self.core, &list);
+                crate::automix::prepare_playlist(&self.core, list.iter().map(|t| t.id).collect());
+                self.tracks = Arc::new(list)
+            }
+            Err(e) => {
+                self.tracks = Arc::new(Vec::new());
+                self.track_sel = None;
+                self.error = e.into();
+            }
         }
     }
 
@@ -748,44 +878,56 @@ impl UiState {
     }
 
     pub fn load_deck(&mut self, deck: DeckId, track_id: TrackId) {
+        self.sync_request = None;
+        if self.deck_load_rx.is_some() {
+            return;
+        }
         self.stop_automix();
         let core = self.core.clone();
+        let (tx, rx) = channel();
+        self.deck_load_rx = Some(rx);
         std::thread::spawn(move || {
-            load_deck_blocking(&core, deck, track_id);
+            let result = load_deck_blocking(&core, deck, track_id);
+            let _ = tx.send(result);
         });
     }
 
     pub fn toggle_automix(&mut self) {
+        self.sync_request = None;
         if self.automix_active {
             self.stop_automix();
             return;
         }
-        let tracks: Vec<_> = self
-            .playlist_sel
-            .and_then(|id| {
-                self.core
-                    .library
-                    .playlist_tracks(mixless_protocol::PlaylistId(id))
-                    .ok()
-            })
-            .map(|tracks| tracks.into_iter().map(|track| track.id).collect())
-            .unwrap_or_else(|| self.tracks.iter().map(|t| t.id).collect());
-        if tracks.len() < 2 {
-            self.error = "Select at least two local tracks in the library or a playlist".into();
+        let tracks: Vec<_> = if let Some(id) = self.playlist_sel {
+            match self.core.library.playlist_tracks(PlaylistId(id)) {
+                Ok(tracks) => tracks.into_iter().map(|track| track.id).collect(),
+                Err(error) => {
+                    self.error = error.to_string().into();
+                    return;
+                }
+            }
+        } else {
+            self.tracks.iter().map(|track| track.id).collect()
+        };
+        if tracks.is_empty() {
+            self.error = "Import a track to start Automix".into();
             return;
         }
         let generation = self.automix_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         self.automix_active = true;
-        self.automix_status = "Preparing transition…".into();
+        self.automix_status = "Preparing the next track".into();
         self.error = "".into();
         let (tx, rx) = channel();
         self.automix_rx = Some(rx);
         let core = self.core.clone();
         let epoch = self.automix_epoch.clone();
-        std::thread::spawn(move || crate::automix::run(core, tracks, epoch, generation, tx));
+        let shuffle = self.automix_shuffle.clone();
+        std::thread::spawn(move || crate::automix::run(core, tracks, shuffle, epoch, generation, tx));
     }
 
     pub fn stop_automix(&mut self) {
+        let core = self.core.clone();
+        let _commit = core.automix_commit.lock().expect("automix commit");
         self.automix_epoch.fetch_add(1, Ordering::AcqRel);
         self.automix_active = false;
         self.automix_status.clear();
@@ -796,7 +938,7 @@ impl UiState {
     /* ---- imports ---------------------------------------------------------- */
 
     pub fn choose_local(&mut self, folders: bool, cx: &mut Context<Self>) {
-        if self.busy || self.picker_open {
+        if self.picker_open {
             return;
         }
         self.picker_open = true;
@@ -834,43 +976,65 @@ impl UiState {
     }
 
     pub fn import_files(&mut self, paths: Vec<PathBuf>) {
-        if self.busy || paths.is_empty() {
-            return;
+        if paths.is_empty() { return; }
+        // Publish selected directories immediately, including queued and empty ones.
+        let mut first = None;
+        for path in &paths {
+            if path.is_dir() {
+                match self.core.library.register_folder(path) {
+                    Ok(id) => { first.get_or_insert(id); }
+                    Err(error) => self.error = error.to_string().into(),
+                }
+            }
         }
-        self.busy = true;
-        self.error = "".into();
-        self.acquire = "Preparing local import…".into();
-        self.import_details.clear();
-        let (tx, rx) = channel::<ImportMsg>();
-        self.import_rx = Some(rx);
-        let core = self.core.clone();
-        std::thread::spawn(move || {
-            import_files_blocking(&core, paths, &tx);
-        });
+        self.refresh_playlists();
+        if let Some(id) = first { self.select_playlist(Some(id.0)); }
+        self.import_queue.push_back(ImportRequest::Local(paths));
+        self.start_next_import();
     }
 
     pub fn import_spotify(&mut self, url: String) {
-        if self.busy {
-            return;
-        }
+        self.import_queue.push_back(ImportRequest::Spotify(url));
+        self.start_next_import();
+    }
+
+    fn start_next_import(&mut self) {
+        if self.import_rx.is_some() { return; }
+        let Some(request) = self.import_queue.pop_front() else { self.busy = false; return };
         self.busy = true;
         self.error = "".into();
-        self.acquire = "Reading Spotify playlist…".into();
-        self.import_details.clear();
-        let (tx, rx) = channel::<ImportMsg>();
+        self.acquire = match &request {
+            ImportRequest::Local(_) => "Finding audio files",
+            ImportRequest::Spotify(_) => "Reading playlist",
+        }.into();
+        let (tx, rx) = channel();
         self.import_rx = Some(rx);
         let core = self.core.clone();
-        std::thread::spawn(move || {
-            import_spotify_blocking(&core, &url, &tx);
+        std::thread::spawn(move || match request {
+            ImportRequest::Local(paths) => import_files_blocking(&core, paths, &tx),
+            ImportRequest::Spotify(url) => import_spotify_blocking(&core, &url, &tx),
         });
     }
 
-    /* ---- poll ------------------------------------------------------------ */
-
-    /// Pull engine snapshot, drain MIDI + import progress, refresh waveform
-    /// caches. Returns whether any UI-visible state changed.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
+        let analysis_revision = self.core.analysis.revision.load(Ordering::Acquire);
+        if self.analysis_revision != analysis_revision {
+            self.analysis_revision = analysis_revision;
+            self.refresh_tracks();
+            if !self.busy {
+                self.acquire = self.core.analysis.summary().into();
+            }
+            changed = true;
+        }
+        let revision = self.core.settings.revision();
+        if self.settings_revision != revision {
+            let settings = self.core.settings.get();
+            self.wave_layout = settings.wave_layout;
+            self.show_fx = settings.show_fx;
+            self.settings_revision = revision;
+            changed = true;
+        }
         if let Some(rx) = self.automix_rx.take() {
             let mut finished = false;
             while let Ok(message) = rx.try_recv() {
@@ -892,58 +1056,78 @@ impl UiState {
                 self.automix_rx = Some(rx);
             }
         }
-        if let Ok(midi) = self.core.midi.lock() {
-            if let Some(hub) = midi.as_ref() {
-                for cmd in hub.drain() {
-                    let _ = self.core.engine.dispatch(cmd);
-                }
+        let midi_commands = self
+            .core
+            .midi
+            .lock()
+            .ok()
+            .and_then(|midi| midi.as_ref().map(|hub| hub.drain()))
+            .unwrap_or_default();
+        for cmd in midi_commands {
+            match cmd {
+                Command::Sync { deck, .. } => self.sync(deck),
+                Command::JumpCue { deck, index } => self.trigger_cue(deck, index as usize, false),
+                cmd => self.dispatch(cmd),
             }
         }
         let snapshot = self.core.engine.snapshot();
         changed |= snapshot != self.snapshot;
+        self.fx = std::array::from_fn(|index| snapshot.decks[index].fx);
         self.snapshot = snapshot;
+
+        if let Some(rx) = self.deck_load_rx.take() {
+            match rx.try_recv() {
+                Ok(Ok(())) => changed = true,
+                Ok(Err(error)) => {
+                    self.error = error.into();
+                    changed = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => self.deck_load_rx = Some(rx),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.error = "Deck load worker stopped unexpectedly".into();
+                    changed = true;
+                }
+            }
+        }
 
         for (i, deck_id) in [DeckId::A, DeckId::B].into_iter().enumerate() {
             let tid = self.snapshot.decks[i].track_id.map(|t| t.0);
             let cached = self.wave[i].as_ref().map(|(id, _)| *id);
-            if tid != cached {
+            let current_wave = self.core.engine.deck_waveform(deck_id);
+            let wave_changed = match (&self.wave[i], &current_wave) {
+                (Some((_, old)), Some(current)) => !Arc::ptr_eq(old, current),
+                (None, None) => false,
+                _ => true,
+            };
+            if tid != cached || wave_changed {
                 changed = true;
                 self.wave_tempo[i] = None;
-                self.grid_rx[i] = tid.map(|id| {
-                    let (tx, rx) = channel();
-                    let core = self.core.clone();
-                    std::thread::spawn(move || {
-                        let tempo = core
-                            .library
-                            .load_analysis(TrackId(id), mixless_analyze::ANALYSIS_VERSION)
-                            .ok()
-                            .flatten()
-                            .map(|analysis| {
-                                let mut tempo = analysis.tempo;
-                                for positions in [&mut tempo.beats, &mut tempo.downbeats] {
-                                    positions.retain(|value| value.is_finite() && *value >= 0.0);
-                                    positions.sort_by(f32::total_cmp);
-                                    positions.dedup();
-                                }
-                                tempo
-                            });
-                        let _ = tx.send(tempo);
-                    });
-                    rx
-                });
-                self.wave[i] = self
-                    .core
-                    .engine
-                    .deck_waveform(deck_id)
-                    .map(|w| (tid.unwrap_or(-1), Arc::new(w)));
+                self.wave[i] = current_wave.map(|w| (tid.unwrap_or(-1), w));
+            }
+            if tid.is_some() && self.wave_tempo[i].is_none() {
+                if let Ok(loaded) = self.core.analysis.loaded.try_lock() {
+                    if let Some(prepared) = &loaded[i] {
+                        if Some(prepared.track.id.0) == tid {
+                            self.wave_tempo[i] = Some(Arc::new(prepared.analysis.tempo.clone()));
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
 
         for i in 0..2 {
             if let Some(rx) = self.grid_rx[i].take() {
                 match rx.try_recv() {
-                    Ok(tempo) => {
-                        self.wave_tempo[i] = tempo.map(Arc::new);
+                    Ok(result) => {
+                        match result {
+                            Ok(tempo) => self.wave_tempo[i] = Some(Arc::new(tempo)),
+                            Err(error) => {
+                                self.error =
+                                    format!("Deck {}: {error}", if i == 0 { "A" } else { "B" })
+                                        .into()
+                            }
+                        }
                         changed = true;
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => self.grid_rx[i] = Some(rx),
@@ -951,10 +1135,38 @@ impl UiState {
                 }
             }
         }
+        if let Some(request) = self.sync_request.take() {
+            use crate::beat_sync::Progress;
+            let snapshot = self.core.engine.snapshot();
+            match request.progress(
+                &snapshot,
+                std::array::from_fn(|i| self.grid_rx[i].is_some()),
+            ) {
+                Progress::Waiting => self.sync_request = Some(request),
+                Progress::Ready(command) => {
+                    self.dispatch(command);
+                    changed = true;
+                }
+                Progress::Cancelled => changed = true,
+                Progress::Unavailable => {
+                    if self.error.is_empty() {
+                        self.error =
+                            "Beat Sync unavailable: no usable beat grid on one or both tracks"
+                                .into();
+                    }
+                    changed = true;
+                }
+            }
+        }
         if let Some(rx) = self.import_rx.take() {
             let mut finished = false;
             loop {
                 match rx.try_recv() {
+                    Ok(ImportMsg::LibraryChanged) => {
+                        self.refresh_tracks();
+                        self.refresh_playlists();
+                        changed = true;
+                    }
                     Ok(ImportMsg::Progress(p)) => {
                         self.acquire = p.into();
                         changed = true;
@@ -963,7 +1175,7 @@ impl UiState {
                         self.acquire = report.summary().into();
                         self.import_details =
                             report.warning.into_iter().chain(report.errors).collect();
-                        self.playlist_sel = report.playlist.map(|id| id.0);
+
                         self.busy = false;
                         finished = true;
                         changed = true;
@@ -976,7 +1188,7 @@ impl UiState {
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         if !finished {
-                            self.error = "Import worker stopped unexpectedly; completed tracks are retained. Retry the import.".into();
+                            self.error = "Import stopped before all files were added.".into();
                             self.busy = false;
                             finished = true;
                             changed = true;
@@ -989,6 +1201,7 @@ impl UiState {
             if finished {
                 self.refresh_tracks();
                 self.refresh_playlists();
+                self.start_next_import();
             } else {
                 self.import_rx = Some(rx);
             }
@@ -1024,67 +1237,45 @@ impl UiState {
 }
 
 pub fn fx_slot(i: usize) -> FxSlot {
-    match i {
-        0 => FxSlot::Insert0,
-        1 => FxSlot::Insert1,
-        _ => FxSlot::Insert2,
-    }
+    FxSlot::INSERTS[i]
 }
 
 /// Load a track onto a deck on a background thread: decode + waveform are slow.
-pub fn load_deck_blocking(core: &AppCore, deck: DeckId, track_id: TrackId) {
-    let _load = core.deck_load.lock().expect("deck load mutex");
-    let track = match core.library.get_track(track_id) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!("load_deck: {e}");
-            return;
-        }
-    };
+pub fn load_deck_blocking(core: &AppCore, deck: DeckId, track_id: TrackId) -> Result<(), String> {
+    let prepared = crate::analysis::load(core, deck, track_id, || true)?;
+    if !prepared {
+        return Ok(());
+    }
+    let track = core
+        .library
+        .get_track(track_id)
+        .map_err(|e| format!("Load failed: {e}"))?;
     let cues = core.library.cues(track.id).unwrap_or_default();
-    if let Err(e) = core.engine.load_file(
-        deck,
-        track.id,
-        std::path::Path::new(&track.path),
-        track.title.clone(),
-        track.artist.clone(),
-    ) {
-        tracing::warn!("load_deck decode: {e}");
-        return;
-    }
-    if let Some(bpm) = track.bpm {
-        core.engine.set_bpm(deck, bpm);
-    }
     for cue in cues {
         core.engine.set_cue_frame(deck, cue.index, cue.frame);
     }
+    Ok(())
 }
 
-fn import_files_blocking(core: &AppCore, paths: Vec<PathBuf>, tx: &Sender<ImportMsg>) {
-    let service = ImportService {
-        library: &core.library,
-        analyzer: &core.analyzer,
-    };
-    let _ = tx.send(ImportMsg::Progress("Scanning folders…".into()));
+fn import_files_blocking(core: &Arc<AppCore>, paths: Vec<PathBuf>, tx: &Sender<ImportMsg>) {
+    let roots: Vec<_> = paths.iter().filter(|p| p.is_dir()).filter_map(|p| p.canonicalize().ok()).collect();
     let (paths, errors) = mixless_acquire::local_paths::collect_audio(&paths);
-    if paths.is_empty() {
-        let message = if errors.is_empty() {
-            "No supported audio files found in this selection.".into()
-        } else {
-            errors.join("\n")
-        };
-        let _ = tx.send(ImportMsg::Done(Err(message)));
-        return;
-    }
-    let mut report = service.local_files(&paths, |message| {
-        let _ = tx.send(ImportMsg::Progress(message));
-    });
-    report.errors.extend(errors);
-    if !report.errors.is_empty() {
-        report.warning =
-            Some("Some files or folders could not be imported; open import details.".into());
-    }
-    let _ = tx.send(ImportMsg::Done(Ok(report)));
+    let _ = tx.send(ImportMsg::Progress(format!("Found {} audio files", paths.len())));
+    let result = (|| -> Result<ImportReport, String> {
+        let mut report = ImportReport { total: paths.len(), errors, ..Default::default() };
+        let ids = core.library.register_local_files_into(&paths, &roots).map_err(|e| e.to_string())?;
+        report.local = ids.len();
+        // The complete list is visible before any analysis starts.
+        let _ = tx.send(ImportMsg::LibraryChanged);
+        for id in ids { core.analysis.forget(id); }
+        let tracks = core.library.list_tracks().map_err(|e| e.to_string())?;
+        crate::analysis::schedule(core, &tracks);
+        if !report.errors.is_empty() {
+            report.warning = Some("Some files could not be read. See import details.".into());
+        }
+        Ok(report)
+    })();
+    let _ = tx.send(ImportMsg::Done(result));
 }
 
 fn import_spotify_blocking(core: &AppCore, url: &str, tx: &Sender<ImportMsg>) {

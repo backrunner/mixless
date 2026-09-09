@@ -1,6 +1,9 @@
 //! Local library: import, metadata, cues. No tokens, no PCM.
 
+mod folders;
+mod waveform;
 mod hash;
+mod verification;
 mod imports;
 pub use imports::ImportItem;
 
@@ -23,6 +26,7 @@ pub struct PlaylistSummary {
     pub id: i64,
     pub name: String,
     pub tracks: u32,
+    pub folder_path: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -70,6 +74,11 @@ impl Library {
                 content_hash TEXT NOT NULL,
                 mtime INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS file_verification (
+                path TEXT PRIMARY KEY,
+                fingerprint TEXT NOT NULL,
+                content_hash TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS cues (
                 track_id INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
@@ -85,6 +94,13 @@ impl Library {
                 version INTEGER NOT NULL,
                 payload TEXT NOT NULL,
                 FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS track_waveforms (
+                track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+                content_hash TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                duration REAL NOT NULL,
+                payload BLOB NOT NULL
             );
             CREATE TABLE IF NOT EXISTS playlists (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,16 +151,18 @@ impl Library {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("artwork");
-        Ok(Self {
+        let library = Self {
             conn: std::sync::Mutex::new(conn),
             artwork_dir,
-        })
+        };
+        library.backfill_folder_playlists(&path.with_file_name("acquired"))?;
+        Ok(library)
     }
 
     pub fn import_file(&self, path: &Path) -> Result<TrackId, LibraryError> {
         let canon = fs::canonicalize(path)?;
         let path_str = canon.to_string_lossy().to_string();
-        let hash = content_hash(&canon)?;
+        let hash = self.verified_content_hash(&canon)?;
         let meta = read_meta(&canon);
         let artwork_path = self.cache_artwork(&hash, meta.artwork.as_ref())?;
         // Empty means "checked, no embedded artwork". It avoids reparsing the
@@ -314,25 +332,58 @@ impl Library {
                 |r| r.get(0),
             )
             .optional()?;
+        drop(conn);
         payload
             .map(|json| serde_json::from_str(&json).map_err(LibraryError::from))
             .transpose()
     }
 
+    /// A track is playable only when its row and cached payload describe the
+    /// current file revision. Verification reuses the persistent filesystem
+    /// revision cache, including change time so restored mtimes invalidate it.
+    pub fn analysis_ready(&self, id: TrackId, version: u32) -> Result<bool, LibraryError> {
+        let track = self.get_track(id)?;
+        if !track.analyzed {
+            return Ok(false);
+        }
+        let current = self.verified_content_hash(Path::new(&track.path))?;
+        if current != track.content_hash {
+            return Ok(false);
+        }
+        Ok(self.load_analysis(id, version)?.is_some())
+    }
+
+    /// Invalidate metadata and cache atomically before analyzing a file revision.
+    /// Cues and playlist membership remain attached to the track identity.
+    pub fn begin_analysis(&self, id: TrackId, hash: &str) -> Result<(), LibraryError> {
+        let mut conn = self.conn.lock().expect("library mutex");
+        let tx = conn.transaction()?;
+        if tx.execute("UPDATE tracks SET analyzed=0,bpm=NULL,key=NULL,camelot=NULL,content_hash=?2 WHERE id=?1",
+            params![id.0, hash])? != 1 {
+            return Err(LibraryError::NotFound);
+        }
+        tx.execute("DELETE FROM track_analysis WHERE track_id=?1", [id.0])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn list_playlists(&self) -> Result<Vec<PlaylistSummary>, LibraryError> {
         let conn = self.conn.lock().expect("library mutex");
         let mut stmt = conn.prepare(
-            "SELECT p.id, p.name, COUNT(i.track_id) AS n
+            "SELECT p.id, p.name, COUNT(i.track_id) AS n,
+                    CASE WHEN e.source='folder' THEN e.external_id END AS folder_path
              FROM playlists p
              LEFT JOIN playlist_items i ON i.playlist_id = p.id
+             LEFT JOIN external_playlists e ON e.playlist_id = p.id
              GROUP BY p.id
-             ORDER BY p.name",
+             ORDER BY folder_path IS NULL, p.name, folder_path, p.id",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(PlaylistSummary {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 tracks: r.get::<_, i64>(2)? as u32,
+                folder_path: r.get(3)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())

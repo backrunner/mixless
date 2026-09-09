@@ -1,6 +1,8 @@
 //! Compact library browser with a source tree, aligned virtualized track
 //! table, cached cover art, and a secondary import modal.
 
+mod status;
+
 use std::path::PathBuf;
 
 use crate::state::UiState;
@@ -96,53 +98,146 @@ fn track_cover(track: &Track) -> gpui::AnyElement {
         .into_any_element()
 }
 
+#[derive(Clone, Copy)]
+enum SourceIcon {
+    Collection,
+    Folder,
+    Playlist,
+}
+
+enum SourceEntry {
+    Group(&'static str, usize),
+    Playlist(usize),
+}
+
+// Source groups are flat: reserve space for the icon, not an empty tree gutter.
+// Both source types share the same geometry so names and counts stay aligned.
+fn source_row(
+    id: impl Into<gpui::ElementId>,
+    name: impl Into<SharedString>,
+    icon: SourceIcon,
+    count: Option<u32>,
+    selected: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let color = if selected {
+        theme::ACCENT
+    } else {
+        theme::MUTED
+    };
+    gpui::div()
+        .id(id)
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(6.))
+        .w_full()
+        .h(px(26.))
+        .px(px(8.))
+        .rounded(px(4.))
+        .cursor_pointer()
+        .text_size(px(11.))
+        .text_color(theme::TEXT)
+        .when(selected, |el| {
+            el.bg(theme::with_alpha(theme::ACCENT, 0.10)).child(
+                gpui::div()
+                    .absolute()
+                    .left_0()
+                    .top(px(6.))
+                    .w(px(2.))
+                    .h(px(14.))
+                    .rounded(px(1.))
+                    .bg(theme::ACCENT),
+            )
+        })
+        .when(!selected, |el| el.hover(|s| s.bg(theme::PANEL_RAISED)))
+        .child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let x = f32::from(bounds.origin.x);
+                    let y = f32::from(bounds.origin.y);
+                    match icon {
+                        SourceIcon::Collection => {
+                            for (dx, dy) in [(1., 1.), (7., 1.), (1., 7.), (7., 7.)] {
+                                crate::controls::quad_fill(window, x + dx, y + dy, 4., 4., color);
+                            }
+                        }
+                        SourceIcon::Folder => {
+                            crate::controls::quad_fill(window, x + 1., y + 2., 5., 2., color);
+                            crate::controls::quad_fill(window, x + 1., y + 4., 10., 7., color);
+                        }
+                        SourceIcon::Playlist => {
+                            for dy in [1., 5., 9.] {
+                                crate::controls::quad_fill(window, x + 1., y + dy, 2., 2., color);
+                                crate::controls::quad_fill(window, x + 5., y + dy, 6., 2., color);
+                            }
+                        }
+                    }
+                },
+            )
+            .flex_none()
+            .size(px(12.)),
+        )
+        .child(gpui::div().flex_1().min_w_0().truncate().child(name.into()))
+        .when_some(count, |el, count| {
+            el.child(
+                gpui::div()
+                    .flex_none()
+                    .text_size(px(10.))
+                    .text_color(theme::MUTED)
+                    .child(count.to_string()),
+            )
+        })
+}
+
+struct PathTip(String);
+impl gpui::Render for PathTip {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::div().px_2().py_1().rounded(px(4.)).bg(theme::PANEL_RAISED)
+            .text_size(px(11.)).text_color(theme::TEXT).child(self.0.clone())
+    }
+}
+
+fn folder_name(playlist: &mixless_library::PlaylistSummary, all: &[mixless_library::PlaylistSummary]) -> String {
+    let Some(path) = &playlist.folder_path else { return playlist.name.clone() };
+    let path = std::path::Path::new(path);
+    let mut suffix = path.file_name().map(std::path::PathBuf::from).unwrap_or_else(|| path.to_path_buf());
+    let mut parent = path.parent();
+    while all.iter().any(|other| other.id != playlist.id && other.folder_path.as_ref()
+        .is_some_and(|other| std::path::Path::new(other).ends_with(&suffix))) {
+        let Some(dir) = parent else { break };
+        let Some(name) = dir.file_name() else { break };
+        suffix = std::path::Path::new(name).join(suffix);
+        parent = dir.parent();
+    }
+    suffix.to_string_lossy().into_owned()
+}
+
+pub type LibraryKey = (usize, usize, Option<i64>, Option<i64>, mixless_protocol::DeckId,
+    [Option<TrackId>; 2], u64, bool, bool, SharedString);
+
+pub struct LibraryView { pub owner: gpui::WeakEntity<UiState> }
+impl gpui::Render for LibraryView {
+    fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.owner.update(cx, |state, cx| state.render_library(cx, 160.))
+            .unwrap_or_else(|_| gpui::div().into_any_element())
+    }
+}
+
 impl UiState {
     pub fn render_library(&self, cx: &mut gpui::Context<Self>, height: f32) -> gpui::AnyElement {
         let state = cx.entity();
 
         let all_selected = self.playlist_sel.is_none();
         let all_tracks_row = {
-            let el = gpui::div()
-                .id("tree-all")
-                .flex()
-                .items_center()
-                .gap_2()
-                .w_full()
-                .h(px(26.))
-                .pl(px(26.))
-                .pr_2()
-                .rounded(px(3.))
-                .text_size(px(11.))
-                .text_color(if all_selected {
-                    theme::TEXT
-                } else {
-                    theme::MUTED
-                })
-                .when(all_selected, |el| {
-                    el.bg(theme::with_alpha(theme::ACCENT, 0.12))
-                })
-                .when(!all_selected, |el| el.hover(|s| s.bg(theme::PANEL_RAISED)))
-                .child(
-                    gpui::div()
-                        .flex_none()
-                        .text_size(px(10.))
-                        .text_color(theme::MUTED)
-                        .child("♪"),
-                )
-                .child(
-                    gpui::div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .child("All Tracks"),
-                )
-                .child(
-                    gpui::div()
-                        .flex_none()
-                        .text_size(px(10.))
-                        .text_color(theme::MUTED)
-                        .child(self.tracks.len().to_string()),
-                );
+            let el = source_row(
+                "tree-all",
+                "All Tracks",
+                SourceIcon::Collection,
+                None,
+                all_selected,
+            );
             let st = state.clone();
             el.on_click(move |_ev, _window, cx| {
                 st.update(cx, |s, cx| {
@@ -155,57 +250,73 @@ impl UiState {
         let playlists = self.playlists.clone();
         let playlist_sel = self.playlist_sel;
         let playlist_state = cx.entity();
+        let mut sources = Vec::new();
+        for (title, folders) in [("LOCAL FOLDERS", true), ("PLAYLISTS", false)] {
+            let indices: Vec<_> = playlists
+                .iter()
+                .enumerate()
+                .filter(|(_, playlist)| playlist.folder_path.is_some() == folders)
+                .map(|(index, _)| index)
+                .collect();
+            if !indices.is_empty() {
+                sources.push(SourceEntry::Group(title, indices.len()));
+                sources.extend(indices.into_iter().map(SourceEntry::Playlist));
+            }
+        }
         let playlist_list = gpui::uniform_list(
             "playlist-list",
-            playlists.len(),
+            sources.len(),
             move |range, _window, _cx| {
                 let mut rows = Vec::new();
                 for ix in range {
-                    let pl = &playlists[ix];
+                    let index = match sources[ix] {
+                        SourceEntry::Group(title, count) => {
+                            rows.push(
+                                gpui::div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .h(px(26.))
+                                    .px(px(8.))
+                                    .text_size(px(9.))
+                                    .text_color(theme::MUTED)
+                                    .child(title)
+                                    .child(count.to_string())
+                                    .into_any_element(),
+                            );
+                            continue;
+                        }
+                        SourceEntry::Playlist(index) => index,
+                    };
+                    let pl = &playlists[index];
                     let selected = playlist_sel == Some(pl.id);
-                    let row = gpui::div()
-                        .id(SharedString::from(format!("pl-{}", pl.id)))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .w_full()
-                        .h(px(25.))
-                        .pl(px(26.))
-                        .pr_2()
-                        .rounded(px(3.))
-                        .text_size(px(11.))
-                        .text_color(if selected { theme::TEXT } else { theme::MUTED })
-                        .when(selected, |el| el.bg(theme::with_alpha(theme::ACCENT, 0.12)))
-                        .when(!selected, |el| el.hover(|s| s.bg(theme::PANEL_RAISED)))
-                        .child(
-                            gpui::div()
-                                .flex_none()
-                                .text_size(px(9.))
-                                .text_color(theme::MUTED)
-                                .child("≡"),
-                        )
-                        .child(
-                            gpui::div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .child(pl.name.clone()),
-                        )
-                        .child(
-                            gpui::div()
-                                .flex_none()
-                                .text_size(px(10.))
-                                .text_color(theme::MUTED)
-                                .child(pl.tracks.to_string()),
-                        );
+                    let display_name = folder_name(pl, &playlists);
+                    let row = source_row(
+                        SharedString::from(format!("pl-{}", pl.id)),
+                        display_name,
+                        if pl.folder_path.is_some() {
+                            SourceIcon::Folder
+                        } else {
+                            SourceIcon::Playlist
+                        },
+                        Some(pl.tracks),
+                        selected,
+                    );
+                    let row = if let Some(path) = &pl.folder_path {
+                        let path = path.clone();
+                        row.tooltip(move |_, cx| cx.new(|_| PathTip(path.clone())).into())
+                    } else { row };
                     let st = playlist_state.clone();
                     let id = pl.id;
-                    rows.push(row.on_click(move |_ev, _window, cx| {
-                        st.update(cx, |s, cx| {
-                            s.select_playlist(Some(id));
-                            cx.notify();
-                        });
-                    }));
+                    rows.push(
+                        row.on_click(move |_ev, _window, cx| {
+                            st.update(cx, |s, cx| {
+                                s.select_playlist(Some(id));
+                                cx.notify();
+                            });
+                        })
+                        .into_any_element(),
+                    );
                 }
                 rows
             },
@@ -213,6 +324,11 @@ impl UiState {
         .flex_1()
         .min_h_0();
 
+        let source_name = self
+            .playlist_sel
+            .and_then(|id| self.playlists.iter().find(|pl| pl.id == id))
+            .map(|pl| folder_name(pl, &self.playlists))
+            .unwrap_or_else(|| "All Tracks".into());
         let toolbar = gpui::div()
             .flex()
             .flex_none()
@@ -225,12 +341,18 @@ impl UiState {
             .child(
                 gpui::div()
                     .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_size(px(11.))
+                    .text_color(theme::TEXT)
+                    .child(source_name.to_owned()),
+            )
+            .child(
+                gpui::div()
+                    .flex_none()
                     .text_size(px(10.))
                     .text_color(theme::MUTED)
-                    .child(format!(
-                        "{} tracks · drag a track to deck A or B",
-                        self.tracks.len()
-                    )),
+                    .child(format!("{} tracks", self.tracks.len())),
             )
             .child(self.local_import_button(cx, false, "+ Files"))
             .child(self.local_import_button(cx, true, "+ Folder"))
@@ -244,11 +366,7 @@ impl UiState {
                     .text_size(px(10.))
                     .text_color(theme::MUTED)
                     .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
-                    .child(if self.busy {
-                        "Importing…"
-                    } else {
-                        "Spotify / Details"
-                    })
+                    .child("Spotify")
                     .on_click(cx.listener(|s, _, _, cx| {
                         s.show_import_modal = true;
                         cx.notify();
@@ -259,22 +377,48 @@ impl UiState {
             .flex_none()
             .w(px(166.))
             .flex_col()
-            .py_1()
+            .min_h_0()
+            .border_r_1()
+            .border_color(theme::LINE)
             .bg(gpui::rgb(0x0e0e10))
             .overflow_hidden()
-            .child(all_tracks_row)
             .child(
                 gpui::div()
+                    .flex()
                     .flex_none()
-                    .px_2()
-                    .py_1()
-                    .text_size(px(9.))
+                    .items_center()
+                    .h(px(30.))
+                    .px(px(12.))
+                    .border_b_1()
+                    .border_color(theme::LINE)
+                    .text_size(px(10.))
                     .text_color(theme::MUTED)
-                    .child("PLAYLISTS"),
+                    .child("LIBRARY"),
             )
-            .child(playlist_list);
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .p(px(4.))
+                    .child(all_tracks_row)
+                    .when(self.playlists.is_empty(), |el| {
+                        el.child(
+                            gpui::div()
+                                .px(px(8.))
+                                .py(px(4.))
+                                .text_size(px(11.))
+                                .text_color(theme::MUTED)
+                                .child("No playlists yet"),
+                        )
+                    })
+                    .child(playlist_list),
+            );
 
         let shown = self.tracks.clone();
+        let analysis_core = self.core.clone();
+        let loaded_tracks = self.snapshot.decks.each_ref().map(|d| d.track_id);
         let track_sel = self.track_sel;
         let focus_deck = self.focus;
         let track_state = cx.entity();
@@ -289,6 +433,7 @@ impl UiState {
             .text_size(px(9.))
             .text_color(theme::MUTED)
             .bg(gpui::rgb(0x17171a))
+            .child(gpui::div().flex_none().w(px(28.)))
             .child(gpui::div().flex_none().w(px(COL_COVER)))
             .child(gpui::div().flex_1().min_w_0().child("TITLE"))
             .child(gpui::div().flex_none().w(px(COL_ARTIST)).child("ARTIST"))
@@ -327,7 +472,7 @@ impl UiState {
                 .h(px(40.))
                 .text_size(px(11.))
                 .text_color(theme::MUTED)
-                .child("Import audio or fetch a Spotify playlist to start.")
+                .child("No tracks")
                 .into_any_element()
         } else {
             gpui::uniform_list("track-table", shown.len(), move |range, _window, _cx| {
@@ -340,10 +485,13 @@ impl UiState {
                         .bpm
                         .map(|b| format!("{b:.1}"))
                         .unwrap_or_else(|| "—".into());
+                    let status_overlay = status::overlay(&analysis_core.analysis.status(t));
                     let dur = fmt_duration(t.duration_ms as u64);
 
                     let row = gpui::div()
                         .id(SharedString::from(format!("track-{}-{ix}", t.id.0)))
+                        .relative()
+                        .overflow_hidden()
                         .w_full()
                         .flex()
                         .items_center()
@@ -354,6 +502,14 @@ impl UiState {
                         .when(selected, |el| el.bg(theme::with_alpha(theme::ACCENT, 0.12)))
                         .when(!selected && ix % 2 == 1, |el| el.bg(gpui::rgb(0x101013)))
                         .when(!selected, |el| el.hover(|s| s.bg(gpui::rgb(0x1c1c20))))
+                        .child(
+                            gpui::div().flex().flex_none().w(px(28.)).gap(px(2.))
+                                .children(loaded_tracks.iter().enumerate().filter(|(_, id)| **id == Some(t.id)).map(|(i, _)| {
+                                    gpui::div().text_size(px(10.)).font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::deck_color(if i == 0 { mixless_protocol::DeckId::A } else { mixless_protocol::DeckId::B }))
+                                        .child(if i == 0 { "A" } else { "B" })
+                                }))
+                        )
                         .child(track_cover(t))
                         .child(
                             gpui::div()
@@ -424,7 +580,8 @@ impl UiState {
                                 .text_size(px(11.))
                                 .text_color(theme::MUTED)
                                 .child(dur),
-                        );
+                        )
+                        .children(status_overlay);
 
                     let st = track_state.clone();
                     let track_id = t.id;
@@ -464,6 +621,7 @@ impl UiState {
             .min_w_0()
             .flex_col()
             .overflow_hidden()
+            .child(toolbar)
             .child(header)
             .when(!self.playlist_issues.is_empty(), |el| {
                 el.child(
@@ -497,13 +655,13 @@ impl UiState {
             .flex()
             .flex_1()
             .min_h(px(height))
+            .size_full()
             .flex_col()
             .rounded(px(8.))
             .bg(theme::PANEL)
             .border_1()
             .border_color(theme::LINE)
             .overflow_hidden()
-            .child(toolbar)
             .child(
                 gpui::div()
                     .flex()
@@ -533,7 +691,7 @@ impl UiState {
         folders: bool,
         label: &'static str,
     ) -> gpui::AnyElement {
-        let disabled = self.busy || self.picker_open;
+        let disabled = self.picker_open;
         gpui::div()
             .id(if folders {
                 "choose-folders"
@@ -571,8 +729,7 @@ impl UiState {
         let dismiss_state = state.clone();
         let close_state = state.clone();
         let spotify_state = state.clone();
-        let busy = self.busy;
-        let can_import_spotify = !busy && !self.url.trim().is_empty();
+        let can_import_spotify = !self.url.trim().is_empty();
 
         let close = gpui::div()
             .id("import-modal-close")
@@ -621,7 +778,7 @@ impl UiState {
                     return;
                 }
                 spotify_state.update(cx, |s, cx| {
-                    if !s.busy && !s.url.trim().is_empty() {
+                    if !s.url.trim().is_empty() {
                         s.import_spotify(s.url.trim().to_string());
                         cx.notify();
                     }
@@ -834,6 +991,7 @@ impl UiState {
             .on_key_down(
                 cx.listener(|s: &mut UiState, ev: &gpui::KeyDownEvent, window, cx| {
                     s.handle_url_input_key(&ev.keystroke, window, cx);
+                    cx.stop_propagation();
                 }),
             );
 

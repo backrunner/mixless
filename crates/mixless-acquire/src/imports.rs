@@ -20,15 +20,10 @@ pub struct ImportReport {
 }
 impl ImportReport {
     pub fn summary(&self) -> String {
-        format!(
-            "{} / {} ready · {} local · {} acquired · {} failed · {} suspect",
-            self.local + self.acquired,
-            self.total,
-            self.local,
-            self.acquired,
-            self.failed,
-            self.suspect
-        )
+        let mut parts = vec![format!("Added {} tracks", self.local + self.acquired)];
+        if self.failed > 0 { parts.push(format!("{} failed", self.failed)); }
+        if self.suspect > 0 { parts.push(format!("{} need review", self.suspect)); }
+        parts.join(" · ")
     }
 }
 
@@ -105,7 +100,15 @@ impl ImportService<'_> {
         Ok(id)
     }
     pub fn import_local_file(&self, path: &Path) -> Result<TrackId, String> {
-        self.audio(path, None).map_err(|e| e.message)
+        self.local_audio(path).map(|(track, _)| track)
+    }
+    fn local_audio(&self, path: &Path) -> Result<(TrackId, PlaylistId), String> {
+        let track = self.audio(path, None).map_err(|e| e.message)?;
+        let playlist = self
+            .library
+            .add_to_folder_playlist(track)
+            .map_err(|e| e.to_string())?;
+        Ok((track, playlist))
     }
     pub fn local_files(&self, paths: &[PathBuf], mut progress: impl FnMut(String)) -> ImportReport {
         let mut report = ImportReport {
@@ -119,8 +122,11 @@ impl ImportService<'_> {
                 paths.len(),
                 path.display()
             ));
-            match self.import_local_file(path) {
-                Ok(_) => report.local += 1,
+            match self.local_audio(path) {
+                Ok((_, playlist)) => {
+                    report.local += 1;
+                    report.playlist.get_or_insert(playlist);
+                }
                 Err(error) => {
                     report.failed += 1;
                     report.errors.push(format!("{}: {error}", path.display()));
@@ -398,6 +404,111 @@ mod tests {
         }
     }
     #[test]
+    fn recursive_local_import_keeps_folder_playlists_separate_and_reimports_incrementally() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Music");
+        let first = root.join("Set");
+        let nested = first.join("Nested");
+        let other = root.join("Other/Set");
+        for folder in [&nested, &other] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        let a = first.join("a.wav");
+        let b = first.join("b.wav");
+        let c = nested.join("c.wav");
+        let d = other.join("d.wav");
+        let e = root.join("e.wav");
+        for path in [&a, &b, &c, &d, &e] {
+            wav(path, 1, 16);
+        }
+        std::fs::write(root.join("cover.jpg"), "image").unwrap();
+        std::fs::create_dir(root.join("Broken")).unwrap();
+        std::fs::write(root.join("Broken/bad.mp3"), "not audio").unwrap();
+        let lib = Library::open(&dir.path().join("library.db")).unwrap();
+        let analyzer = Analyzer::new();
+        let service = ImportService {
+            library: &lib,
+            analyzer: &analyzer,
+        };
+        let (paths, errors) =
+            crate::local_paths::collect_audio(&[root.clone(), first.clone(), a.clone()]);
+        assert!(errors.is_empty());
+        let report = service.local_files(&paths, |_| {});
+        assert_eq!((report.total, report.local, report.failed), (6, 5, 1));
+        let playlists = lib.list_playlists().unwrap();
+        assert_eq!(playlists.len(), 4);
+        let mut first_playlist = None;
+        for (folder, expected) in [
+            (&root, vec![&e]),
+            (&first, vec![&a, &b]),
+            (&nested, vec![&c]),
+            (&other, vec![&d]),
+        ] {
+            let folder_path = folder.canonicalize().unwrap();
+            let playlist = playlists
+                .iter()
+                .find(|p| p.folder_path.as_deref() == folder_path.to_str())
+                .unwrap();
+            let mut actual: Vec<_> = lib
+                .playlist_tracks(PlaylistId(playlist.id))
+                .unwrap()
+                .iter()
+                .map(|t| PathBuf::from(&t.path))
+                .collect();
+            actual.sort();
+            assert_eq!(
+                actual,
+                expected
+                    .into_iter()
+                    .map(|p| p.canonicalize().unwrap())
+                    .collect::<Vec<_>>()
+            );
+            if folder == &first {
+                first_playlist = Some(PlaylistId(playlist.id));
+            }
+        }
+        let selected = report.playlist.unwrap();
+        let first_ready = paths
+            .iter()
+            .find(|path| path.extension().unwrap() == "wav")
+            .unwrap();
+        assert!(lib
+            .playlist_tracks(selected)
+            .unwrap()
+            .iter()
+            .all(|t| Path::new(&t.path).parent() == first_ready.parent()));
+
+        let new = first.join("new.wav");
+        wav(&new, 1, 16);
+        let retry = service.local_files(&[first.join("./a.wav"), new.clone(), a.clone()], |_| {});
+        assert_eq!(retry.playlist, first_playlist);
+        assert_eq!(retry.failed, 0);
+        assert_eq!(lib.list_playlists().unwrap().len(), 4);
+        let tracks = lib.playlist_tracks(first_playlist.unwrap()).unwrap();
+        assert_eq!(tracks.len(), 3);
+        assert_eq!(
+            tracks
+                .iter()
+                .map(|t| PathBuf::from(&t.path))
+                .collect::<Vec<_>>(),
+            [&a, &b, &new]
+                .into_iter()
+                .map(|p| p.canonicalize().unwrap())
+                .collect::<Vec<_>>()
+        );
+        #[cfg(unix)]
+        {
+            let alias = root.join("Alias");
+            std::os::unix::fs::symlink(&first, &alias).unwrap();
+            let retry = service.local_files(&[alias.join("a.wav")], |_| {});
+            assert_eq!(retry.playlist, first_playlist);
+            assert_eq!(
+                lib.playlist_tracks(first_playlist.unwrap()).unwrap().len(),
+                3
+            );
+        }
+    }
+    #[test]
     fn local_import_decodes_24_bit_reuses_canonical_path_and_reports_corruption() {
         let dir = tempfile::tempdir().unwrap();
         let lib = Library::open(&dir.path().join("lib.db")).unwrap();
@@ -489,7 +600,7 @@ mod tests {
             )
             .unwrap();
         assert_ne!(pid, other.playlist.unwrap());
-        assert_eq!(lib.list_playlists().unwrap().len(), 2);
+        assert_eq!(lib.list_playlists().unwrap().len(), 3);
         let again = service
             .spotify_playlist(
                 &p,

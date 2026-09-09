@@ -39,6 +39,10 @@ pub enum Command {
         deck: DeckId,
         keylock: bool,
     },
+    /// Leave beat sync while preserving the current tempo.
+    DisableSync {
+        deck: DeckId,
+    },
     JumpCue {
         deck: DeckId,
         index: u8,
@@ -63,6 +67,12 @@ pub enum Command {
     SetLoop {
         deck: DeckId,
         bars: u16,
+        on: bool,
+    },
+    /// Beat units, including 1/16, 1/8, 1/4 and 1/2 beat.
+    SetLoopBeats {
+        deck: DeckId,
+        beats: f32,
         on: bool,
     },
     LoopHalve {
@@ -90,6 +100,7 @@ pub enum Command {
         deck: DeckId,
         amount: f32,
     },
+    SetFilterResonanceEnabled { deck: DeckId, on: bool },
     SetFilterResonance {
         deck: DeckId,
         resonance: f32,

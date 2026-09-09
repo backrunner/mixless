@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{DeckId, FxSlot, TrackId, XfCurve};
+use crate::{default_fx, DeckId, FxSlot, FxState, TrackId, XfCurve};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
@@ -24,19 +24,43 @@ pub struct DeckSnapshot {
     pub filter_amount: f32,
     #[serde(default = "default_filter_resonance")]
     pub filter_resonance: f32,
+    #[serde(default = "default_resonance_enabled")]
+    pub filter_resonance_enabled: bool,
     pub lp_hz: f32,
     pub hp_hz: f32,
     pub fader: f32,
     pub gain_db: f32,
     pub send: f32,
     pub pfl: bool,
+    #[serde(default)]
+    pub automix_cue_frame: Option<u64>,
     pub loop_on: bool,
     pub loop_bars: u16,
+    #[serde(default = "default_loop_beats")]
+    pub loop_beats: f32,
+    #[serde(default)]
+    pub loop_start_frame: u64,
+    #[serde(default)]
+    pub loop_end_frame: u64,
     pub vinyl: bool,
     pub slip: bool,
     pub synced: bool,
+    #[serde(default)]
+    pub sync_master: bool,
+    #[serde(default)]
+    pub sync_locked: bool,
+    #[serde(default)]
+    pub grid_ready: bool,
     pub reverse: bool,
-    pub insert: [Option<FxSlot>; 3],
+    #[serde(default)]
+    pub roll: bool,
+    #[serde(default = "default_roll_division")]
+    pub roll_division: u16,
+    #[serde(default)]
+    pub brake: bool,
+    pub insert: [Option<FxSlot>; FxSlot::INSERTS.len()],
+    #[serde(default = "default_fx")]
+    pub fx: [FxState; FxSlot::INSERTS.len()],
     pub cues: [Option<u64>; 8],
     /// Post fader/gain peak level per channel (0..1+), decayed per block.
     pub level: [f32; 2],
@@ -62,23 +86,39 @@ impl Default for DeckSnapshot {
             eq_kill: [false; 3],
             filter_amount: 0.0,
             filter_resonance: default_filter_resonance(),
+            filter_resonance_enabled: true,
             lp_hz: 20_000.0,
             hp_hz: 20.0,
             fader: 0.8,
             gain_db: 0.0,
             send: 0.0,
             pfl: false,
+            automix_cue_frame: None,
             loop_on: false,
-            loop_bars: 4,
+            loop_bars: 1,
+            loop_beats: 4.,
+            loop_start_frame: 0,
+            loop_end_frame: 0,
             vinyl: false,
             slip: false,
             synced: false,
+            sync_master: false,
+            sync_locked: false,
+            grid_ready: false,
             reverse: false,
-            insert: [None; 3],
+            roll: false,
+            roll_division: default_roll_division(),
+            brake: false,
+            insert: [None; FxSlot::INSERTS.len()],
+            fx: default_fx(),
             cues: [None; 8],
             level: [0.0; 2],
         }
     }
+}
+
+fn default_roll_division() -> u16 {
+    4
 }
 
 fn default_filter_resonance() -> f32 {
@@ -138,3 +178,7 @@ impl EngineSnapshot {
         &self.decks[id.index()]
     }
 }
+
+fn default_loop_beats() -> f32 { 4. }
+
+fn default_resonance_enabled() -> bool { true }

@@ -1,8 +1,17 @@
 //! Mixless — GPUI desktop app. Pure Rust UI, no web stack.
 
+mod analysis;
 mod automix;
+mod beat_sync;
+mod branding;
 mod controls;
+mod fader;
+mod fx;
+mod menus;
+mod preferences;
 mod root;
+mod settings;
+mod shortcuts;
 mod state;
 mod theme;
 mod views;
@@ -17,7 +26,7 @@ use gpui::{
 };
 
 /// Idle worker/MIDI wakeup; active rendering follows the display clock.
-const UI_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
     tracing_subscriber::fmt()
@@ -32,6 +41,7 @@ fn main() {
     tracing::info!(build = %build_id, profile = env!("MIXLESS_BUILD_PROFILE"), "starting Mixless");
 
     Application::new().run(|cx: &mut App| {
+        branding::set_dock_icon();
         let core = state::app_core();
 
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
@@ -63,8 +73,9 @@ fn main() {
                     }
                 })
                 .detach();
-                state.refresh_tracks();
+                branding::configure_main_window();
                 state.refresh_playlists();
+                state.select_playlist(state.playlists.first().map(|playlist| playlist.id));
                 state.poll();
                 cx.notify();
                 cx.spawn(async move |this, cx| {
@@ -74,7 +85,7 @@ fn main() {
                         if this
                             .update(cx, |state, cx| {
                                 let animating = state.needs_continuous_repaint();
-                                let changed = state.poll();
+                                let changed = !animating && state.poll();
                                 if !animating && (changed || state.needs_continuous_repaint()) {
                                     cx.notify();
                                 }
@@ -89,6 +100,7 @@ fn main() {
             })
             .expect("init state");
 
+        menus::init(window, cx);
         cx.activate(true);
     });
 }

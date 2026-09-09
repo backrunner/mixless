@@ -80,7 +80,11 @@ impl UiState {
             let state = cx.entity();
             el.on_click(move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {
-                    s.wave_layout = WaveLayout::Top;
+                    if let Err(error) = s.core.settings.update(|p| p.wave_layout = WaveLayout::Top)
+                    {
+                        s.error = error.into();
+                    }
+                    s.poll();
                     cx.notify();
                 });
             })
@@ -107,7 +111,14 @@ impl UiState {
             let state = cx.entity();
             el.on_click(move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {
-                    s.wave_layout = WaveLayout::Center;
+                    if let Err(error) = s
+                        .core
+                        .settings
+                        .update(|p| p.wave_layout = WaveLayout::Center)
+                    {
+                        s.error = error.into();
+                    }
+                    s.poll();
                     cx.notify();
                 });
             })
@@ -152,7 +163,10 @@ impl UiState {
             let state = cx.entity();
             el.on_click(move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {
-                    s.show_fx = !s.show_fx;
+                    if let Err(error) = s.core.settings.update(|p| p.show_fx = !p.show_fx) {
+                        s.error = error.into();
+                    }
+                    s.poll();
                     cx.notify();
                 });
             })
@@ -174,6 +188,13 @@ impl UiState {
             .border_1()
             .border_color(theme::with_alpha(theme::LED_GREEN, 0.24))
             .bg(theme::PANEL_INSET)
+            // The top bar overlaps the transparent macOS titlebar.  Give the
+            // whole control its own hitbox so a drag that starts beside the
+            // small knob cannot fall through to the native window mover.
+            .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+            })
             .child(
                 gpui::div()
                     .flex()
@@ -231,28 +252,13 @@ impl UiState {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        gpui::div()
-                            .flex_none()
-                            .size(px(9.))
-                            .rounded(px(3.))
-                            .bg(theme::ACCENT),
-                    )
+                    .child(gpui::img(crate::branding::mark()).flex_none().size(px(30.)))
                     .child(
                         gpui::div()
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::TEXT)
-                            .id("about-mixless")
-                            .cursor_pointer()
-                            .child("MIXLESS")
-                            .child(
-                                gpui::div()
-                                    .text_size(px(8.))
-                                    .text_color(theme::MUTED)
-                                    .child("ABOUT"),
-                            )
-                            .on_click(|_, _, cx| crate::views::about::open(cx)),
+                            .child("MIXLESS"),
                     ),
             )
             .child(divider())
@@ -269,7 +275,11 @@ impl UiState {
                         self.snapshot.sample_rate, self.snapshot.block_frames
                     )),
             )
-            .child(gpui::div().flex_1())
+            .child(gpui::div().id("title-drag-space").flex_1().h_full()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                    crate::branding::drag_main_window();
+                }))
             .child(led_chip("Q", self.snapshot.quantize, theme::LED_GREEN))
             .child(
                 led_chip("AUTO", self.automix_active, theme::LED_GREEN)
@@ -279,6 +289,15 @@ impl UiState {
                         s.toggle_automix();
                         cx.notify();
                     })),
+            )
+            .child(
+                led_chip(if self.automix_shuffle.load(std::sync::atomic::Ordering::Relaxed) { "SHUFFLE ∞" } else { "ORDER ∞" },
+                    self.automix_shuffle.load(std::sync::atomic::Ordering::Relaxed), theme::ACCENT)
+                .id("automix-order").cursor_pointer()
+                .on_click(cx.listener(|s, _, _, cx| {
+                    s.automix_shuffle.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                    cx.notify();
+                }))
             )
             .when(self.automix_active, |row| {
                 row.child(

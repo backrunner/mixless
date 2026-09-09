@@ -1,246 +1,207 @@
-//! Host orchestration: only the next pair is decoded/planned. Audio timing
-//! stays in the engine, independent of UI repaint or this worker's polling.
+//! Continuous host orchestration; sample-accurate cue, filter and fader motion
+//! stays in the engine. Offline analysis and adjacent plans are prepared early.
+mod order;
+mod preparation;
+pub use preparation::{Preparation, prepare_playlist};
+
 use crate::state::AppCore;
-use mixless_protocol::{Command, DeckId, PerformanceOffset, TrackAnalysis, TrackId};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    mpsc::Sender,
-    Arc,
-};
+use mixless_protocol::{Command, DeckId, PerformanceOffset, TrackId};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}, mpsc::Sender};
 use std::time::Duration;
 
 pub enum AutomixMsg {
     Status(String),
     Done(Result<(), String>),
 }
-fn load(
-    core: &AppCore,
-    deck: DeckId,
-    id: TrackId,
-    active: impl Fn() -> bool,
-) -> Result<(), String> {
-    let _load = core
-        .deck_load
-        .lock()
-        .map_err(|_| "Deck load mutex poisoned")?;
-    if !active() {
-        return Ok(());
-    }
-    let track = core.library.get_track(id).map_err(|e| e.to_string())?;
-    if !core
-        .engine
-        .load_file_if(
-            deck,
-            id,
-            std::path::Path::new(&track.path),
-            track.title,
-            track.artist,
-            &active,
-        )
-        .map_err(|e| e.to_string())?
-    {
-        return Ok(());
-    }
-    if !active() {
-        return Ok(());
-    }
-    core.engine.set_bpm(deck, track.bpm.unwrap_or(120.));
-    for cue in core.library.cues(id).map_err(|e| e.to_string())? {
-        core.engine.set_cue_frame(deck, cue.index, cue.frame);
-    }
-    for cmd in [
-        Command::SetRate { deck, rate: 1. },
-        Command::SetPitchSemitones {
-            deck,
-            semitones: 0.,
-        },
-        Command::SetChannelGain { deck, db: 0. },
-        Command::SetChannelFader { deck, value: 0.8 },
-        Command::SetChannelFilter { deck, amount: 0. },
-        Command::SetFxSend { deck, value: 0. },
-        Command::SetKeyLock { deck, on: true },
-        Command::SetReverse { deck, on: false },
-    ] {
-        core.engine.dispatch(cmd).map_err(|e| e.to_string())?;
-    }
-    for band in [
-        mixless_protocol::EqBand::Low,
-        mixless_protocol::EqBand::Mid,
-        mixless_protocol::EqBand::High,
-    ] {
-        core.engine
-            .dispatch(Command::SetEq { deck, band, db: 0. })
-            .map_err(|e| e.to_string())?;
-        core.engine
-            .dispatch(Command::SetEqKill {
-                deck,
-                band,
-                on: false,
-            })
-            .map_err(|e| e.to_string())?;
-    }
+
+fn guarded(core: &AppCore, active: impl Fn() -> bool, action: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let _commit = core.automix_commit.lock().map_err(|_| "Automix commit lock poisoned")?;
+    if active() { action()?; }
     Ok(())
 }
-fn analysis(core: &AppCore, deck: DeckId) -> Result<TrackAnalysis, String> {
-    let snapshot = core.engine.snapshot();
-    let d = snapshot.deck(deck);
-    let id = d.track_id.ok_or("Automix deck was unloaded")?;
-    let track = core.library.get_track(id).map_err(|e| e.to_string())?;
-    let hash = mixless_library::content_hash(std::path::Path::new(&track.path))
-        .map_err(|e| e.to_string())?;
-    if hash == track.content_hash {
-        if let Some(cached) = core
-            .library
-            .load_analysis(id, mixless_analyze::ANALYSIS_VERSION)
-            .map_err(|e| e.to_string())?
-        {
-            if cached.sample_rate == d.src_sample_rate
-                && (cached.duration_sec - d.frames as f32 / d.src_sample_rate as f32).abs() < 0.02
-            {
-                core.engine.set_bpm(deck, cached.tempo.global_bpm);
-                return Ok(cached);
-            }
+
+fn command(core: &AppCore, cmd: Command) -> Result<(), String> {
+    core.engine.dispatch(cmd).map_err(|e| e.to_string())
+}
+
+fn load(core: &AppCore, deck: DeckId, id: TrackId, active: impl Fn() -> bool) -> Result<(), String> {
+    if !crate::analysis::load(core, deck, id, &active)? { return Ok(()); }
+    guarded(core, active, || {
+        for cmd in [
+            Command::SetRate { deck, rate: 1. },
+            Command::SetPitchSemitones { deck, semitones: 0. },
+            Command::SetChannelGain { deck, db: 0. },
+            Command::SetChannelFader { deck, value: 0.8 },
+            Command::SetChannelFilter { deck, amount: 0. },
+            Command::SetFxSend { deck, value: 0. },
+            Command::SetKeyLock { deck, on: true },
+            Command::SetReverse { deck, on: false },
+            Command::SetLoopBeats { deck, beats: 4., on: false },
+        ] { command(core, cmd)?; }
+        for band in [mixless_protocol::EqBand::Low, mixless_protocol::EqBand::Mid, mixless_protocol::EqBand::High] {
+            command(core, Command::SetEq { deck, band, db: 0. })?;
+            command(core, Command::SetEqKill { deck, band, on: false })?;
         }
-    }
-    let analysis = core
-        .analyzer
-        .analyze_track(id, std::path::Path::new(&track.path))
-        .map_err(|e| e.to_string())?;
-    // Stale library revisions may still be played, but their results cannot
-    // poison the cache for the previously imported file.
-    if hash == track.content_hash {
-        core.library
-            .save_analysis(&analysis, &hash, mixless_analyze::ANALYSIS_VERSION)
-            .map_err(|e| e.to_string())?;
-        core.library
-            .set_analysis_meta(
-                id,
-                Some(analysis.tempo.global_bpm),
-                analysis.key.as_deref(),
-                analysis.camelot.as_deref(),
-            )
-            .map_err(|e| e.to_string())?;
-    }
-    core.engine.set_bpm(deck, analysis.tempo.global_bpm);
-    Ok(analysis)
+        Ok(())
+    })
+}
+
+fn cue(core: &AppCore, deck: DeckId, track: &crate::analysis::PreparedTrack) -> Result<(), String> {
+    let seconds = track.analysis.sections.iter().find(|s| s.label != mixless_protocol::SectionLabel::Silence)
+        .map_or(0., |s| s.start_sec);
+    let hard_in = core.library.cues(track.track.id).map_err(|e| e.to_string())?.into_iter()
+        .filter(|c| c.user_set && c.kind == mixless_protocol::CueKind::In).map(|c| c.frame).min();
+    let frame = hard_in.unwrap_or((seconds * track.analysis.sample_rate as f32).round() as u64);
+    core.engine.cue_loaded_track(deck, track.track.id, frame).map_err(|e| e.to_string())
 }
 
 fn offset(d: &mixless_protocol::DeckSnapshot) -> PerformanceOffset {
-    PerformanceOffset {
-        rate: d.rate,
-        pitch_semitones: d.pitch_semitones + if d.keylock { 0. } else { 12. * d.rate.log2() },
-    }
+    PerformanceOffset { rate: d.rate,
+        pitch_semitones: d.pitch_semitones + if d.keylock { 0. } else { 12. * d.rate.log2() } }
 }
 
-pub fn run(
-    core: Arc<AppCore>,
-    tracks: Vec<TrackId>,
-    epoch: Arc<AtomicU64>,
-    generation: u64,
-    tx: Sender<AutomixMsg>,
-) {
+/// When AUTO is enabled during a manual overlap, gently finish that overlap
+/// before using the free deck. Disabling AUTO itself preserves both transports.
+fn settle_overlap(core: &AppCore, outgoing: DeckId, active: impl Fn() -> bool) -> Result<(), String> {
+    let snapshot = core.engine.snapshot();
+    let incoming = if outgoing == DeckId::A { DeckId::B } else { DeckId::A };
+
+    let from = if snapshot.xf_reverse { -snapshot.xfader } else { snapshot.xfader };
+    let target = if outgoing == DeckId::A { -1. } else { 1. };
+    guarded(core, &active, || {
+        command(core, Command::SetXfReverse { on: false })?;
+        command(core, Command::SetXfCurve { curve: mixless_protocol::XfCurve::EqualPower })
+    })?;
+    let d = snapshot.deck(outgoing);
+    let remaining = d.frames.saturating_sub(d.frame) as f32 / d.src_sample_rate.max(1) as f32 / d.rate.max(0.01);
+    let steps = (remaining * 0.2 * 100.).clamp(1., 30.) as u32;
+    for step in 1..=steps {
+        if !active() { return Ok(()); }
+        let t = step as f32 / steps as f32;
+        let t = t * t * (3. - 2. * t);
+        guarded(core, &active, || command(core, Command::SetCrossfader { value: from + (target - from) * t }))?;
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    guarded(core, active, || {
+        if core.engine.snapshot().deck(incoming).playing {
+            command(core, Command::PlayPause { deck: incoming })?;
+        }
+        Ok(())
+    })
+}
+
+pub fn run(core: Arc<AppCore>, tracks: Vec<TrackId>, shuffle: Arc<AtomicBool>, epoch: Arc<AtomicU64>, generation: u64, tx: Sender<AutomixMsg>) {
     let active = || epoch.load(Ordering::Acquire) == generation;
     let result = (|| -> Result<(), String> {
-        if tracks.len() < 2 {
-            return Err("Select a playlist with at least two local tracks".into());
-        }
+        if tracks.is_empty() { return Err("Import a track to start Automix".into()); }
         let initial = core.engine.snapshot();
-        if initial.decks.iter().filter(|d| d.playing).count() > 1 {
-            return Err("Pause the incoming deck before starting AUTO".into());
-        }
-        let (mut outgoing, mut position) =
-            if let Some((index, d)) = initial.decks.iter().enumerate().find(|(_, d)| d.playing) {
-                let position = tracks
-                    .iter()
-                    .position(|id| Some(*id) == d.track_id)
-                    .ok_or("Playing track is not in the selected playlist")?;
-                (DeckId::from_index(index).unwrap(), position)
-            } else {
-                if !active() {
-                    return Ok(());
-                }
-                load(&core, DeckId::A, tracks[0], active)?;
-                if !active() {
-                    return Ok(());
-                }
-                core.engine
-                    .dispatch(Command::SetCrossfader { value: -1. })
-                    .map_err(|e| e.to_string())?;
-                core.engine
-                    .dispatch(Command::PlayPause { deck: DeckId::A })
-                    .map_err(|e| e.to_string())?;
-                (DeckId::A, 0)
-            };
-        while position + 1 < tracks.len() && active() {
-            let incoming = if outgoing == DeckId::A {
-                DeckId::B
-            } else {
-                DeckId::A
-            };
-            let _ = tx.send(AutomixMsg::Status(format!(
-                "Preparing {} / {}",
-                position + 2,
-                tracks.len()
-            )));
-            load(&core, incoming, tracks[position + 1], active)?;
-            if !active() {
-                return Ok(());
+        let x = if initial.xf_reverse { -initial.xfader } else { initial.xfader };
+        let gain = |index: usize| {
+            let d = &initial.decks[index];
+            let cross = if index == 0 { 1. - x } else { 1. + x };
+            cross * d.fader * 10f32.powf(d.gain_db / 20.)
+        };
+        let mut outgoing = initial.decks.iter().enumerate().filter(|(_, d)| d.playing)
+            .max_by(|(a,_),(b,_)| gain(*a).total_cmp(&gain(*b)))
+            .map(|(i,_)| DeckId::from_index(i).unwrap()).unwrap_or(DeckId::A);
+        let mut order = order::TrackOrder::new(tracks.clone(), initial.deck(outgoing).playing.then_some(initial.deck(outgoing).track_id).flatten(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64);
+        if initial.deck(outgoing).playing {
+            settle_overlap(&core, outgoing, &active)?;
+        } else {
+            let mut started = false;
+            for _ in 0..tracks.len() {
+                if !active() { return Ok(()); }
+                let id = order.next(shuffle.load(Ordering::Relaxed));
+                if load(&core, outgoing, id, &active).is_err() { continue; }
+                let prepared = crate::analysis::prepare(&core, id)?;
+                guarded(&core, &active, || {
+                    cue(&core, outgoing, &prepared)?;
+                    command(&core, Command::SetCrossfader { value: -1. })?;
+                    command(&core, Command::SetXfReverse { on: false })?;
+                    command(&core, Command::PlayPause { deck: outgoing })
+                })?;
+                started = true;
+                break;
             }
-            let a = analysis(&core, outgoing)?;
-            let b = analysis(&core, incoming)?;
-            let ca = core.library.cues(a.track_id).map_err(|e| e.to_string())?;
-            let cb = core.library.cues(b.track_id).map_err(|e| e.to_string())?;
+            if !started { return Err("No playable tracks in this playlist".into()); }
+        }
+        while active() {
+            let incoming = if outgoing == DeckId::A { DeckId::B } else { DeckId::A };
+            let mut loaded = false;
+            let mut last_error = String::new();
+            for _ in 0..tracks.len() {
+                let id = order.next(shuffle.load(Ordering::Relaxed));
+                if !active() { return Ok(()); }
+                let title = core.library.get_track(id).map(|t| t.title).unwrap_or_default();
+                let _ = tx.send(AutomixMsg::Status(format!("Preparing {title}")));
+                match load(&core, incoming, id, &active) {
+                    Ok(()) => { loaded = true; break; }
+                    Err(error) => { last_error = error; }
+                }
+            }
+            if !loaded { return Err(format!("No playable next track: {last_error}")); }
+            if !active() { return Ok(()); }
+            let a_id = core.engine.snapshot().deck(outgoing).track_id.ok_or("Deck is empty")?;
+            let b_id = core.engine.snapshot().deck(incoming).track_id.ok_or("Deck is empty")?;
+            let a = crate::analysis::prepare(&core, a_id)?;
+            let b = crate::analysis::prepare(&core, b_id)?;
             let snapshot = core.engine.snapshot();
             let d = snapshot.deck(outgoing);
-            let planner = mixless_mixplan::Planner::with_options(mixless_mixplan::PlannerOptions {
-                earliest_outgoing_sec: d.frame as f32 / d.src_sample_rate as f32 + 1.0,
-                ..Default::default()
+            if !d.playing && d.frame >= d.frames.saturating_sub(1) {
+                // A cold load may finish after EOF. Continue with the prepared
+                // track instead of leaving AUTO stranded on an ended deck.
+                guarded(&core, &active, || {
+                    cue(&core, incoming, &b)?;
+                    command(&core, Command::SetCrossfader { value: if incoming == DeckId::A { -1. } else { 1. } })?;
+                    command(&core, Command::PlayPause { deck: incoming })
+                })?;
+                outgoing = incoming;
+                continue;
+            }
+            let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
+            let lead = ((a.analysis.duration_sec - now) * 0.1).clamp(0.005, 0.25);
+            let plan = preparation::pair(&core, &a, &b, now + lead, offset(d), offset(snapshot.deck(incoming)))?;
+            let start = plan.t_in_a;
+            let prepared = core.engine.prepare_plan_on(plan, outgoing).map_err(|e| e.to_string())?;
+            guarded(&core, &active, || {
+                if !core.engine.snapshot().deck(outgoing).playing { return Err("Playback stopped".into()); }
+                command(&core, Command::SetLoopBeats { deck: outgoing, beats: d.loop_beats, on: false })?;
+                // Bring a muted, manually loaded outgoing channel into the mix.
+                if d.fader <= 0.001 { command(&core, Command::SetChannelFader { deck: outgoing, value: 0.8 })?; }
+                core.engine.commit_plan(prepared).map_err(|e| e.to_string())
+            })?;
+            // Look one track ahead while the staged pair plays. Decode is
+            // bounded by the shared PCM cache, independent of the UI clock.
+            let mut lookahead = order.clone();
+            let next = lookahead.next(shuffle.load(Ordering::Relaxed));
+            let warm_core = core.clone();
+            std::thread::spawn(move || {
+                if let Ok(track) = crate::analysis::prepare(&warm_core, next) {
+                    let _ = crate::analysis::decode(&warm_core, &track);
+                }
             });
-            let plan =
-                planner.plan_pair(&a, &b, &ca, &cb, offset(d), offset(snapshot.deck(incoming)));
-            if let Some(reason) = plan.failure_reason.as_ref() {
-                return Err(reason.clone());
-            }
-            let summary = plan
-                .summary
-                .as_ref()
-                .ok_or("No automix transition available")?;
-            let status = format!(
-                "{:?} · {} bars{}",
-                summary.strategy,
-                summary.length_bars,
-                if summary.used_fallback {
-                    " · fallback"
-                } else {
-                    ""
-                }
-            );
-            if !active() {
-                return Ok(());
-            }
-            core.engine
-                .load_plan_on(plan, outgoing)
-                .map_err(|e| e.to_string())?;
-            let _ = tx.send(AutomixMsg::Status(status));
+            let mut phase = String::new();
             loop {
-                if !active() {
-                    return Ok(());
-                }
+                if !active() { return Ok(()); }
                 let snapshot = core.engine.snapshot();
                 if !snapshot.automix_on {
-                    if snapshot.automix_progress < 1.0 {
-                        return Err("Automix stopped after a transport or track change".into());
-                    }
+                    if snapshot.automix_progress < 1.0 { return Err("Automix stopped after a playback change".into()); }
                     break;
                 }
+                let seconds = snapshot.deck(outgoing).frame as f32 / snapshot.deck(outgoing).src_sample_rate.max(1) as f32;
+                let next_phase = if snapshot.automix_paused { "Paused".into() }
+                    else if seconds < start && snapshot.automix_progress == 0. { format!("Cueing {}", b.track.title) }
+                    else { format!("Mixing deck {} into {}", if outgoing == DeckId::A { "A" } else { "B" }, if incoming == DeckId::A { "A" } else { "B" }) };
+                if next_phase != phase { phase = next_phase; let _ = tx.send(AutomixMsg::Status(phase.clone())); }
                 std::thread::sleep(Duration::from_millis(25));
             }
             outgoing = incoming;
-            position += 1;
         }
         Ok(())
     })();
-    if active() {
-        let _ = tx.send(AutomixMsg::Done(result));
-    }
+    if active() { let _ = tx.send(AutomixMsg::Done(result)); }
 }
+
+#[cfg(test)]
+mod tests;

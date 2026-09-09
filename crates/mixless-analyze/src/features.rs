@@ -1,12 +1,15 @@
 use mixless_protocol::{
-    BarFeature, Section, SectionLabel as S, TempoMap, TempoSegment, TrackAnalysis, TrackId,
+    BarFeature, SectionLabel as S, TempoMap, TempoSegment, TrackAnalysis, TrackId,
 };
 use rustfft::{num_complex::Complex, FftPlanner};
 const SR: f32 = 22050.;
 const FFT: usize = 2048;
 const HOP: usize = 256;
-pub const ANALYSIS_VERSION: u32 = 3;
-#[derive(Default)]
+// Bump whenever bar structure labels or cue-facing features change; cached
+// analyses from older classifiers must not drive Automix.
+pub const ANALYSIS_VERSION: u32 = 6;
+
+#[derive(Default, Clone)]
 struct Frame {
     time: f32,
     rms: f32,
@@ -21,6 +24,13 @@ struct Frame {
 pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     let duration = stereo.len() as f32 / 2. / sr.max(1) as f32;
     let mut mono = Vec::with_capacity((duration * SR) as usize);
+    let (mut left, mut right, mut combined) = (0f64, 0f64, 0f64);
+    for frame in stereo.chunks_exact(2) {
+        left += (frame[0] as f64).powi(2);
+        right += (frame[1] as f64).powi(2);
+        combined += ((frame[0] as f64 + frame[1] as f64) * 0.5).powi(2);
+    }
+    let dominant = (combined < left.max(right) * 0.01).then_some(if left >= right { 0 } else { 1 });
     // Area downsampling averages each source interval, preserving DC and RMS
     // envelopes; spectral features above 8 kHz are deliberately discarded.
     for i in 0..(duration * SR) as usize {
@@ -30,7 +40,10 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             .min(stereo.len() / 2);
         let mut sum = 0.;
         for j in a..b {
-            sum += (stereo[j * 2] + stereo[j * 2 + 1]) * 0.5;
+            sum += dominant.map_or_else(
+                || (stereo[j * 2] + stereo[j * 2 + 1]) * 0.5,
+                |c| stereo[j * 2 + c],
+            );
         }
         mono.push(if b > a { sum / (b - a) as f32 } else { 0. });
     }
@@ -45,6 +58,11 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     let mut previous_low = 0.;
     let mut frames = Vec::new();
     let mut global = [0f32; 12];
+    let bins: Vec<_> = (2..FFT / 2 - 1).map(|k| {
+        let hz = k as f32 * SR / FFT as f32;
+        (k, hz, if hz < 150. { 0 } else if hz < 2000. { 1 } else { 2 },
+         ((69. + 12. * (hz / 440.).log2()).round() as i32).rem_euclid(12) as usize)
+    }).take_while(|(_, hz, _, _)| *hz <= 8000.).collect();
     for start in (0..mono.len().saturating_sub(FFT)).step_by(HOP) {
         let mut frame = Frame {
             time: (start + FFT / 2) as f32 / SR,
@@ -60,20 +78,9 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         fft.process_with_scratch(&mut complex, &mut scratch);
         let mut harmonic = 0.;
         let mut total = 0.;
-        for k in 2..FFT / 2 - 1 {
-            let hz = k as f32 * SR / FFT as f32;
-            if hz > 8000. {
-                break;
-            }
+        for &(k, hz, band, pc) in &bins {
             let power = complex[k].norm_sqr();
             let mag = power.sqrt();
-            let band = if hz < 150. {
-                0
-            } else if hz < 2000. {
-                1
-            } else {
-                2
-            };
             frame.band[band] += power;
             total += power;
             frame.onset += (mag - previous[k]).max(0.);
@@ -82,7 +89,6 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
                 && power > complex[k - 1].norm_sqr() * 1.5
                 && power > complex[k + 1].norm_sqr() * 1.5
             {
-                let pc = ((69. + 12. * (hz / 440.).log2()).round() as i32).rem_euclid(12) as usize;
                 frame.chroma[pc] += power;
                 global[pc] += power;
                 if hz > 180. && hz < 3000. {
@@ -105,12 +111,54 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     }
     let (bpm, phase, confidence) = tempo(&frames, duration);
     let (key, camelot, key_confidence) = key(&global);
-    let period = 60. / bpm;
+    // Estimate tempo independently for each phrase. A single global BPM is
+    // retained as a fallback, while the beat timestamps follow the local
+    // periods so accelerando/section changes do not accumulate phase error.
+    let phrase_beats = 16usize;
+    let mut local_bpms = Vec::new();
+    let mut probe = phase;
+    while probe < duration {
+        let end = (probe + phrase_beats as f32 * 60.0 / bpm).min(duration);
+        let start = frames.partition_point(|f| f.time < probe);
+        let stop = frames.partition_point(|f| f.time < end);
+        let local = &frames[start..stop];
+        let estimate = if local.len() >= 32 {
+            tempo(local, (end - probe).max(1.0)).0
+        } else {
+            bpm
+        };
+        let local_bpm = if estimate.is_finite() {
+            // Autocorrelation can select a half/double-time alias in a short
+            // phrase. Correct clear aliases while preserving genuine local
+            // changes such as 100 -> 80 BPM.
+            let corrected = if estimate < bpm * 0.6 {
+                estimate * 2.0
+            } else if estimate > bpm * 1.6 {
+                estimate * 0.5
+            } else {
+                estimate
+            };
+            corrected.clamp(70., 180.)
+        } else {
+            bpm
+        };
+        local_bpms.push(local_bpm);
+        // Keep the next analysis window on the same phrase boundary as the
+        // generated beat grid. This prevents a tempo change from shifting the
+        // segment-to-source mapping after the first phrase.
+        probe += phrase_beats as f32 * 60.0 / local_bpm;
+    }
+    if local_bpms.is_empty() {
+        local_bpms.push(bpm);
+    }
     let mut beats = Vec::new();
     let mut t = phase;
+    let mut beat_index = 0usize;
     while t <= duration {
         beats.push(t);
-        t = phase + beats.len() as f32 * period;
+        let phrase = (beat_index / phrase_beats).min(local_bpms.len() - 1);
+        t += 60.0 / local_bpms[phrase];
+        beat_index += 1;
     }
     // Downbeat phase is estimated from the strongest recurring low-frequency
     // accent. Confidence includes accent ambiguity; a uniform click is not
@@ -143,8 +191,11 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     // locally so a constant grid fitted to a tempo-changing song is never
     // advertised as reliable throughout that song.
     let mut segments = Vec::new();
-    for first in (0..beats.len()).step_by(16) {
-        let last = (first + 16).min(beats.len());
+    for first in (0..beats.len()).step_by(phrase_beats) {
+        let last = (first + phrase_beats).min(beats.len());
+        let local_bpm = local_bpms[(first / phrase_beats).min(local_bpms.len() - 1)];
+        let local_period = 60.0 / local_bpm;
+        let local_phase = beats[first];
         let start = frames.partition_point(|f| f.time < beats[first]);
         let end_time = beats.get(last).copied().unwrap_or(duration);
         let end = frames.partition_point(|f| f.time < end_time);
@@ -153,15 +204,15 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         let aligned: f32 = local
             .iter()
             .filter(|f| {
-                let p = (f.time - phase).rem_euclid(period);
-                p.min(period - p) < 0.035
+                let p = (f.time - local_phase).rem_euclid(local_period);
+                p.min(local_period - p) < 0.035
             })
             .map(|f| f.onset)
             .sum();
         segments.push(TempoSegment {
             start_beat: first as f32,
             end_beat: last as f32,
-            bpm,
+            bpm: local_bpm,
             confidence: confidence
                 .min(accent_confidence)
                 .min((aligned / total.max(1e-6) * 1.5).clamp(0., 1.)),
@@ -236,60 +287,36 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
                 .clamp(0., 1.),
             hat_salience: (band[2] / total).sqrt(),
             vocal_presence: risk,
+            vocal_confidence: None,
             energy_slope: 0.,
             section: S::Unknown,
         });
     }
-    let maximum = bars.iter().map(|b| b.rms).fold(0., f32::max);
-    for i in 0..bars.len() {
-        let slope = if i > 0 {
-            (bars[i].rms - bars[i - 1].rms) / maximum.max(1e-6)
-        } else {
-            0.
-        };
-        let b = &mut bars[i];
-        b.energy_slope = slope;
-        b.section = if b.rms < 0.001 || b.rms < maximum * 0.02 {
-            S::Silence
-        } else if b.vocal_presence < 0.35 && b.start_sec < duration * 0.2 {
-            S::Intro
-        } else if b.vocal_presence < 0.35 && b.end_sec > duration * 0.8 {
-            S::Outro
-        } else if b.rms < maximum * 0.3 && b.vocal_presence < 0.4 {
-            S::Break
-        } else {
-            S::Unknown
-        };
-    }
-    let mut sections: Vec<Section> = Vec::new();
-    for b in &bars {
-        if let Some(last) = sections.last_mut().filter(|s| s.label == b.section) {
-            last.end_sec = b.end_sec;
-        } else {
-            sections.push(Section {
-                start_sec: b.start_sec,
-                end_sec: b.end_sec,
-                label: b.section,
-            });
-        }
-    }
+    let (sections, phrase_boundaries) =
+        crate::structure::detect(&mut bars, if confidence >= 0.1 { &downbeats } else { &[] });
     TrackAnalysis {
         track_id: id,
         duration_sec: duration,
         sample_rate: sr,
         tempo: TempoMap {
+            // Keep the globally fitted BPM stable for library display and
+            // fallback consumers. Runtime timing uses the local grid segments.
             global_bpm: bpm,
             meter_num: 4,
             meter_den: 4,
             segments,
-            beats,
-            downbeats,
+            // A fallback BPM is useful to the conservative mix planner, but
+            // silence/aperiodic audio must not advertise an invented beat grid
+            // to the waveform or Beat Sync. Bar-one confidence is independent.
+            beats: if confidence >= 0.1 { beats } else { vec![] },
+            downbeats: if confidence >= 0.1 { downbeats } else { vec![] },
         },
         key,
         camelot,
         key_confidence,
         sections,
         bars,
+        phrase_boundaries,
         waveform_path: None,
         partial: true,
     }
@@ -438,6 +465,8 @@ mod tests {
         assert_eq!(a.key, None);
         assert_eq!(a.key_confidence, 0.);
         assert_eq!(a.tempo.segments[0].confidence, 0.);
+        assert!(a.tempo.beats.is_empty());
+        assert!(a.tempo.downbeats.is_empty());
         assert!(a
             .bars
             .iter()
@@ -509,5 +538,49 @@ mod tests {
         let a = analyze(TrackId(1), &samples, sr);
         assert!(a.tempo.segments.len() > 1);
         assert!(a.tempo.segments.iter().any(|s| s.confidence < 0.65));
+    }
+
+    #[test]
+    fn tempo_segments_measure_distinct_section_bpms() {
+        let sr = 22050;
+        let mut samples = drums(sr, 100., 24.);
+        samples.extend(drums(sr, 140., 24.));
+        let a = analyze(TrackId(3), &samples, sr);
+        let first = a.tempo.segments.first().unwrap().bpm;
+        let last = a.tempo.segments.last().unwrap().bpm;
+        assert!(first < 115., "first segment BPM was {first}");
+        assert!(last > 125., "last segment BPM was {last}");
+        assert!(a.tempo.beats.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn structure_classifier_exposes_dj_entry_and_exit_regions() {
+        let mut samples = drums(22050, 120., 64.);
+        for (i, frame) in samples.chunks_exact_mut(2).enumerate() {
+            let sec = i as f32 / 22050.;
+            if sec < 16. || sec >= 48. {
+                frame[0] *= 0.3;
+                frame[1] *= 0.3;
+            }
+        }
+        let a = analyze(TrackId(4), &samples, 22050);
+        assert!(a.sections.iter().any(|s| s.label == S::Intro));
+        assert!(a.sections.iter().any(|s| s.label == S::Drop));
+        assert!(a.sections.iter().any(|s| s.label == S::Outro));
+        assert!(a.bars.windows(2).all(|w| w[1].start_sec >= w[0].start_sec));
+    }
+
+    #[test]
+    fn antiphase_stereo_remains_audible_to_structure_detection() {
+        let mut samples = drums(22050, 120., 12.);
+        for frame in samples.chunks_exact_mut(2) {
+            frame[1] = -frame[0];
+        }
+        let a = analyze(TrackId(5), &samples, 22050);
+        assert!(a
+            .bars
+            .iter()
+            .any(|b| b.rms > 0.01 && b.section != S::Silence));
+        assert!(!a.tempo.beats.is_empty());
     }
 }

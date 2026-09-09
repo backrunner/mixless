@@ -21,31 +21,16 @@ const BEATS_SHOWN: f32 = 16.0;
 /// Fallback window when BPM is unknown: 8 seconds.
 const FALLBACK_SECONDS: f32 = 8.0;
 
-/// Quantized RGB mixtures keep the number of path submissions bounded.
-fn spectrum(low: f32, mid: f32, high: f32) -> (usize, Rgba) {
-    let total = (low + mid + high).max(1.0);
-    let l = ((low / total * 4.0).round() as usize).min(4);
-    let m = ((mid / total * 4.0).round() as usize).min(4 - l);
-    let h = 4 - l - m;
-    let bands = [theme::WF_LOW, theme::WF_MID, theme::WF_HIGH];
-    let weights = [l as f32, m as f32, h as f32];
+/// Continuous spectral color: no quantization boundaries to flash during scrolling.
+fn spectrum(low: f32, mid: f32, high: f32) -> Rgba {
+    let weights = [low.sqrt(), mid.sqrt(), high.sqrt()];
+    let total = weights.iter().sum::<f32>().max(1.);
     let rgb: [f32; 3] = std::array::from_fn(|channel| {
-        bands
-            .iter()
-            .zip(weights)
-            .map(|(color, weight)| color[channel] * weight)
-            .sum::<f32>()
-            / 4.0
+        [theme::WF_LOW, theme::WF_MID, theme::WF_HIGH].iter().zip(weights)
+            .map(|(color, weight)| color[channel] * weight / total).sum::<f32>()
     });
-    let brightest = rgb.iter().copied().fold(0.01f32, f32::max);
-    (
-        l * 5 + m,
-        gpui::rgb(rgba_bytes(
-            rgb[0] / brightest,
-            rgb[1] / brightest,
-            rgb[2] / brightest,
-        )),
-    )
+    let brightest = rgb.iter().copied().fold(0.01, f32::max);
+    gpui::rgb(rgba_bytes(rgb[0] / brightest, rgb[1] / brightest, rgb[2] / brightest))
 }
 
 fn source_beat_frames(d: &DeckSnapshot, sr: u32) -> f32 {
@@ -56,31 +41,6 @@ fn source_beat_frames(d: &DeckSnapshot, sr: u32) -> f32 {
     }
 }
 
-fn add_column(
-    path: &mut PathBuilder,
-    vertical: bool,
-    ox: f32,
-    oy: f32,
-    axis: f32,
-    position: f32,
-    half: f32,
-) {
-    let point = |time, amp| {
-        if vertical {
-            gpui::point(px(ox + axis + amp), px(oy + time))
-        } else {
-            gpui::point(px(ox + time), px(oy + axis + amp))
-        }
-    };
-    path.move_to(point(position, -half));
-    path.line_to(point(position + 1.0, -half));
-    path.line_to(point(position + 1.0, half));
-    path.line_to(point(position, half));
-    path.close();
-}
-
-/// Frames per pixel along the time axis for the current view. Shared by the
-/// paint code and the drag-to-seek handler so scrubbing tracks the pixels 1:1.
 pub fn frames_per_px(d: &DeckSnapshot, device_sr: u32, span: f32) -> f32 {
     let span = span.max(1.0);
     let sr = if d.src_sample_rate > 0 {
@@ -117,7 +77,7 @@ pub fn paint_wave(
     };
     let axis = thick / 2.0;
     let max_half = (axis - 5.0).max(1.0);
-    let anchor = span / 2.0;
+
     let ox = pf(bounds.origin.x);
     let oy = pf(bounds.origin.y);
 
@@ -134,6 +94,7 @@ pub fn paint_wave(
         return;
     }
     let fpp = frames_per_px(d, device_sr, span);
+    let anchor = (d.frame as f32 / fpp).min(span / 2.0);
     // Never trust a partially-written or older cache to have equally-sized
     // vectors. The positive/negative/RMS vectors are optional for backwards
     // compatibility; the four original vectors are the safe common extent.
@@ -157,79 +118,53 @@ pub fn paint_wave(
         quad_fill(window, ox, oy + axis - 0.5, span, 1.0, center_line);
     }
 
-    // Exactly one aggregate sample per screen pixel. Higher-resolution cache
-    // columns improve peak accuracy but do not multiply per-frame path points.
-    let sample_count = span.ceil().max(1.0) as usize;
-    let mut paths: Vec<_> = (0..25).map(|_| PathBuilder::fill()).collect();
-    let mut colors = [None; 25];
-    let mut body = PathBuilder::fill();
-    for px_i in 0..sample_count {
-        let pxi = px_i as f32 + 0.5;
-        let pos = frame + (pxi - anchor) * fpp;
-        if pos < 0.0 || pos >= frames {
-            continue;
-        }
-        // Sample the whole pixel footprint, centered on its visual position.
-        // Peak-of-max preserves transients while weighted band averaging keeps
-        // the color stable when several analysis columns land in one pixel.
-        let pos0 = (pos - fpp * 0.5).max(0.0);
-        let pos1 = (pos + fpp * 0.5).min(frames);
-        let c0 = (((pos0 / frames) * n as f32).floor() as usize).min(n - 1);
-        let c1 = (((pos1 / frames) * n as f32).ceil() as usize).min(n);
-        let c1 = c1.clamp(c0 + 1, n);
-        let mut peak = 0u8;
-        let mut rms = 0u8;
-        let (mut l, mut m, mut h) = (0u64, 0u64, 0u64);
-        for c in c0..c1 {
-            peak = peak.max(data.peak[c]);
-            if has_rms {
-                rms = rms.max(data.rms[c]);
-            }
-            let weight = if has_rms {
-                data.rms[c].max(data.peak[c] / 4).max(1)
+    // Source-anchored bins translate continuously under the playhead. Screen-
+    // anchored peak picking changed shape every frame and caused visible shimmer.
+    // Rounded quads are GPU instances: no per-frame polygon tessellation.
+    let columns_per_pixel = fpp * n as f32 / frames;
+    let stride = (columns_per_pixel.max(1.).log2().floor().exp2() as usize).max(1);
+    let first = (((frame - anchor * fpp).max(0.) / frames * n as f32) as usize / stride) * stride;
+    let last = (((frame + (span - anchor) * fpp).min(frames) / frames * n as f32).ceil() as usize).min(n);
+    for c0 in (first..last).step_by(stride) {
+        let c1 = (c0 + stride).min(n);
+        let p0 = (anchor + (c0 as f32 / n as f32 * frames - frame) / fpp).max(0.);
+        let p1 = (anchor + (c1 as f32 / n as f32 * frames - frame) / fpp).min(span);
+        if p1 <= p0 { continue; }
+        let peak = data.peak[c0..c1].iter().copied().max().unwrap_or(0) as f32 / 255.;
+        if peak == 0. { continue; }
+        let average = |band: &[u8]| band[c0..c1].iter().map(|v| *v as f32).sum::<f32>() / (c1 - c0) as f32;
+        let (l, m, h) = (average(&data.low), average(&data.mid), average(&data.high));
+        let half = peak.powf(0.85) * max_half;
+        let mut column = |half: f32, color: Rgba| {
+            if vertical {
+                quad_fill(window, ox + axis - half, oy + p0, half * 2., p1 - p0, color);
             } else {
-                data.peak[c].max(1)
-            } as u64;
-            l += data.low[c] as u64 * weight;
-            m += data.mid[c] as u64 * weight;
-            h += data.high[c] as u64 * weight;
-        }
-        let (bucket, color) = spectrum(l as f32, m as f32, h as f32);
-        if peak > 0 {
-            let half = (peak as f32 / 255.0).powf(0.85) * max_half;
-            add_column(&mut paths[bucket], vertical, ox, oy, axis, pxi - 0.5, half);
-            colors[bucket] = Some(color);
-            let rms = if has_rms {
-                rms as f32 / 255.0
-            } else {
-                peak as f32 / 255.0 * 0.55
-            };
-            add_column(
-                &mut body,
-                vertical,
-                ox,
-                oy,
-                axis,
-                pxi - 0.5,
-                (rms * max_half).min(half),
-            );
-        }
-    }
-    for (path, color) in paths.into_iter().zip(colors) {
-        if let Some(color) = color {
-            if let Ok(path) = path.build() {
-                window.paint_path(path, color);
+                quad_fill(window, ox + p0, oy + axis - half, p1 - p0, half * 2., color);
             }
-        }
+        };
+        column(half, spectrum(l, m, h));
+        // Bright high-frequency tips, a midrange body, and a warm bass core.
+        // Each band uses its measured share; quiet bass cannot fill a cymbal hit.
+        let total = (l + m + h).max(1.);
+        column(half * ((l + m) / total).sqrt(), spectrum(l, m, 0.));
+        let rms = if has_rms { average(&data.rms) / 255. } else { peak * 0.55 };
+        column((rms * max_half).min(half) * (l / total).sqrt(), gpui::rgb(0xff6542));
     }
-    if let Ok(path) = body.build() {
-        window.paint_path(path, gpui::rgba(0x07101945));
+
+    if d.loop_on {
+        let start = (anchor + (d.loop_start_frame as f32 - frame) / fpp).clamp(0., span);
+        let end = (anchor + (d.loop_end_frame as f32 - frame) / fpp).clamp(0., span);
+        if end > start {
+            let color = theme::with_alpha(theme::LED_GREEN, 0.18);
+            if vertical { quad_fill(window, ox, oy + start, thick, end - start, color); }
+            else { quad_fill(window, ox + start, oy, end - start, thick, color); }
+        }
     }
 
     // Draw measured source-time beats. No invented downbeat at frame zero.
     if let Some(tempo) = tempo {
         let start_sec = (frame - anchor * fpp) / sr as f32;
-        let end_sec = (frame + anchor * fpp) / sr as f32;
+        let end_sec = (frame + (span - anchor) * fpp) / sr as f32;
         for (positions, downbeat) in [(&tempo.beats, false), (&tempo.downbeats, true)] {
             let start = positions.partition_point(|sec| *sec < start_sec);
             for sec in positions[start..].iter().take_while(|sec| **sec <= end_sec) {
@@ -252,6 +187,14 @@ pub fn paint_wave(
                     }
                 }
             }
+        }
+    }
+
+    if let Some(cue) = d.automix_cue_frame {
+        let p = anchor + (cue as f32 - frame) / fpp;
+        if (0.0..span).contains(&p) {
+            if vertical { quad_fill(window, ox, oy + p, thick, 2., theme::WARN); }
+            else { quad_fill(window, ox + p, oy, 2., thick, theme::WARN); }
         }
     }
 
@@ -355,6 +298,7 @@ pub fn wave_drag_handler(
 ) -> impl Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static {
     cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
         window.prevent_default();
+        cx.stop_propagation();
         let (_, fpp) = *cell.lock().unwrap();
         let pos = if vertical {
             f32::from(ev.position.y)
@@ -412,6 +356,11 @@ pub fn wave_lane(
         .border_1()
         .border_color(theme::LINE_SOFT)
         .overflow_hidden()
+        .cursor(if d.frames == 0 {
+            gpui::CursorStyle::Arrow
+        } else {
+            gpui::CursorStyle::OpenHand
+        })
         .on_mouse_down(MouseButton::Left, down)
         .child(
             canvas(
@@ -453,9 +402,9 @@ mod tests {
     }
     #[test]
     fn spectral_extremes_have_distinct_colors() {
-        let (low, _) = spectrum(255., 0., 0.);
-        let (mid, _) = spectrum(0., 255., 0.);
-        let (high, _) = spectrum(0., 0., 255.);
+        let low = spectrum(255., 0., 0.);
+        let mid = spectrum(0., 255., 0.);
+        let high = spectrum(0., 0., 255.);
         assert_ne!(low, mid);
         assert_ne!(mid, high);
         assert_ne!(low, high);

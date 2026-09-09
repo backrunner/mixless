@@ -53,3 +53,12 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.lyon_tessellation]
 opt-level = 2
+
+[profile.dev.package.mixless-analyze]
+opt-level = 2
+[profile.dev.package.rustfft]
+opt-level = 2
+[profile.dev.package.mixless-mixplan]
+opt-level = 2
+[profile.dev.package.mixless-desktop]
+opt-level = 1

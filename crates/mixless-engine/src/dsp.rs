@@ -21,6 +21,14 @@ impl Biquad {
         y
     }
 
+    fn bandpass(sr: f32, frequency: f32, quality: f32) -> Self {
+        let omega = 2. * PI * (frequency / sr).clamp(0.0001, 0.45);
+        let alpha = omega.sin() / (2. * quality);
+        let a0 = 1. + alpha;
+        Self { b0: alpha / a0, b1: 0., b2: -alpha / a0,
+            a1: -2. * omega.cos() / a0, a2: (1. - alpha) / a0, z1: 0., z2: 0. }
+    }
+
     pub(crate) fn lowpass(sr: f32, freq: f32, q: f32) -> Self {
         let w0 = 2.0 * PI * (freq / sr).clamp(0.0001, 0.49);
         let alpha = w0.sin() / (2.0 * q);
@@ -100,6 +108,9 @@ pub struct Isolator {
     low_align_hp: Lr4,
     mid_lp: Lr4,
     high_hp: Lr4,
+    resonance_low: Biquad,
+    resonance_high: Biquad,
+    resonance: SmoothValue,
     pub gain: [f32; 3],
     pub kill: [bool; 3],
 }
@@ -113,10 +124,15 @@ impl Isolator {
             low_align_hp: Lr4::hp(sr, 2_000.0),
             mid_lp: Lr4::lp(sr, 2_000.0),
             high_hp: Lr4::hp(sr, 2_000.0),
+            resonance_low: Biquad::bandpass(sr, 150., 1.8),
+            resonance_high: Biquad::bandpass(sr, 2000., 1.8),
+            resonance: SmoothValue::new(0.35, sr, 0.012),
             gain: [1.0; 3],
             kill: [false; 3],
         }
     }
+
+    pub fn set_resonance(&mut self, amount: f32) { self.resonance.set(amount.clamp(0., 1.)); }
 
     pub fn process(&mut self, x: f32) -> f32 {
         let low_split = self.low_lp.process(x);
@@ -131,7 +147,13 @@ impl Isolator {
                 v * self.gain[i]
             }
         };
-        g(0, low) + g(1, mid) + g(2, high)
+        // Resonance follows the exposed crossover. Neutral and all-kill remain
+        // unchanged; smoothing avoids a click when preferences change mid-track.
+        let gains: [f32; 3] = std::array::from_fn(|i| if self.kill[i] { 0. } else { self.gain[i] });
+        let low_edge = (gains[0] - gains[1]).abs().min(1.);
+        let high_edge = (gains[1] - gains[2]).abs().min(1.);
+        let edge = self.resonance_low.process(x) * low_edge + self.resonance_high.process(x) * high_edge;
+        g(0, low) + g(1, mid) + g(2, high) + self.resonance.next() * edge
     }
 }
 
@@ -207,7 +229,7 @@ impl ChannelFilter {
     }
 }
 
-struct StateFilter {
+pub(crate) struct StateFilter {
     first: f32,
     second: f32,
     gain: f32,
@@ -216,7 +238,7 @@ struct StateFilter {
 }
 
 impl StateFilter {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             first: 0.0,
             second: 0.0,
@@ -226,13 +248,13 @@ impl StateFilter {
         }
     }
 
-    fn set(&mut self, sample_rate: f32, frequency: f32, quality: f32) {
+    pub(crate) fn set(&mut self, sample_rate: f32, frequency: f32, quality: f32) {
         self.gain = (PI * (frequency / sample_rate).clamp(0.0001, 0.45)).tan();
         self.damping = 1.0 / quality.max(0.5);
         self.norm = 1.0 / (1.0 + self.gain * (self.gain + self.damping));
     }
 
-    fn process(&mut self, input: f32) -> (f32, f32) {
+    pub(crate) fn process(&mut self, input: f32) -> (f32, f32) {
         let band = (self.first + self.gain * (input - self.second)) * self.norm;
         let low = self.second + self.gain * band;
         self.first = flush_small(2.0 * band - self.first);
@@ -241,6 +263,7 @@ impl StateFilter {
     }
 }
 
+#[derive(Clone)]
 pub struct SmoothValue {
     current: f32,
     target: f32,
@@ -505,6 +528,7 @@ mod tests {
     fn isolated_mid_does_not_boost_crossover() {
         for frequency in [150.0, 2000.0] {
             let mut isolator = Isolator::new(48_000.0);
+            isolator.set_resonance(0.);
             isolator.kill = [true, false, true];
             let mut energy = 0.0;
             for frame in 0..48_000 {
@@ -517,4 +541,26 @@ mod tests {
             assert!((energy / 24000.0 - 0.125).abs() < 0.01);
         }
     }
+    #[test]
+    fn eq_resonance_is_audible_and_neutral_and_all_kill_stay_unchanged() {
+        let render = |resonance: f32, gain: [f32; 3]| {
+            let mut iso = Isolator::new(48_000.);
+            iso.set_resonance(resonance);
+            iso.gain = gain;
+            let mut output = Vec::new();
+            for i in 0..48_000 {
+                let sample = iso.process((std::f32::consts::TAU * 150. * i as f32 / 48_000.).sin() * 0.25);
+                assert!(sample.is_finite() && sample.abs() < 1.);
+                if i >= 24_000 { output.push(sample); }
+            }
+            output
+        };
+        let off = render(0., [0.,1.,1.]);
+        let on = render(1., [0.,1.,1.]);
+        let difference = off.iter().zip(on).map(|(a,b)| (a-b).powi(2)).sum::<f32>() / off.len() as f32;
+        assert!(difference > 0.001);
+        assert_eq!(render(0., [1.;3]), render(1., [1.;3]));
+        assert!(render(1., [0.;3]).iter().all(|v| *v == 0.));
+    }
+
 }

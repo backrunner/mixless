@@ -438,3 +438,73 @@ mod tests {
         );
     }
 }
+
+/// Fixed-rate streaming insert pitch shifter. Equal input/output counts keep
+/// deck time unchanged; the wet signal carries the processor's own latency.
+pub(crate) struct InsertPitch {
+    handle: NonNull<c_void>,
+    input: [f32; OUTPUT_FRAMES * 2],
+    output: [f32; OUTPUT_FRAMES * 2],
+    index: usize,
+}
+unsafe impl Send for InsertPitch {}
+impl InsertPitch {
+    pub fn new(sr: f32) -> Self {
+        let block = ((sr * 0.032 / 64.0).round() as usize).max(8) * 64;
+        let handle =
+            NonNull::new(unsafe { mixless_stretch_create(block as i32, (block / 4) as i32) })
+                .expect("allocate insert pitch shifter");
+        let mut pitch = Self {
+            handle,
+            input: [0.0; OUTPUT_FRAMES * 2],
+            output: [0.0; OUTPUT_FRAMES * 2],
+            index: 0,
+        };
+        // Exercise every internal phase before starting the device callback.
+        for _ in 0..block * 3 {
+            pitch.process([0.0; 2]);
+        }
+        pitch.reset();
+        pitch
+    }
+    pub fn configure(&mut self, semitones: f32) {
+        unsafe {
+            mixless_stretch_pitch(self.handle.as_ptr(), semitones);
+        }
+    }
+    pub fn reset(&mut self) {
+        unsafe {
+            mixless_stretch_reset(self.handle.as_ptr());
+        }
+        self.input.fill(0.0);
+        self.output.fill(0.0);
+        self.index = 0;
+    }
+    pub fn process(&mut self, input: [f32; 2]) -> [f32; 2] {
+        let i = self.index * 2;
+        let out = [self.output[i], self.output[i + 1]];
+        self.input[i] = input[0];
+        self.input[i + 1] = input[1];
+        self.index += 1;
+        if self.index == OUTPUT_FRAMES {
+            unsafe {
+                mixless_stretch_process(
+                    self.handle.as_ptr(),
+                    self.input.as_ptr(),
+                    OUTPUT_FRAMES as i32,
+                    self.output.as_mut_ptr(),
+                    OUTPUT_FRAMES as i32,
+                );
+            }
+            self.index = 0;
+        }
+        out
+    }
+}
+impl Drop for InsertPitch {
+    fn drop(&mut self) {
+        unsafe {
+            mixless_stretch_destroy(self.handle.as_ptr());
+        }
+    }
+}

@@ -33,7 +33,7 @@ impl Engine {
 }
 ```
 
-内部：`callback.rs` `graph.rs` `stretch.rs` `scratch.rs` `source.rs` `ring.rs` `jog.rs` `loop_.rs` `eq.rs` `fx/{echo,reverb,flanger,phaser,gate}.rs` `automation.rs` `device.rs`
+当前实现：`engine.rs` 定义引擎状态；`engine/{host,commands,render,runtime,fx,state}.rs` 分别负责宿主生命周期、命令、块混音、逐采样 deck 渲染、FX 原子参数与快照。`effects/{mod,process,delay,capture,pitch,spectral,vocoder}.rs` 分离效果生命周期、调度与 DSP 核心。其他节点在 `dsp.rs`、`stretch.rs`、`resample.rs`、`automation.rs`、`engine_sync.rs` 和 `device.rs`。模块拆分与扩展规则见根目录 `CONTRIBUTING.md`。
 
 禁止：分析算法、SQLite、HTTP、callback 里 `read_at` / mmap / `format!` / `Vec` 增长。
 

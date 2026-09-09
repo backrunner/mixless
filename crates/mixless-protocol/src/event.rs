@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AnalysisStage, DeckId, EngineSnapshot, ErrorCode, LaneId, MixPlanSummary, TrackId,
-};
+use crate::{AnalysisStage, DeckId, EngineSnapshot, ErrorCode, LaneId, MixPlanSummary, TrackId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

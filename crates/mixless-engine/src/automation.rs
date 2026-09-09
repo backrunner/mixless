@@ -40,6 +40,8 @@ struct DeckPoint {
     rate: u32,
     pitch: u32,
     loop_on: bool,
+    scratch_touch: bool,
+    scratch_target: u64,
 }
 #[derive(Clone, Copy)]
 struct Point {
@@ -47,6 +49,8 @@ struct Point {
     decks: [DeckPoint; 2],
     tempo: f32,
 }
+pub struct PreparedMix(Arc<DensePlan>);
+
 struct DensePlan {
     plan: MixPlan,
     outgoing: usize,
@@ -206,6 +210,26 @@ impl DensePlan {
                 }
             }
         }
+        for (i, op) in [&lanes.scratch_a, &lanes.scratch_b].into_iter().enumerate() {
+            if let Some(op) = op {
+                let slot = &shared.decks[if i == 0 { outgoing } else { 1 - outgoing }];
+                if !op.on_bar.is_finite()
+                    || !op.peak_bar.is_finite()
+                    || !op.off_bar.is_finite()
+                    || op.on_bar < 0.0
+                    || !(op.on_bar < op.peak_bar && op.peak_bar < op.off_bar)
+                    || op.off_bar > summary.length_bars as f32
+                    || op.start_src_frame >= slot.frames.load(Ordering::Relaxed)
+                    || op.peak_delta_frames.unsigned_abs()
+                        > (slot.src_sr.load(Ordering::Relaxed) as u64 * 2)
+                    || (op.start_src_frame as i128 + op.peak_delta_frames as i128) < 0
+                    || (op.start_src_frame as i128 + op.peak_delta_frames as i128)
+                        >= slot.frames.load(Ordering::Relaxed) as i128
+                {
+                    return Err(invalid());
+                }
+            }
+        }
         let sr = shared.sample_rate.load(Ordering::Relaxed);
         let a = &shared.decks[outgoing];
         let b = &shared.decks[1 - outgoing];
@@ -294,6 +318,34 @@ impl DensePlan {
                     loop_on: loop_op
                         .as_ref()
                         .is_some_and(|op| u >= op.on_bar && u < op.off_bar),
+                    scratch_touch: {
+                        let op = if index == 0 {
+                            &lanes.scratch_a
+                        } else {
+                            &lanes.scratch_b
+                        };
+                        op.as_ref()
+                            .is_some_and(|op| u >= op.on_bar && u < op.off_bar)
+                    },
+                    scratch_target: {
+                        let op = if index == 0 {
+                            &lanes.scratch_a
+                        } else {
+                            &lanes.scratch_b
+                        };
+                        if let Some(op) = op {
+                            let phase = if u <= op.peak_bar {
+                                (u - op.on_bar) / (op.peak_bar - op.on_bar)
+                            } else {
+                                (op.off_bar - u) / (op.off_bar - op.peak_bar)
+                            };
+                            (op.start_src_frame as i128
+                                + (op.peak_delta_frames as f32 * phase.clamp(0.0, 1.0)) as i128)
+                                .max(0) as u64
+                        } else {
+                            0
+                        }
+                    },
                 }
             });
             let overlap = plan.clock.sample(summary.length_bars as f32) as f64;
@@ -359,7 +411,31 @@ impl Engine {
     }
     /// Explicit deck mapping also supports repeated tracks in a playlist.
     pub fn load_plan_on(&self, plan: MixPlan, outgoing: DeckId) -> Result<(), EngineError> {
-        let dense = Arc::new(DensePlan::compile(plan, outgoing.index(), &self.shared)?);
+        let prepared = self.prepare_plan_on(plan, outgoing)?;
+        self.commit_plan(prepared)
+    }
+
+    pub fn prepare_plan_on(&self, plan: MixPlan, outgoing: DeckId) -> Result<PreparedMix, EngineError> {
+        Ok(PreparedMix(Arc::new(DensePlan::compile(plan, outgoing.index(), &self.shared)?)))
+    }
+
+    /// Short host publication step, separable from compilation for cancellation.
+    pub fn commit_plan(&self, prepared: PreparedMix) -> Result<(), EngineError> {
+        let dense = prepared.0;
+        let pair = dense.plan.summary.as_ref().unwrap().pair;
+        let a = &self.shared.decks[dense.outgoing];
+        let b = &self.shared.decks[1 - dense.outgoing];
+        if a.track_id.load(Ordering::Relaxed) != pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != pair.1.0 as u64
+            || b.playing.load(Ordering::Relaxed)
+            || dense.sample_rate != self.shared.sample_rate.load(Ordering::Relaxed) {
+            return Err(EngineError::Protocol("automix decks changed"));
+        }
+        // The incoming deck visibly sits at its automatic cue before playback.
+        a.automix_cue.store(dense.start_frame.round() as u64 + 1, Ordering::Relaxed);
+        b.automix_cue.store(dense.incoming_frame + 1, Ordering::Relaxed);
+        b.seek_to.store(dense.incoming_frame * 65536, Ordering::Relaxed);
+        b.seek_pending.store(true, Ordering::Release);
         let shared = &self.shared.automation;
         let mut published = shared
             .published
@@ -377,6 +453,7 @@ impl Engine {
         shared.progress.store(0.0f32.to_bits(), Ordering::Relaxed);
         shared.skip.store(false, Ordering::Release);
         shared.paused.store(false, Ordering::Release);
+        self.shared.clear_sync();
         shared.enabled.store(true, Ordering::Release);
         Ok(())
     }
@@ -432,6 +509,7 @@ impl Engine {
                 bit(deck.index(), 5)
             }
             Command::SetLoop { deck, .. }
+            | Command::SetLoopBeats { deck, .. }
             | Command::LoopHalve { deck }
             | Command::LoopDouble { deck } => bit(deck.index(), 6),
             Command::PauseAutomix => {
@@ -455,6 +533,7 @@ impl Engine {
             | Command::SetJogTouch { touching: true, .. } => {
                 auto.enabled.store(false, Ordering::Release);
                 auto.paused.store(false, Ordering::Release);
+                for slot in &self.shared.decks { slot.automix_cue.store(0, Ordering::Relaxed); }
                 0
             }
             _ => 0,
@@ -555,6 +634,12 @@ impl Shared {
                 slot.keylock.store(true, Ordering::Relaxed);
                 slot.reverse.store(false, Ordering::Relaxed);
             }
+            if plan.plan.lanes.scratch_a.is_some() {
+                a.slip.store(true, Ordering::Relaxed);
+            }
+            if plan.plan.lanes.scratch_b.is_some() {
+                b.slip.store(true, Ordering::Relaxed);
+            }
         }
         if skip {
             rt.elapsed = plan.total_frames;
@@ -622,9 +707,18 @@ impl Shared {
                         .store(op.start_src_frame * 65536, Ordering::Relaxed);
                     s.loop_length_frames
                         .store(op.length_src_frames, Ordering::Relaxed);
-                    s.loop_bars.store(op.length_bars as u32, Ordering::Relaxed);
+                    s.loop_sixteenths.store(op.length_bars as u32 * 64, Ordering::Relaxed);
                 }
                 s.loop_on.store(p.loop_on, Ordering::Relaxed);
+            }
+            if p.scratch_touch {
+                s.jog_target
+                    .store(p.scratch_target * 65536, Ordering::Release);
+                s.jog_touch.store(true, Ordering::Release);
+            } else if (relative == 0 && plan.plan.lanes.scratch_a.is_some())
+                || (relative == 1 && plan.plan.lanes.scratch_b.is_some())
+            {
+                s.jog_touch.store(false, Ordering::Release);
             }
         }
         rt.clock_deck = Some(
@@ -644,6 +738,14 @@ impl Shared {
             Ordering::Relaxed,
         );
         if rt.elapsed >= plan.total_frames {
+            if plan.plan.lanes.scratch_a.is_some() {
+                a.jog_touch.store(false, Ordering::Release);
+                a.slip.store(false, Ordering::Relaxed);
+            }
+            if plan.plan.lanes.scratch_b.is_some() {
+                b.jog_touch.store(false, Ordering::Release);
+                b.slip.store(false, Ordering::Relaxed);
+            }
             auto.enabled.store(false, Ordering::Release);
             return false;
         }
@@ -696,6 +798,7 @@ mod tests {
             key_confidence: 0.,
             sections: vec![],
             bars: vec![],
+            phrase_boundaries: vec![],
             waveform_path: None,
             partial: true,
         }
@@ -922,6 +1025,7 @@ mod tests {
                         kick_salience: 1.,
                         hat_salience: 0.,
                         vocal_presence: 0.,
+                        vocal_confidence: None,
                         energy_slope: 0.,
                         section: SectionLabel::Intro,
                     })

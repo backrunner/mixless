@@ -17,6 +17,11 @@ impl Render for About {
             .bg(theme::PANEL)
             .text_color(theme::TEXT)
             .font_family(theme::FONT_UI)
+            .child(
+                gpui::img(crate::branding::icon())
+                    .size(px(64.))
+                    .rounded(px(14.)),
+            )
             .child(div().text_size(px(26.)).child("Mixless"))
             .child("Local music. Seamless mixing.")
             .child(
@@ -53,11 +58,13 @@ pub fn open(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(420.), px(300.)),
+            size(px(420.), px(380.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some("About Mixless".into()),
+            appears_transparent: true,
+            traffic_light_position: Some(gpui::point(px(16.), px(18.))),
             ..Default::default()
         }),
         is_resizable: false,
