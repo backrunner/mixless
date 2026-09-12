@@ -21,6 +21,11 @@ pub const LINE_SOFT: Rgba = c(0x1c1c1f);
 pub const TEXT: Rgba = c(0xf0ede6);
 pub const MUTED: Rgba = c(0x8b877e);
 
+// Compact desktop menus and dialogs share restrained geometry.
+pub const MENU_ROW_HEIGHT: f32 = 24.;
+pub const POPUP_RADIUS: f32 = 3.;
+pub const DIALOG_RADIUS: f32 = 4.;
+
 pub const ACCENT: Rgba = c(0xffb224);
 pub const DECK_A: Rgba = c(0xffb224);
 pub const DECK_B: Rgba = c(0xff5238);
@@ -34,10 +39,10 @@ pub const TRACK_DARK: Rgba = c(0x26262b);
 
 /// High-contrast RGB waveform palette. These colors encode frequency content
 /// and deliberately remain distinct from the product's interaction accents.
-pub const WF_LOW: [f32; 3] = [1.0, 0.23, 0.20];
-pub const WF_LOW_MID: [f32; 3] = [1.0, 0.82, 0.20];
-pub const WF_MID: [f32; 3] = [0.20, 0.95, 0.48];
-pub const WF_HIGH: [f32; 3] = [0.20, 0.48, 1.0];
+pub const WF_LOW: [f32; 3] = [1.0, 0.16, 0.30];
+pub const WF_LOW_MID: [f32; 3] = [1.0, 0.64, 0.10];
+pub const WF_MID: [f32; 3] = [0.12, 1.0, 0.26];
+pub const WF_HIGH: [f32; 3] = [0.22, 0.42, 1.0];
 
 pub const CUE_COLORS: [Rgba; 8] = [
     c(0xe5484d),

@@ -250,3 +250,92 @@ fn empty_decks_start_first_track_in_shuffle_with_a_cancellable_audio_clock_fade(
     assert_eq!(after.decks[0].filter_amount, before.decks[0].filter_amount);
     assert!(after.decks[0].playing);
 }
+
+#[test]
+fn cold_start_skips_a_missing_first_file_and_becomes_audible_without_manual_play() {
+    let (_dir, core, tracks) = fixture();
+    std::fs::remove_file(core.library.get_track(tracks[0]).unwrap().path).unwrap();
+    let epoch = Arc::new(AtomicU64::new(1));
+    let (tx, rx) = channel();
+    let worker = {
+        let core = core.clone();
+        let tracks = tracks.clone();
+        let epoch = epoch.clone();
+        std::thread::spawn(move || {
+            run(core, tracks, Arc::new(AtomicBool::new(false)), epoch, 1, tx)
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut audible = false;
+    while Instant::now() < deadline {
+        let audio = core.engine.render_offline(480);
+        let snap = core.engine.snapshot();
+        if snap.decks[0].track_id == Some(tracks[1])
+            && snap.decks[0].playing
+            && audio.iter().any(|v| v.abs() > 0.01)
+        {
+            audible = true;
+            break;
+        }
+        for msg in rx.try_iter() {
+            if let AutomixMsg::Done(result) = msg {
+                panic!("cold start ended: {result:?}");
+            }
+        }
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    epoch.store(2, Ordering::Release);
+    worker.join().unwrap();
+    assert!(audible, "AUTO must load and play the next usable file");
+}
+
+#[test]
+fn terminal_drop_handoff_launches_at_eof_on_the_render_clock() {
+    let (_dir, core, tracks) = fixture();
+    for (deck, id) in [(DeckId::A, tracks[0]), (DeckId::B, tracks[1])] {
+        crate::analysis::load(&core, deck, id, || true).unwrap();
+    }
+    let mut a = (*crate::analysis::prepare(&core, tracks[0]).unwrap().analysis).clone();
+    let b = crate::analysis::prepare(&core, tracks[1]).unwrap();
+    a.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: 2.,
+            label: mixless_protocol::SectionLabel::Intro,
+        },
+        mixless_protocol::Section {
+            start_sec: 2.,
+            end_sec: 8.,
+            label: mixless_protocol::SectionLabel::Drop,
+        },
+    ];
+    let plan = mixless_mixplan::short_handoff(
+        &mixless_mixplan::PlanContext {
+            outgoing: &a,
+            incoming: &b.analysis,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: Default::default(),
+        },
+        0.,
+    );
+    core.engine
+        .dispatch(Command::SetCrossfader { value: -1. })
+        .unwrap();
+    core.engine
+        .dispatch(Command::PlayPause { deck: DeckId::A })
+        .unwrap();
+    core.engine.load_plan(plan).unwrap();
+    for _ in 0..799 {
+        core.engine.render_offline(480);
+        assert!(!core.engine.snapshot().decks[1].playing);
+    }
+    for _ in 0..100 {
+        core.engine.render_offline(480);
+    }
+    let snapshot = core.engine.snapshot();
+    assert!(snapshot.decks[1].playing && snapshot.decks[1].frame > 0);
+    assert!(!snapshot.decks[0].playing);
+    assert!(!snapshot.automix_on && snapshot.automix_progress >= 1.);
+}

@@ -16,11 +16,27 @@ pub(super) struct TransportPress {
     started: Instant,
     was_playing: bool,
     handled: bool,
+    braking: bool,
 }
 
 impl TransportPress {
     fn hold_due(&self, now: Instant) -> bool {
         !self.handled && now.duration_since(self.started) >= Duration::from_millis(400)
+    }
+    fn release_command(&self, current: &mixless_protocol::DeckSnapshot) -> Option<Command> {
+        if current.track_id != Some(self.track) {
+            return None;
+        }
+        if self.braking {
+            Some(Command::SetBrake {
+                deck: self.deck,
+                on: false,
+            })
+        } else if self.short_stop() && current.playing {
+            Some(Command::PlayPause { deck: self.deck })
+        } else {
+            None
+        }
     }
     fn short_stop(&self) -> bool {
         self.button == TransportButton::Play && self.was_playing && !self.handled
@@ -53,6 +69,7 @@ impl UiState {
             started: Instant::now(),
             was_playing: d.playing,
             handled,
+            braking: false,
         });
     }
     pub fn temporary_cue(&mut self, deck: DeckId, clear: bool) {
@@ -84,6 +101,7 @@ impl UiState {
                 if self.automix_active {
                     self.stop_automix();
                 }
+                self.transport_press.as_mut().unwrap().braking = true;
                 self.dispatch(Command::SetBrake { deck, on: true });
             }
         }
@@ -95,18 +113,23 @@ impl UiState {
         let Some(press) = self.transport_press.take() else {
             return false;
         };
-        if press.short_stop()
-            && self.core.engine.snapshot().deck(press.deck).track_id == Some(press.track)
-        {
-            // If EOF was reached during the press, release must not restart it.
-            if self.core.engine.snapshot().deck(press.deck).playing {
-                self.play_pause(press.deck);
-            }
+        if let Some(command) = press.release_command(self.core.engine.snapshot().deck(press.deck)) {
+            self.dispatch(command);
         }
         true
     }
     pub fn cancel_transport_press(&mut self) {
-        self.transport_press = None;
+        if let Some(press) = self.transport_press.take() {
+            // Focus loss/new gesture must release an active hold without
+            // turning an unhandled short click into an accidental stop.
+            if press.braking {
+                if let Some(command) =
+                    press.release_command(self.core.engine.snapshot().deck(press.deck))
+                {
+                    self.dispatch(command);
+                }
+            }
+        }
     }
 }
 
@@ -123,6 +146,7 @@ mod tests {
             started,
             was_playing: true,
             handled: false,
+            braking: false,
         };
         assert!(p.short_stop());
         assert!(!p.hold_due(started + Duration::from_millis(399)));
@@ -136,5 +160,47 @@ mod tests {
         p.handled = false;
         assert!(!p.short_stop());
         assert!(p.hold_due(started + Duration::from_secs(1)));
+    }
+    #[test]
+    fn releasing_a_hold_stops_only_the_original_loaded_track() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        crate::analysis::load(&core, DeckId::A, tracks[0], || true).unwrap();
+        let mut p = TransportPress {
+            deck: DeckId::A,
+            track: tracks[0],
+            button: TransportButton::Play,
+            started: Instant::now(),
+            was_playing: true,
+            handled: true,
+            braking: true,
+        };
+        let mut d = core.engine.snapshot().decks[0].clone();
+        d.playing = true;
+        assert!(matches!(
+            p.release_command(&d),
+            Some(Command::SetBrake {
+                deck: DeckId::A,
+                on: false
+            })
+        ));
+        d.playing = false;
+        assert!(matches!(
+            p.release_command(&d),
+            Some(Command::SetBrake { on: false, .. })
+        ));
+        d.track_id = Some(tracks[1]);
+        assert!(p.release_command(&d).is_none());
+        d.track_id = Some(tracks[0]);
+        d.playing = true;
+        p.braking = false;
+        // A press that started playback does not stop it on release.
+        assert!(p.release_command(&d).is_none());
+        p.handled = false;
+        assert!(matches!(
+            p.release_command(&d),
+            Some(Command::PlayPause { deck: DeckId::A })
+        ));
+        d.playing = false;
+        assert!(p.release_command(&d).is_none());
     }
 }

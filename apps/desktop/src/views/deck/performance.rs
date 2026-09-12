@@ -44,7 +44,7 @@ impl UiState {
                 } else {
                     theme::PANEL_INSET.into()
                 })
-                .text_size(px(14.))
+                .text_size(px(21.))
                 .text_color(if d.playing { theme::LED_GREEN } else { dc })
                 .hover(|s| s.bg(theme::PANEL_RAISED))
                 .child(if d.brake {

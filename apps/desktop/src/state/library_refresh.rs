@@ -3,6 +3,7 @@ use super::*;
 
 struct LibraryRows {
     selection: Option<i64>,
+    order_revision: u64,
     tracks: Vec<Track>,
     playlists: Vec<mixless_library::PlaylistSummary>,
     issues: Vec<mixless_library::ImportItem>,
@@ -34,6 +35,7 @@ impl UiState {
             return;
         }
         let selection = self.playlist_sel;
+        let order_revision = self.library_order.revision;
         let core = self.core.clone();
         let (tx, rx) = channel();
         self.library_refresh.rx = Some(rx);
@@ -53,6 +55,7 @@ impl UiState {
                     .collect();
                 Ok(LibraryRows {
                     selection,
+                    order_revision,
                     tracks,
                     playlists,
                     issues,
@@ -75,7 +78,10 @@ impl UiState {
                         self.select_playlist(Some(id));
                     }
                 }
-                if rows.selection == self.playlist_sel {
+                if rows.selection == self.playlist_sel
+                    && rows.order_revision == self.library_order.revision
+                    && !self.library_order.is_pending()
+                {
                     // Analysis can finish after this query starts. Do not
                     // replace fresh row metadata with an older query result.
                     if let Ok(latest) = self.core.analysis.latest.lock() {

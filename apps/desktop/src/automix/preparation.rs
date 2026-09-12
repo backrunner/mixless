@@ -16,6 +16,9 @@ pub struct Preparation {
 }
 
 impl Preparation {
+    pub(super) fn has_selection(&self) -> bool {
+        self.revision.load(Ordering::Acquire) > 0
+    }
     pub(super) fn tracks(&self) -> Vec<TrackId> {
         self.playlist.lock().expect("playlist preparation").clone()
     }
@@ -101,6 +104,18 @@ pub(super) fn pair(
     offset_a: PerformanceOffset,
     offset_b: PerformanceOffset,
 ) -> Result<mixless_protocol::MixPlan, String> {
+    pair_from_entry(core, a, b, earliest, 0., offset_a, offset_b)
+}
+
+pub(super) fn pair_from_entry(
+    core: &AppCore,
+    a: &crate::analysis::PreparedTrack,
+    b: &crate::analysis::PreparedTrack,
+    earliest: f32,
+    entry: f32,
+    offset_a: PerformanceOffset,
+    offset_b: PerformanceOffset,
+) -> Result<mixless_protocol::MixPlan, String> {
     // Track-level IN/OUT markers constrain the corresponding side only.
     let ca: Vec<_> = core
         .library
@@ -117,7 +132,9 @@ pub(super) fn pair(
         .filter(|c| c.kind != mixless_protocol::CueKind::Out)
         .collect();
     let key = format!(
-        "{}:{}:{}:{}:{:?}:{:?}:{}:{}",
+        "{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}",
+        entry.to_bits(),
+        core.analysis.content_revision.load(Ordering::Acquire),
         a.track.id.0,
         b.track.id.0,
         a.track.content_hash,
@@ -135,7 +152,7 @@ pub(super) fn pair(
         .get(&key)
         .cloned();
     let base = cached.unwrap_or_else(|| {
-        let plan = choose_plan(a, b, &ca, &cb, offset_a, offset_b, 0., false);
+        let plan = choose_plan(a, b, &ca, &cb, offset_a, offset_b, 0., entry, false);
         let mut plans = core.mix_preparation.plans.lock().expect("plans");
         let mut order = core.mix_preparation.order.lock().expect("plan order");
         if !plans.contains_key(&key) {
@@ -152,7 +169,7 @@ pub(super) fn pair(
     if base.failure_reason.is_none() && base.t_in_a >= earliest {
         return Ok(base);
     }
-    let plan = choose_plan(a, b, &ca, &cb, offset_a, offset_b, earliest, true);
+    let plan = choose_plan(a, b, &ca, &cb, offset_a, offset_b, earliest, entry, true);
     if let Some(error) = &plan.failure_reason {
         return Err(error.clone());
     }
@@ -167,11 +184,13 @@ fn choose_plan(
     offset_a: PerformanceOffset,
     offset_b: PerformanceOffset,
     earliest: f32,
+    entry: f32,
     fallback: bool,
 ) -> mixless_protocol::MixPlan {
     let planner = mixless_mixplan::Planner::with_options(mixless_mixplan::PlannerOptions {
         harmonic_key_shift: true,
         earliest_outgoing_sec: earliest,
+        outgoing_entry_sec: entry,
         ..Default::default()
     });
     let mut best: Option<mixless_protocol::MixPlan> = None;

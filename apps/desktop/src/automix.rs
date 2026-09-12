@@ -1,5 +1,6 @@
 //! Continuous host orchestration; sample-accurate cue, filter and fader motion
 //! stays in the engine. Offline analysis and adjacent plans are prepared early.
+mod bootstrap;
 mod next;
 mod order;
 mod preparation;
@@ -149,7 +150,14 @@ fn settle_overlap(
     let remaining = d.frames.saturating_sub(d.frame) as f32
         / d.src_sample_rate.max(1) as f32
         / d.rate.max(0.01);
-    let steps = (remaining * 0.2 * 100.).clamp(1., 30.) as u32;
+    let other = snapshot.deck(incoming);
+    if !other.playing || (from - target).abs() < 0.001 {
+        return Ok(());
+    }
+    let other_remaining = other.frames.saturating_sub(other.frame) as f32
+        / other.src_sample_rate.max(1) as f32
+        / other.rate.max(0.01);
+    let steps = (remaining.min(other_remaining) * 0.5 * 100.).clamp(1., 400.) as u32;
     for step in 1..=steps {
         if !active() {
             return Ok(());
@@ -187,67 +195,20 @@ pub fn run(
         if tracks.is_empty() {
             return Err("Import a track to start Automix".into());
         }
-        let initial = core.engine.snapshot();
-        let x = if initial.xf_reverse {
-            -initial.xfader
-        } else {
-            initial.xfader
+        let Some((mut outgoing, mut order, mut played_from)) =
+            bootstrap::begin(&core, &tracks, &active, &tx)?
+        else {
+            return Ok(());
         };
-        let gain = |index: usize| {
-            let d = &initial.decks[index];
-            let cross = if index == 0 { 1. - x } else { 1. + x };
-            cross * d.fader * 10f32.powf(d.gain_db / 20.)
-        };
-        let mut outgoing = initial
-            .decks
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| {
-                d.playing
-                    && d.track_id.is_some()
-                    && d.frames > 0
-                    && d.frame < d.frames.saturating_sub(1)
-            })
-            .max_by(|(a, _), (b, _)| gain(*a).total_cmp(&gain(*b)))
-            .map(|(i, _)| DeckId::from_index(i).unwrap())
-            .unwrap_or(DeckId::A);
-        let has_playing = initial.deck(outgoing).playing
-            && initial.deck(outgoing).track_id.is_some()
-            && initial.deck(outgoing).frames > 0
-            && initial.deck(outgoing).frame < initial.deck(outgoing).frames.saturating_sub(1);
-        let mut order = order::TrackOrder::new(
-            tracks.clone(),
-            has_playing
-                .then_some(initial.deck(outgoing).track_id)
-                .flatten(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64,
-        );
-        if has_playing {
-            settle_overlap(&core, outgoing, &active)?;
-        } else {
-            let mut started = false;
-            for _ in 0..tracks.len() {
-                if !active() {
-                    return Ok(());
-                }
-                let id = order.next(false);
-                if load(&core, outgoing, id, &active).is_err() {
-                    continue;
-                }
-                let prepared = crate::analysis::prepare(&core, id)?;
-                start::fade_in(&core, outgoing, &prepared, &active, &tx)?;
-                started = true;
-                break;
-            }
-            if !started {
-                return Err("No playable tracks in this playlist".into());
-            }
-        }
         while active() {
             let current = core.mix_preparation.tracks();
+            if current.is_empty() && core.mix_preparation.has_selection() {
+                let _ = tx.send(AutomixMsg::Status("Waiting for playlist tracks".into()));
+                while active() && core.mix_preparation.tracks().is_empty() {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            }
             if !current.is_empty() && current != tracks {
                 tracks = current;
                 order.replace(tracks.clone());
@@ -260,6 +221,7 @@ pub fn run(
             let Some(next) = next::stage(
                 &core,
                 outgoing,
+                played_from,
                 &mut order,
                 tracks.len(),
                 &shuffle,
@@ -274,11 +236,13 @@ pub fn run(
                 // A cold load may finish after EOF. Continue with the prepared
                 // track instead of leaving AUTO stranded on an ended deck.
                 start::fade_in(&core, incoming, &b, &active, &tx)?;
+                played_from = cue_frame(&core, &b)? as f32 / b.analysis.sample_rate.max(1) as f32;
                 outgoing = incoming;
                 continue;
             }
             let (plan, prepared) = next.transition.unwrap();
             let start = plan.t_in_a;
+            let next_entry = plan.t_in_b;
             guarded(&core, &active, || {
                 let d = core.engine.snapshot().deck(outgoing).clone();
                 if !d.playing {
@@ -336,6 +300,7 @@ pub fn run(
                 }
                 std::thread::sleep(Duration::from_millis(25));
             }
+            played_from = next_entry;
             outgoing = incoming;
         }
         Ok(())

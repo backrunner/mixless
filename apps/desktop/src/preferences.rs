@@ -207,7 +207,10 @@ impl Preferences {
             }
             for deck in [DeckId::A, DeckId::B] {
                 if before.filter_resonance != after.filter_resonance {
-                    let _ = engine.dispatch(Command::SetFilterResonanceEnabled { deck, on: after.filter_resonance });
+                    let _ = engine.dispatch(Command::SetFilterResonanceEnabled {
+                        deck,
+                        on: after.filter_resonance,
+                    });
                 }
                 if before.keylock != after.keylock {
                     let _ = engine.dispatch(Command::SetKeyLock {
@@ -490,7 +493,12 @@ impl Preferences {
             ("keylock", "Key lock", settings.keylock, 1),
             ("vinyl", "Vinyl mode", settings.vinyl, 2),
             ("slip", "Slip mode", settings.slip, 3),
-            ("filter-resonance", "Filter / EQ resonance", settings.filter_resonance, 5),
+            (
+                "filter-resonance",
+                "Filter / EQ resonance",
+                settings.filter_resonance,
+                5,
+            ),
             ("xf-reverse", "Crossfader reverse", settings.xf_reverse, 4),
         ] {
             page = page.child(row(
@@ -1406,12 +1414,12 @@ impl Render for Preferences {
                             .id("preference-options")
                             .max_h(px(430.))
                             .overflow_y_scroll()
-                            .p_2()
-                            .rounded(px(6.))
+                            .p(px(3.))
+                            .rounded(px(theme::POPUP_RADIUS))
                             .bg(theme::PANEL_RAISED)
                             .border_1()
                             .border_color(theme::LINE)
-                            .shadow_lg()
+                            .shadow_sm()
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation()
                             })
@@ -1426,8 +1434,12 @@ impl Render for Preferences {
                                     )
                                     .w_full()
                                     .h_auto()
-                                    .min_h(px(34.))
-                                    .py_2()
+                                    .min_h(px(theme::MENU_ROW_HEIGHT))
+                                    .px(px(8.))
+                                    .py(px(3.))
+                                    .text_size(px(11.))
+                                    .line_height(px(16.))
+                                    .rounded(px(2.))
                                     .justify_start()
                                     .border_0()
                                 },

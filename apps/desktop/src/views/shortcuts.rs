@@ -7,8 +7,8 @@ impl UiState {
         let panel = div()
             .id("shortcuts-panel")
             .w(px(600.))
-            .p_5()
-            .rounded(px(10.))
+            .p_3()
+            .rounded(px(theme::DIALOG_RADIUS))
             .border_1()
             .border_color(theme::LINE)
             .bg(theme::PANEL)
@@ -18,8 +18,8 @@ impl UiState {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(|_, _, cx| cx.stop_propagation())
             .child(
-                div().flex().items_center().justify_between()
-                    .child(div().text_size(px(17.)).child("Keyboard shortcuts"))
+                div().flex().items_center().justify_between().pb_2().border_b_1().border_color(theme::LINE)
+                    .child(div().text_size(px(13.)).child("Keyboard shortcuts"))
                     .child(div().id("shortcuts-close").px_2().cursor_pointer()
                         .text_color(theme::MUTED).child("×")
                         .on_click(cx.listener(|s, _, _, cx| {
@@ -30,7 +30,7 @@ impl UiState {
             .child(div().text_size(px(11.)).text_color(theme::MUTED)
                 .child(format!("Selected deck: {:?} · highlighted on the console", self.focus)))
             .children(HELP.iter().map(|(keys, description)| {
-                div().flex().gap_3().py_1().text_size(px(12.))
+                div().flex().items_center().gap_3().min_h(px(theme::MENU_ROW_HEIGHT)).text_size(px(11.))
                     .child(div().w(px(195.)).flex_none().text_color(theme::ACCENT).child(*keys))
                     .child(div().flex_1().child(*description))
             }))

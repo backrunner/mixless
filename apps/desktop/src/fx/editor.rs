@@ -28,7 +28,7 @@ impl UiState {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap_3();
+            .gap(px(2.));
         for family in [
             "Echo & Delay",
             "Reverb",
@@ -41,7 +41,7 @@ impl UiState {
             "Release",
             "Macro",
         ] {
-            let mut group = div().flex().flex_none().flex_wrap().gap_1();
+            let mut group = div().flex().flex_none().flex_wrap().gap(px(2.));
             for kind in FxKind::ALL
                 .into_iter()
                 .filter(|kind| kind.family() == family)
@@ -50,15 +50,13 @@ impl UiState {
                     div()
                         .id(SharedString::from(format!("choose-fx-{}", kind.as_str())))
                         .w(px(150.))
-                        .px_2()
-                        .py_1()
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(if kind == fx.kind { color } else { theme::LINE })
-                        .bg(if kind == fx.kind {
-                            theme::PANEL_RAISED
-                        } else {
-                            theme::PANEL_INSET
+                        .flex()
+                        .items_center()
+                        .h(px(theme::MENU_ROW_HEIGHT))
+                        .px(px(6.))
+                        .rounded(px(2.))
+                        .when(kind == fx.kind, |el| {
+                            el.bg(theme::PANEL_RAISED).text_color(color)
                         })
                         .text_size(px(11.))
                         .cursor_pointer()
@@ -74,7 +72,9 @@ impl UiState {
                 .child(
                     div()
                         .flex_none()
-                        .text_size(px(11.))
+                        .mt(px(8.))
+                        .mb(px(2.))
+                        .text_size(px(10.))
                         .text_color(theme::MUTED)
                         .child(family),
                 )
@@ -173,10 +173,13 @@ impl UiState {
             .flex_none()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2()
+            .pl_3()
+            .border_l_1()
+            .border_color(theme::LINE)
             .child(
                 div()
-                    .text_size(px(18.))
+                    .text_size(px(13.))
                     .text_color(color)
                     .child(fx.kind.label()),
             )
@@ -189,9 +192,13 @@ impl UiState {
             .child(
                 div()
                     .id("fx-editor-toggle")
-                    .px_3()
-                    .py_2()
-                    .rounded(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(56.))
+                    .h(px(theme::MENU_ROW_HEIGHT))
+                    .text_size(px(11.))
+                    .rounded(px(2.))
                     .bg(theme::PANEL_RAISED)
                     .text_color(if fx.on { color } else { theme::MUTED })
                     .cursor_pointer()
@@ -239,14 +246,14 @@ impl UiState {
         let panel = div()
             .id("fx-editor-panel")
             .w(px(820.))
-            .p_5()
-            .rounded(px(10.))
+            .p_3()
+            .rounded(px(theme::DIALOG_RADIUS))
             .bg(theme::PANEL)
             .border_1()
             .border_color(theme::LINE)
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_3()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(|_, _, cx| cx.stop_propagation())
             .child(
@@ -254,9 +261,12 @@ impl UiState {
                     .flex()
                     .justify_between()
                     .items_center()
+                    .pb_2()
+                    .border_b_1()
+                    .border_color(theme::LINE)
                     .child(
                         div()
-                            .text_size(px(16.))
+                            .text_size(px(13.))
                             .child(format!("Deck {deck:?} · FX {}", slot + 1)),
                     )
                     .child(

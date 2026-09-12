@@ -109,7 +109,7 @@ cargo check -p mixless-desktop
 ## 当前范围
 
 - `vocal_presence` 是持续前景风险代理，`vocal_confidence` 是可选的人声分类证据，二者都不能替代声部分离。结构仍是启发式，分析继续标记 `partial`。实际乐曲中有歧义的下拍、拍号、局部变速和调性变化仍需更可靠模型与试听校准。
-- 界面支持 Shift 选择 IN／OUT 用途、编号 Cue 和临时 Cue；完整曲线编辑 overlay 尚未实现。已支持顺序／乱序循环、分析队列、后台曲对准备和自动 Cue 标记。手动换歌会退出 AUTO，重新开启后依据实际播放位置规划。
+- 界面支持 Shift 选择 IN／OUT 用途、编号 Cue 和临时 Cue；完整曲线编辑 overlay 尚未实现。已支持顺序／乱序循环、分析队列、后台曲对准备和自动 Cue 标记。手动 Cue／Play 停止 AUTO；旋钮、SYNC、Jog、Loop 不关闭队列，手动换歌后保持 AUTO 并重新准备曲对。
 - 暂停保留已编译剩余包络并暂停双碟；恢复继续该包络。Skip 立即完成当前交接，让入碟成为下一对的出碟。手动改动某 lane 后，该 lane 在本计划内不会被重新接管。
 - 尚未验收真实音频设备的延迟、全自动化负载 p99、连续多首音乐试听。32 帧控制精度不等于 Signalsmith 的听感响应延迟。现有滤波器在 30 Hz～18 kHz 范围映射，表中 20 Hz／20 kHz 为全开端点。
 
@@ -156,3 +156,20 @@ M4、16 GiB、macOS 27.0 的 Release 测量：两首 184／189 秒本地音乐�
 - [Apple：离线音频文件分类](https://developer.apple.com/documentation/soundanalysis/classifying-sounds-in-an-audio-file)
 - [Apple Core ML](https://developer.apple.com/documentation/coreml)
 - [ONNX Runtime Core ML provider](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html)
+
+
+## 持续重叠、首次 Drop 后退出与手动接管（2026-09-12）
+
+Filter／Echo／普通 phrase bridge 的入碟现在从过渡起点播放。原先所有桥接都在末尾启动入碟、仅用约 40 ms 切推子；现在实际重叠，先引入节奏与高频，逐渐开放 crossfader，再交换低频并收掉出碟 Level。LP／HP 用对数频率曲线，Level／推子用平滑非线性曲线；入碟结束时恢复中性 EQ／filter。只有具备对应重拍／结构证据的 DropCut 和 ScratchCut 保留短切。
+
+可信网格和相容前景可以选择较长桥接；节拍不可靠时最多 4 小节，不相容调性且两侧都非打击乐时最多 2 小节。LoopConstruct 修复入碟启动时机，从起点实际播放并同步循环节奏，逐步开放推子，按量化位置释放循环。真实网格的轻微局部抖动不再因一个超过 2.5% 的区间而否决整个长混；变速斜率、区间、前景和源文件边界约束继续保留。
+
+候选排序不再排除歌曲前 45% 的出口。规划记录每轮实际入点，对重复播放第二段及后续 Drop／Chorus 增加代价，优先第一段高潮结束后的可用乐句。晚开启、早期前景冲突或用户显式 OUT 时仍可选择较晚出口；结构识别属于启发式，这不是准确识别所有音乐 Drop 的保证。
+
+AUTO 的队列意图和当前引擎计划分开。旋钮等手动操作继续保留单 lane 接管；手动换歌、分析失败或计划失效保持 AUTO，等待可播放曲目后重新准备。用户 Cue／Play 或主动关闭 AUTO 才关闭会话。空列表时保持等待，不反复重播已移除的列表。
+
+参考 [NI 官方 Traktor 入门教程](https://docs.native-instruments.com/ni-tech-manuals/traktor-play-user-guide/en/getting-started-with-traktor-play) 的渐进推子及低频交接，以及 [Digital DJ Tips 的 House 接歌教程](https://www.digitaldjtips.com/the-ultimate-guide-to-mixing-house-music/) 中的前景控制和乐句交接。具体门限和包络是本项目设计，并非复刻第三方算法。
+
+## Drop 完整性与 break 过渡
+
+自动规划现在保护已识别的完整 drop，混音窗口优先放入其后的 break / build-up；支持 8–24 bars 分阶段叠混、build-up 结束直接切入新 drop，以及保护末尾 drop 的 EOF 后备交接。实现细节、14 首真实 DnB 音频调试结果和验证边界见 [AutoMix DnB 调试记录](AUTOMIX_DNB_AUDIT.md)。

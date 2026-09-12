@@ -9,7 +9,9 @@ use std::sync::{
 };
 
 mod playback;
+mod reanalysis;
 pub use playback::load_manual;
+pub use reanalysis::reanalyze;
 
 use crate::state::AppCore;
 use mixless_protocol::{DeckId, Track, TrackAnalysis, TrackId};
@@ -21,18 +23,6 @@ pub enum Status {
     Analyzing,
     Ready(String),
     Failed(String),
-}
-
-impl Status {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Queued => "Queued",
-            Self::Checking => "Reading file",
-            Self::Analyzing => "Analyzing",
-            Self::Ready(_) => "Ready",
-            Self::Failed(_) => "Couldn’t analyze",
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -53,6 +43,7 @@ pub struct AnalysisJobs {
     prepared: Mutex<VecDeque<PreparedTrack>>,
     decoded: Mutex<VecDeque<(TrackId, String, Arc<mixless_engine::AudioBuffer>)>>,
     pub revision: AtomicU64,
+    pub content_revision: AtomicU64,
     pub loaded: Mutex<[Option<PreparedTrack>; 2]>,
 }
 
@@ -287,7 +278,12 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
     if track.content_hash != hash || !track.analyzed {
         return Err("Track revision changed during analysis".into());
     }
-    if refresh_cues {
+    if refresh_cues
+        || !core
+            .library
+            .automatic_cues_current(id)
+            .map_err(|e| e.to_string())?
+    {
         core.library
             .replace_auto_cues(id, &mixless_analyze::automatic_cues(&analysis))
             .map_err(|e| e.to_string())?;

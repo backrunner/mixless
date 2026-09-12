@@ -118,8 +118,10 @@ The transport **CUE** is a separate, deck-local temporary point: first press sav
 it, subsequent presses return immediately, and holding 400 ms clears it. A **T**
 flag marks it in the scrolling waveform. Loading another track clears it.
 During playback, a short Play click stops on release; holding 400 ms triggers a
-1.2-second vinyl brake with falling speed and pitch, including with Key Lock on.
-Press Play again to resume at the saved tempo/key settings.
+continuous vinyl slowdown with falling speed and pitch, including with Key Lock
+on. It keeps slowing while held; release (or window deactivation) stops playback,
+and reaching EOF stops it naturally. There is no fixed brake timeout. Press Play
+again to resume at the saved tempo/key settings.
 
 Starting AUTO with empty decks starts the first playable song in list order,
 including when Shuffle is on. A short entrance follows audio progress, raising
@@ -141,8 +143,11 @@ completed imports select a playlist; **All Tracks** is an explicit combined view
 Native file
 selection is asynchronous and folder scanning publishes rows in batches before
 musical analysis completes. Additional imports can be queued while importing.
-Drag a library
-track onto either deck to load it; the receiving deck highlights during the drag.
+Drag anywhere on a track row to reorder the current list. The insertion line
+marks the destination; hold near the list's top or bottom edge to scroll.
+Drop below the last row to move a track to the end, or press **Esc** to cancel.
+Manual order is saved independently for each folder, playlist and **All Tracks**.
+Drag a library track onto either deck to load it; the receiving deck highlights during the drag.
 Loading a track manually takes over from Automix. A and B can load independently;
 audio becomes playable after decoding and waveform preparation, with beat/key
 analysis attached when ready. Loaded rows show A/B badges.

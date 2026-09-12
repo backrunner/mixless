@@ -146,6 +146,7 @@ impl Render for UiState {
         let fx_editor = self
             .fx_editor
             .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
+        let track_menu = self.render_track_menu(window, cx);
         let error = self.error.clone();
 
         gpui::div()
@@ -160,7 +161,19 @@ impl Render for UiState {
             .bg(theme::BG)
             .font_family(theme::FONT_UI)
             .text_color(theme::TEXT)
-            .on_key_down(cx.listener(|s, ev, window, cx| {
+            .on_key_down(cx.listener(|s, ev: &gpui::KeyDownEvent, window, cx| {
+                if ev.keystroke.key == "escape" && cx.stop_active_drag(window) {
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.track_menu.is_some() {
+                    if ev.keystroke.key == "escape" {
+                        s.track_menu = None;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 s.handle_shortcut(ev, window, cx);
             }))
             .child(drag_capture)
@@ -220,6 +233,7 @@ impl Render for UiState {
                         .child(error),
                 )
             })
+            .when_some(track_menu, |el, menu| el.child(menu))
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))
             .when_some(fx_editor, |el, modal| el.child(modal))

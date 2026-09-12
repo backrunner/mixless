@@ -9,6 +9,7 @@ pub(super) struct Next {
 pub(super) fn stage(
     core: &AppCore,
     outgoing: DeckId,
+    played_from: f32,
     order: &mut order::TrackOrder,
     count: usize,
     shuffle: &AtomicBool,
@@ -72,11 +73,12 @@ pub(super) fn stage(
                 let d = snap.deck(outgoing);
                 let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
                 let lead = ((a.analysis.duration_sec - now) * 0.1).clamp(0.005, 0.75);
-                let plan = preparation::pair(
+                let plan = preparation::pair_from_entry(
                     core,
                     &a,
                     &b,
                     now + lead,
+                    played_from,
                     offset(d),
                     offset(snap.deck(incoming)),
                 )?;
