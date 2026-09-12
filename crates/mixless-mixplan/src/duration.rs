@@ -1,5 +1,5 @@
 //! Enumerate musical spans, not a fixed crossfade duration.
-use crate::{PlanContext, PlannerOptions, grid::Grid};
+use crate::{grid::Grid, PlanContext, PlannerOptions};
 use mixless_protocol::{MixRegionKind as K, TransitionMode as M};
 
 pub(super) fn candidates(
@@ -15,7 +15,10 @@ pub(super) fn candidates(
         .floor()
         .clamp(0., 128.) as u16;
     if mode == M::PhraseBridge {
-        return [1, 2, 4].into_iter().filter(|n| *n <= max).collect();
+        return [2, 4, 8, 16, 24, 1]
+            .into_iter()
+            .filter(|n| *n <= max)
+            .collect();
     }
     let ratio = ga.bpm(out) * ctx.offset_a.rate / (gb.bpm(input) * ctx.offset_b.rate);
     let factor = if (ratio / 2. - 1.).abs() < 0.08 {
@@ -25,7 +28,7 @@ pub(super) fn candidates(
     } else {
         1.
     };
-    let mut spans = vec![8., 16., 32.];
+    let mut spans = vec![8., 16., 24., 32.];
     spans.extend(
         a.phrase_boundaries
             .iter()

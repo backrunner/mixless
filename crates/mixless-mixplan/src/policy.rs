@@ -64,12 +64,7 @@ pub(crate) fn choose(e: Evidence) -> Decision {
         };
     }
 
-    if e.drop
-        && e.grid_reliable
-        && e.phrase_reliable
-        && e.incoming_kick >= 0.5
-        && e.incoming_vocal < 0.75
-    {
+    if e.drop && e.phrase_reliable && e.incoming_kick >= 0.5 && e.incoming_vocal < 0.75 {
         return Decision {
             technique: Technique::DropCut,
             confidence: 0.88,

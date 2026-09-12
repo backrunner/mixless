@@ -15,5 +15,6 @@ rustfft = "6"
 cc = "1"
 
 [dev-dependencies]
+serde_json = { workspace = true }
 mixless-mixplan = { workspace = true }
 hound = "3"

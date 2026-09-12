@@ -74,6 +74,14 @@ pub struct QuickAnalysis {
 }
 
 impl Analyzer {
+    /// Reclassify measured bars without decoding audio or changing the beat grid.
+    /// Useful for offline structure audits; persistence remains the caller's job.
+    pub fn refresh_structure(analysis: &mut TrackAnalysis) {
+        (analysis.sections, analysis.phrase_boundaries) =
+            structure::detect(&mut analysis.bars, &analysis.tempo.downbeats);
+        analysis.mix_regions = regions::detect(analysis);
+    }
+
     pub fn new() -> Self {
         Self::with_options(AnalysisOptions::default())
     }

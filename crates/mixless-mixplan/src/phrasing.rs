@@ -115,7 +115,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             && sec <= audible_end + 0.001
             && if out {
                 sec + 0.001 >= earliest + g.meter() * 60. / g.bpm(*b)
-                    && (is_manual || sec > t.duration_sec * 0.45)
+                    && (is_manual || sec >= (t.duration_sec * 0.12).min(24.))
             } else {
                 is_manual || sec < t.duration_sec * 0.5
             }
@@ -131,7 +131,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         let vocal = bar.map_or(0.6, |b| b.vocal_presence);
         let silence = bar.is_some_and(|b| b.rms <= 0.001);
         let position = if out {
-            sec / t.duration_sec
+            0.5 - crate::drops::penalty(t, sec, 0.)
         } else {
             1. - sec / t.duration_sec
         };
@@ -171,6 +171,39 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             unique.push(beat);
         }
     }
+    let peak_starts = if out { vec![] } else { crate::drops::peaks(t) };
+    let peak_entries: Vec<_> = unique
+        .iter()
+        .copied()
+        .filter(|beat| {
+            peak_starts
+                .iter()
+                .any(|p| (p.0 - g.sec(*beat)).abs() < 0.05)
+        })
+        .collect();
+    // Keep structural recovery exits even if a dense drop has eight louder,
+    // higher-confidence phrase candidates. Safety gates run after enumeration.
+    let recovery: Vec<_> = unique
+        .iter()
+        .copied()
+        .filter(|beat| {
+            out && t.sections.iter().any(|s| {
+                crate::drops::recovery(s.label)
+                    && g.sec(*beat) > s.start_sec
+                    && g.sec(*beat) <= s.end_sec + 0.05
+            })
+        })
+        .collect();
     unique.truncate(8);
+    for beat in peak_entries {
+        if !unique.contains(&beat) {
+            unique.push(beat);
+        }
+    }
+    for beat in recovery.into_iter().take(24) {
+        if !unique.contains(&beat) {
+            unique.push(beat);
+        }
+    }
     unique
 }

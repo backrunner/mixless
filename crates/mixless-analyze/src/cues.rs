@@ -1,65 +1,75 @@
-//! Stable numbered suggestions from measured structure; manual slots take priority.
-use mixless_protocol::{Cue, CueKind, MixRegionKind, TrackAnalysis};
+//! Sparse structural suggestions. Eight slots are capacity, never a target.
+use mixless_protocol::{Cue, CueKind, SectionLabel as S, TrackAnalysis};
 
 pub fn automatic_cues(t: &TrackAnalysis) -> Vec<Cue> {
-    let mut candidates: Vec<_> = t
-        .mix_regions
-        .iter()
-        .map(|r| {
-            (
-                r.anchor_sec,
-                r.confidence,
-                if r.kind == MixRegionKind::In {
-                    CueKind::In
-                } else {
-                    CueKind::Out
-                },
-            )
-        })
-        .collect();
-    candidates.extend(
-        t.phrase_boundaries
-            .iter()
-            .filter(|p| p.novelty >= 0.15 && p.confidence >= 0.6)
-            .map(|p| (p.time_sec, p.confidence, CueKind::Hot)),
-    );
-    if candidates.is_empty() {
+    if t.sample_rate == 0 || !t.duration_sec.is_finite() || t.duration_sec <= 0. {
         return vec![];
     }
-    let first = candidates
+    let audible: Vec<_> = t.bars.iter().filter(|b| b.rms > 0.001).collect();
+    let (Some(first), Some(last)) = (audible.first(), audible.last()) else {
+        return vec![];
+    };
+    let entry = first.start_sec;
+    let exit = t
+        .sections
         .iter()
-        .filter(|c| c.2 == CueKind::In)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .copied();
-    let last = candidates
-        .iter()
-        .filter(|c| c.2 == CueKind::Out)
-        .max_by(|a, b| a.0.total_cmp(&b.0))
-        .copied();
+        .find(|s| {
+            matches!(s.label, S::Drop | S::Chorus)
+                && s.end_sec - s.start_sec >= 8.
+                && s.end_sec > entry + 16.
+        })
+        .map_or(last.end_sec.min(t.duration_sec), |s| s.end_sec);
+    let mut selected = vec![(entry, 1., CueKind::In), (exit, 1., CueKind::Out)];
+    let spacing = (8. * 60. / t.tempo.global_bpm.max(20.)).max(1.);
+    let mut candidates = Vec::new();
+    for pair in t.sections.windows(2) {
+        let (previous, next) = (&pair[0], &pair[1]);
+        if previous.label == next.label
+            || !matches!(
+                next.label,
+                S::Drop | S::Chorus | S::BuildUp | S::Breakdown | S::Outro
+            )
+        {
+            continue;
+        }
+        let point = next.start_sec;
+        let evidence = t
+            .phrase_boundaries
+            .iter()
+            .filter(|p| (p.time_sec - point).abs() < 0.15)
+            .filter(|p| p.confidence >= 0.65 && p.novelty >= 0.28)
+            .map(|p| p.confidence * p.novelty.min(1.))
+            .fold(0., f32::max);
+        if evidence > 0. && next.end_sec - next.start_sec >= spacing {
+            candidates.push((point, evidence, CueKind::Hot));
+        }
+    }
     candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let mut selected: Vec<_> = first.into_iter().chain(last).collect();
-    let spacing = (t.duration_sec / 24.).max(1.);
     for candidate in candidates {
-        if selected.len() == 8 {
+        if selected.len() >= 8 {
             break;
         }
-        if selected.iter().all(|c| (c.0 - candidate.0).abs() > spacing) {
+        if candidate.0 >= entry
+            && candidate.0 < last.end_sec
+            && selected
+                .iter()
+                .all(|c| (c.0 - candidate.0).abs() >= spacing)
+        {
             selected.push(candidate);
         }
     }
     selected.sort_by(|a, b| a.0.total_cmp(&b.0));
     selected.dedup_by(|a, b| (a.0 - b.0).abs() < 0.05);
     selected
-        .iter()
+        .into_iter()
         .enumerate()
-        .map(|(index, c)| Cue {
+        .map(|(index, (time, _, kind))| Cue {
             index: index as u8,
-            frame: (c.0 * t.sample_rate as f32)
+            frame: (time * t.sample_rate as f32)
                 .round()
-                .max(0.)
-                .min((t.duration_sec * t.sample_rate as f32 - 1.).max(0.))
+                .clamp(0., (t.duration_sec * t.sample_rate as f32 - 1.).max(0.))
                 as u64,
-            kind: c.2,
+            kind,
             user_set: false,
         })
         .collect()
@@ -69,26 +79,76 @@ pub fn automatic_cues(t: &TrackAnalysis) -> Vec<Cue> {
 mod tests {
     use super::*;
     #[test]
-    fn cue_numbers_are_chronological_bounded_and_use_source_frames() {
+    fn silence_has_no_cues_and_metrical_subdivisions_do_not_fill_pads() {
         for sr in [44100, 48000] {
-            let mut t = crate::features::analyze(mixless_protocol::TrackId(1), &[0.; 100], sr);
-            t.duration_sec = 100.;
-            t.phrase_boundaries = (0..20)
+            let mut t = crate::features::analyze(
+                mixless_protocol::TrackId(1),
+                &vec![0.; sr * 12 * 2],
+                sr as u32,
+            );
+            assert!(automatic_cues(&t).is_empty());
+            for bar in &mut t.bars {
+                bar.rms = 0.2;
+            }
+            t.phrase_boundaries = (0..12)
                 .map(|i| mixless_protocol::PhraseBoundary {
-                    time_sec: i as f32 * 5.,
+                    time_sec: i as f32,
                     confidence: 0.9,
-                    novelty: 0.5,
+                    novelty: 0.,
                 })
                 .collect();
             let cues = automatic_cues(&t);
-            assert_eq!(cues.len(), 8);
-            assert!(cues.windows(2).all(|w| w[0].frame < w[1].frame));
-            for (i, c) in cues.iter().enumerate() {
-                assert_eq!(c.index, i as u8);
-                assert!(!c.user_set);
-                assert!(c.frame < (sr as u64) * 100);
-                assert_eq!(c.frame % (sr as u64 * 5), 0);
-            }
+            assert_eq!(cues.len(), 2);
+            assert!(cues.windows(2).all(|c| c[0].frame < c[1].frame));
+            assert_eq!(cues[0].kind, CueKind::In);
+            assert_eq!(cues[1].kind, CueKind::Out);
+            assert!(cues[1].frame < sr as u64 * 12);
         }
+    }
+    #[test]
+    fn only_evidenced_structural_changes_add_hot_cues() {
+        let mut t = crate::features::analyze(
+            mixless_protocol::TrackId(1),
+            &vec![0.; 22050 * 64 * 2],
+            22050,
+        );
+        for bar in &mut t.bars {
+            bar.rms = 0.2;
+        }
+        t.tempo.global_bpm = 120.;
+        t.sections = vec![
+            mixless_protocol::Section {
+                start_sec: 0.,
+                end_sec: 16.,
+                label: S::Intro,
+            },
+            mixless_protocol::Section {
+                start_sec: 16.,
+                end_sec: 32.,
+                label: S::Drop,
+            },
+            mixless_protocol::Section {
+                start_sec: 32.,
+                end_sec: 48.,
+                label: S::Breakdown,
+            },
+            mixless_protocol::Section {
+                start_sec: 48.,
+                end_sec: 64.,
+                label: S::Drop,
+            },
+        ];
+        t.phrase_boundaries = vec![mixless_protocol::PhraseBoundary {
+            time_sec: 16.,
+            confidence: 0.9,
+            novelty: 0.7,
+        }];
+        let cues = automatic_cues(&t);
+        assert_eq!(cues.len(), 3);
+        assert_eq!(
+            cues.iter().find(|c| c.kind == CueKind::Out).unwrap().frame,
+            32 * 22050
+        );
+        assert!(!cues.iter().any(|c| c.frame == 48 * 22050));
     }
 }

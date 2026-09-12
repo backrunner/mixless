@@ -188,7 +188,11 @@ fn explicit_loop_construct_uses_a_quantized_roll_and_release_plan() {
         p.summary.as_ref().unwrap().strategy,
         StrategyId::LoopConstruct
     );
+    close(p.incoming_start_bar, 0.);
     let op = p.lanes.loop_b.as_ref().expect("loop roll");
+    assert!(p.lanes.xfader.sample(op.off_bar * 0.5).abs() < 0.01);
+    assert!(!p.incoming_source.nodes.is_empty());
+    assert!((p.lanes.rate_b.sample(0.) - 128. / 126.).abs() < 0.001);
     assert!(op.length_bars == 1 || op.length_bars == 2);
     assert!(op.on_bar < op.off_bar && op.off_bar < p.summary.as_ref().unwrap().length_bars as f32);
     assert!(p.lanes.filter_a.lp_hz.sample(op.off_bar - 0.25) < 20000.);

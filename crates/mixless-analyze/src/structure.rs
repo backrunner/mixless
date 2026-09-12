@@ -3,6 +3,8 @@
 //! without allocating a quadratic self-similarity matrix.
 use mixless_protocol::{BarFeature, PhraseBoundary, Section, SectionLabel as S};
 
+mod dynamics;
+
 type Descriptor = [f32; 19];
 
 fn quantile(values: impl Iterator<Item = f32>, fraction: f32) -> f32 {
@@ -92,7 +94,11 @@ pub(crate) fn detect(
         .filter(|&i| nov[i] >= threshold && nov[i] >= nov[i - 1] && nov[i] > nov[i + 1])
         .collect();
     peaks.sort_by(|&a, &b| nov[b].total_cmp(&nov[a]));
+    let driving = dynamics::driving(bars, level, attacks);
     let mut cuts = vec![0, bars.len()];
+    cuts.extend(dynamics::edges(&driving));
+    let build_edges = dynamics::build_edges(bars, &driving);
+    cuts.extend(&build_edges);
     for i in 1..bars.len() {
         if silent[i] != silent[i - 1] {
             cuts.push(i);
@@ -151,8 +157,33 @@ pub(crate) fn detect(
                 * 4
                 >= (n - 1) * 3;
         let next_louder = energies.get(j + 1).is_some_and(|e| *e > rms * 1.2);
+        let driven = driving[p[0]..p[1]].iter().filter(|v| **v).count() * 2 >= n;
+        let next_driven = cuts.get(j + 2).is_some_and(|end| {
+            driving[p[1]..*end].iter().filter(|v| **v).count() * 2 >= end - p[1]
+        });
+        let earlier_drop = driving[..p[0]].iter().any(|v| *v);
+        let later_drop = driving[p[1]..].iter().any(|v| *v);
+        let bass = quantile(selected.iter().map(|b| b.low_db), 0.5);
+        let next_bass = cuts.get(j + 2).map_or(bass, |end| {
+            quantile(bars[p[1]..*end].iter().map(|b| b.low_db), 0.5)
+        });
         let label = if silent[p[0]..p[1]].iter().all(|s| *s) {
             S::Silence
+        } else if !driven
+            && next_driven
+            && (rising
+                || build_edges.contains(&p[0])
+                || (j > first_sound && n <= 8 && next_louder && next_bass > bass + 3.))
+        {
+            S::BuildUp
+        } else if !driven && earlier_drop && later_drop {
+            if kick < 0.4 {
+                S::Breakdown
+            } else {
+                S::Break
+            }
+        } else if !driven && earlier_drop && !later_drop {
+            S::Outro
         } else if rising && next_louder {
             S::BuildUp
         } else if j == first_sound
@@ -171,11 +202,11 @@ pub(crate) fn detect(
             S::Breakdown
         } else if repeated && rms > level * 0.8 && voice_present {
             S::Chorus
-        } else if voice_known && voice_present {
+        } else if voice_known && voice_present && (!driven || voice >= 0.8) {
             // Plosive speech/singing can also excite the low-onset proxy;
             // measured human voice must take precedence over that kick proxy.
             S::Verse
-        } else if kick >= 0.5 && rms >= level * 0.7 {
+        } else if driven && kick >= 0.5 {
             S::Drop
         } else if voice_present {
             S::Verse
@@ -253,118 +284,4 @@ pub(crate) fn detect(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    fn bars(n: usize) -> Vec<BarFeature> {
-        (0..n)
-            .map(|i| BarFeature {
-                bar_index: i as u32,
-                start_sec: i as f32 * 2.,
-                end_sec: (i + 1) as f32 * 2.,
-                rms: 0.2,
-                crest: 2.,
-                low_db: -16.,
-                mid_db: -20.,
-                high_db: -25.,
-                chroma: [0.; 12],
-                chord: None,
-                local_key: None,
-                onset_density: 2.,
-                kick_salience: 0.8,
-                hat_salience: 0.3,
-                vocal_presence: 0.1,
-                vocal_confidence: None,
-                energy_slope: 0.,
-                section: S::Unknown,
-            })
-            .collect()
-    }
-    #[test]
-    fn same_loudness_timbre_change_is_a_boundary() {
-        let mut bars = bars(48);
-        for bar in &mut bars[16..32] {
-            bar.low_db = -28.;
-            bar.mid_db = -14.;
-            bar.chroma[4] = 1.;
-        }
-        let downbeats: Vec<_> = (0..=48).map(|i| i as f32 * 2.).collect();
-        let (sections, phrases) = detect(&mut bars, &downbeats);
-        for sec in [32., 64.] {
-            assert!(
-                sections.iter().any(|s| (s.start_sec - sec).abs() < 0.01),
-                "{sections:?}"
-            );
-            assert!(phrases
-                .iter()
-                .any(|p| (p.time_sec - sec).abs() < 0.01 && p.novelty > 0.2));
-        }
-    }
-    #[test]
-    fn an_isolated_fill_does_not_split_a_section_or_invent_intro_outro() {
-        let mut bars = bars(64);
-        bars[31].rms = 0.8;
-        bars[31].high_db = -8.;
-        bars[31].onset_density = 9.;
-        let (sections, phrases) = detect(
-            &mut bars,
-            &(0..=64).map(|i| i as f32 * 2.).collect::<Vec<_>>(),
-        );
-        assert_eq!(sections.len(), 1, "{sections:?}");
-        assert_eq!(sections[0].label, S::Drop);
-        assert!(phrases.iter().all(|p| p.novelty < 0.16));
-    }
-    #[test]
-    fn phrases_follow_a_pickup_and_non_multiple_of_eight_section_start() {
-        let mut bars = bars(50);
-        for b in &mut bars {
-            b.start_sec += 0.37;
-            b.end_sec += 0.37;
-        }
-        for b in &mut bars[11..] {
-            b.low_db = -28.;
-            b.mid_db = -14.;
-            b.chroma[4] = 1.;
-        }
-        bars.insert(
-            0,
-            BarFeature {
-                start_sec: 0.,
-                end_sec: 0.37,
-                rms: 0.,
-                ..bars[0].clone()
-            },
-        );
-        let downbeats: Vec<_> = (0..=50).map(|i| 0.37 + i as f32 * 2.).collect();
-        let (_, phrases) = detect(&mut bars, &downbeats);
-        for n in [11, 19, 27] {
-            assert!(
-                phrases
-                    .iter()
-                    .any(|p| (p.time_sec - (0.37 + n as f32 * 2.)).abs() < 0.01),
-                "{phrases:?}"
-            );
-        }
-    }
-    #[test]
-    fn silence_and_unknown_grid_do_not_create_confident_phrases() {
-        let mut bars = bars(24);
-        for b in &mut bars {
-            b.rms = 0.;
-        }
-        let (sections, phrases) = detect(&mut bars, &[]);
-        assert!(phrases.is_empty());
-        assert!(sections.iter().all(|s| s.label == S::Silence));
-    }
-
-    #[test]
-    fn human_voice_evidence_overrides_plosive_kick_proxy_without_clearing_risk() {
-        let mut bars = bars(24);
-        for b in &mut bars {
-            b.vocal_confidence = Some(0.95);
-            b.vocal_presence = 0.95;
-        }
-        let (sections, _) = detect(&mut bars, &[]);
-        assert_eq!(sections[0].label, S::Verse);
-        assert!(bars.iter().all(|b| b.vocal_presence >= 0.95));
-    }
-}
+mod tests;

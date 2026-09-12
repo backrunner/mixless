@@ -31,8 +31,14 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
                 .map_or(0., |s| s.start_sec)
         })
         .max(0.);
-    let out = crate::constraints::user_range(ctx.cues_out, a.sample_rate)
-        .map_or(a.duration_sec, |(_, end)| end);
+    let explicit_out = crate::constraints::user_range(ctx.cues_out, a.sample_rate);
+    let audible_end = a
+        .sections
+        .iter()
+        .rev()
+        .find(|s| s.label != SectionLabel::Silence)
+        .map_or(a.duration_sec, |s| s.end_sec);
+    let out = explicit_out.map_or(audible_end, |(_, end)| end);
     let seconds = ((out - earliest.max(0.)) / ctx.offset_a.rate)
         .min((b.duration_sec - input) / ctx.offset_b.rate * 0.5)
         .min(4.);
@@ -63,7 +69,7 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         lp_hz: Polyline::constant(20000.),
         hp_hz: Polyline::constant(20.),
     };
-    MixPlan {
+    let mut plan = MixPlan {
         stages: vec![MixStage {
             start_bar: 0.,
             end_bar: 1.,
@@ -111,5 +117,27 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
             ..Default::default()
         },
         ..Default::default()
+    };
+    if explicit_out.is_none() && !crate::drops::allows(a, start, out, 0., false) {
+        if !crate::drops::allows(a, out, out, 0., true) {
+            return fail();
+        }
+        // There is no recovery tail to blend. Hold the completed drop to its
+        // last downbeat, then launch B; the emergency path cannot bypass it.
+        let beat =
+            (60. / b.tempo.global_bpm.max(30.)).min((b.duration_sec - input) / ctx.offset_b.rate);
+        let fade = (0.04 / seconds).min(0.25);
+        plan.incoming_start_bar = 1.;
+        plan.handoff_bar = Some(1.);
+        plan.clock = line(&[(0., 0.), (1., seconds), (1.25, seconds + beat)]);
+        plan.outgoing_source = line(&[(0., start), (1., out)]);
+        plan.incoming_source = line(&[(1., input), (1.25, input + beat * ctx.offset_b.rate)]);
+        plan.t_end_b = input + beat * ctx.offset_b.rate;
+        plan.lanes.xfader = line(&[(0., -1.), (1. - fade, -1.), (1., 1.)]);
+        plan.lanes.gain_a = line(&[(0., 0.), (1. - fade, 0.), (1., -96.)]);
+        plan.lanes.filter_a.lp_hz = Polyline::constant(20000.);
+        plan.summary.as_mut().unwrap().strategy = StrategyId::DryCut;
+        plan.stages[0].label = "Complete drop · native handoff".into();
     }
+    plan
 }

@@ -2,10 +2,12 @@
 pub mod cue_policy;
 mod handoff;
 pub use handoff::short_handoff;
+mod bridge;
 mod candidates;
 mod choreography;
 mod compile;
 pub mod constraints;
+mod drops;
 mod duration;
 mod grid;
 mod musical;
@@ -46,6 +48,8 @@ pub struct PlannerOptions {
     pub strategy: Option<StrategyId>,
     /// Do not schedule a transition behind the audible outgoing playhead.
     pub earliest_outgoing_sec: f32,
+    /// Audible entry on this pass, including time spent in the incoming blend.
+    pub outgoing_entry_sec: f32,
 }
 impl Default for PlannerOptions {
     fn default() -> Self {
@@ -56,6 +60,7 @@ impl Default for PlannerOptions {
             literal_half_double: false,
             strategy: None,
             earliest_outgoing_sec: 0.0,
+            outgoing_entry_sec: 0.0,
         }
     }
 }

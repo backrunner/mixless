@@ -249,8 +249,8 @@ impl DensePlan {
         let sr = shared.sample_rate.load(Ordering::Relaxed);
         let a = &shared.decks[outgoing];
         let b = &shared.decks[1 - outgoing];
-        if a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
+        if a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
         {
             return Err(EngineError::Protocol("automix tracks changed"));
         }
@@ -429,7 +429,7 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?;
         let outgoing =
-            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0.0 as u64 {
+            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0 .0 as u64 {
                 DeckId::A
             } else {
                 DeckId::B
@@ -460,8 +460,8 @@ impl Engine {
         let pair = dense.plan.summary.as_ref().unwrap().pair;
         let a = &self.shared.decks[dense.outgoing];
         let b = &self.shared.decks[1 - dense.outgoing];
-        if a.track_id.load(Ordering::Relaxed) != pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != pair.1.0 as u64
+        if a.track_id.load(Ordering::Relaxed) != pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != pair.1 .0 as u64
             || b.playing.load(Ordering::Relaxed)
             || dense.sample_rate != self.shared.sample_rate.load(Ordering::Relaxed)
         {
@@ -582,10 +582,7 @@ impl Engine {
             | Command::PlayPause { .. }
             | Command::JumpCue { .. }
             | Command::TriggerTemporaryCue { .. }
-            | Command::SetBrake { on: true, .. }
-            | Command::BeatJump { .. }
-            | Command::SetReverse { .. }
-            | Command::SetJogTouch { touching: true, .. } => {
+            | Command::SetBrake { on: true, .. } => {
                 auto.enabled.store(false, Ordering::Release);
                 auto.paused.store(false, Ordering::Release);
                 for slot in &self.shared.decks {
@@ -638,8 +635,8 @@ impl Shared {
         let b = &self.decks[1 - plan.outgoing];
         let summary = plan.plan.summary.as_ref().unwrap();
         if plan.sample_rate != self.sample_rate.load(Ordering::Relaxed)
-            || a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
+            || a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
         {
             auto.enabled.store(false, Ordering::Release);
             return false;
@@ -907,6 +904,51 @@ mod tests {
         (engine, plan)
     }
     #[test]
+    fn only_cue_play_and_explicit_stop_cancel_the_auto_session() {
+        for cmd in [
+            Command::SetJogTouch {
+                deck: DeckId::A,
+                touching: true,
+            },
+            Command::SetReverse {
+                deck: DeckId::A,
+                on: true,
+            },
+            Command::BeatJump {
+                deck: DeckId::A,
+                bars: 1,
+            },
+            Command::Sync {
+                deck: DeckId::B,
+                keylock: true,
+            },
+            Command::SetChannelFilter {
+                deck: DeckId::A,
+                amount: -0.2,
+            },
+            Command::SetCrossfader { value: 0.2 },
+        ] {
+            let (engine, plan) = setup(DeckId::A);
+            engine.load_plan(plan).unwrap();
+            engine.automation_command(&cmd);
+            assert!(engine.snapshot().automix_on, "{cmd:?}");
+        }
+        for cmd in [
+            Command::PlayPause { deck: DeckId::A },
+            Command::JumpCue {
+                deck: DeckId::A,
+                index: 0,
+            },
+            Command::TriggerTemporaryCue { deck: DeckId::A },
+            Command::StopAutomix,
+        ] {
+            let (engine, plan) = setup(DeckId::A);
+            engine.load_plan(plan).unwrap();
+            engine.automation_command(&cmd);
+            assert!(!engine.snapshot().automix_on, "{cmd:?}");
+        }
+    }
+    #[test]
     fn automix_waits_then_renders_and_hands_off_both_deck_directions() {
         for outgoing in [DeckId::A, DeckId::B] {
             let (engine, plan) = setup(outgoing);
@@ -945,13 +987,11 @@ mod tests {
             manual.decks.each_ref().map(|d| d.fader),
             playing.decks.each_ref().map(|d| d.fader)
         );
-        assert!(
-            manual
-                .decks
-                .iter()
-                .zip(&playing.decks)
-                .all(|(a, b)| a.frame > b.frame)
-        );
+        assert!(manual
+            .decks
+            .iter()
+            .zip(&playing.decks)
+            .all(|(a, b)| a.frame > b.frame));
     }
     #[test]
     fn automix_pause_resume_and_single_lane_takeover() {
@@ -1020,13 +1060,35 @@ mod tests {
     }
 
     #[test]
-    fn smooth_bridge_launches_incoming_at_outgoing_end_in_both_directions() {
+    fn smooth_bridge_renders_both_decks_during_overlap_in_both_directions() {
         for outgoing in [DeckId::A, DeckId::B] {
             let (engine, _) = setup(outgoing);
-            let a = analysis(1, 48000, 1.);
+            let mut a = analysis(1, 48000, 1.);
             let mut b = analysis(2, 48000, 4.);
             b.tempo.global_bpm = 97.;
             b.tempo.segments[0].bpm = 97.;
+            for t in [&mut a, &mut b] {
+                t.bars = vec![mixless_protocol::BarFeature {
+                    bar_index: 0,
+                    start_sec: 0.,
+                    end_sec: t.duration_sec,
+                    rms: 0.2,
+                    crest: 2.,
+                    low_db: -12.,
+                    mid_db: -18.,
+                    high_db: -24.,
+                    chroma: [0.; 12],
+                    chord: None,
+                    local_key: None,
+                    onset_density: 2.,
+                    kick_salience: 0.8,
+                    hat_salience: 0.5,
+                    vocal_presence: 0.1,
+                    vocal_confidence: None,
+                    energy_slope: 0.,
+                    section: mixless_protocol::SectionLabel::Unknown,
+                }];
+            }
             let plan = mixless_mixplan::Planner::new().plan_pair(
                 &a,
                 &b,
@@ -1037,16 +1099,14 @@ mod tests {
             );
             let boundary = ((plan.t_in_a + plan.clock.sample(plan.incoming_start_bar)) * 48000.)
                 .round() as usize;
-            assert_eq!(
-                plan.incoming_start_bar,
-                plan.summary.as_ref().unwrap().length_bars as f32
-            );
+            assert!(plan.summary.is_some(), "{:?}", plan.failure_reason);
+            assert_eq!(plan.incoming_start_bar, 0.);
             engine.load_plan_on(plan, outgoing).unwrap();
             engine.render_offline(boundary);
             assert!(!engine.snapshot().decks[1 - outgoing.index()].playing);
             let start = engine.render_offline(4800);
             let snap = engine.snapshot();
-            assert!(!snap.deck(outgoing).playing);
+            assert!(snap.deck(outgoing).playing);
             assert!(snap.decks[1 - outgoing.index()].playing);
             assert!(snap.decks[1 - outgoing.index()].frame.abs_diff(4800) < 64);
             assert!(start.iter().any(|s| s.abs() > 0.05));

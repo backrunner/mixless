@@ -148,7 +148,7 @@ impl Engine {
         }
         // A single follower ID makes circular master/follower relationships impossible.
         self.shared.sync_follower.store(0, Ordering::Release);
-        self.automation_command(&Command::StopAutomix);
+        self.automation_command(&Command::Sync { deck, keylock });
         own.keylock.store(keylock, Ordering::Relaxed);
         own.rate_micro
             .store((ratio * factor * 1e6).round() as u32, Ordering::Relaxed);
@@ -642,14 +642,12 @@ mod tests {
     #[test]
     fn invalid_missing_and_stale_grids_cannot_claim_sync() {
         let engine = super::super::tests::test_engine(48_000);
-        assert!(
-            engine
-                .dispatch(Command::Sync {
-                    deck: DeckId::A,
-                    keylock: true
-                })
-                .is_err()
-        );
+        assert!(engine
+            .dispatch(Command::Sync {
+                deck: DeckId::A,
+                keylock: true
+            })
+            .is_err());
         for beats in [
             vec![],
             vec![0.0],
@@ -657,31 +655,27 @@ mod tests {
             vec![0.5, 0.4],
             vec![0.0, 0.0],
         ] {
-            assert!(
-                engine
-                    .set_beat_grid(
-                        DeckId::A,
-                        TrackId(0),
-                        TempoMap {
-                            beats,
-                            ..Default::default()
-                        }
-                    )
-                    .is_err()
-            );
-        }
-        assert!(
-            engine
+            assert!(engine
                 .set_beat_grid(
                     DeckId::A,
-                    TrackId(99),
+                    TrackId(0),
                     TempoMap {
-                        beats: vec![0.0, 0.5],
+                        beats,
                         ..Default::default()
                     }
                 )
-                .is_err()
-        );
+                .is_err());
+        }
+        assert!(engine
+            .set_beat_grid(
+                DeckId::A,
+                TrackId(99),
+                TempoMap {
+                    beats: vec![0.0, 0.5],
+                    ..Default::default()
+                }
+            )
+            .is_err());
         assert!(!engine.snapshot().decks[0].synced);
     }
 
