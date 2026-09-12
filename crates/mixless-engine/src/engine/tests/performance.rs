@@ -3,7 +3,9 @@ use super::*;
 #[test]
 #[ignore = "release-only 60-second realtime workload benchmark"]
 fn audio_callback_budget() {
-    for (block_frames, scratch) in [(256, false), (128, true)] {
+    for (block_frames, scratch, brake) in
+        [(256, false, false), (128, true, false), (128, false, true)]
+    {
         let engine = test_engine(48_000);
         for deck in [DeckId::A, DeckId::B] {
             engine.dispatch(Command::PlayPause { deck }).unwrap();
@@ -98,6 +100,13 @@ fn audio_callback_budget() {
                 })
                 .unwrap();
         }
+        if brake {
+            for deck in [DeckId::A, DeckId::B] {
+                engine
+                    .dispatch(Command::SetBrake { deck, on: true })
+                    .unwrap();
+            }
+        }
         let mut output = vec![0.0; block_frames * 2];
         let mut timings = Vec::with_capacity(48_000 * 60 / block_frames);
         let mut rt = engine.rt.lock().unwrap();
@@ -125,17 +134,18 @@ fn audio_callback_budget() {
             let start = std::time::Instant::now();
             engine.shared.process_block(&mut rt, &mut output, 2);
             timings.push(start.elapsed().as_secs_f64());
-            assert!(
-                output
-                    .iter()
-                    .all(|sample| sample.is_finite() && sample.abs() <= 1.0)
-            );
+            assert!(output
+                .iter()
+                .all(|sample| sample.is_finite() && sample.abs() <= 1.0));
+        }
+        if brake {
+            assert!(engine.snapshot().decks.iter().all(|d| d.playing && d.brake));
         }
         timings.sort_by(f64::total_cmp);
         let percentile = timings[timings.len() * 99 / 100];
         let budget = block_frames as f64 / 48_000.0;
         eprintln!(
-            "audio frames={block_frames} scratch={scratch} p50={:.3}ms p99={:.3}ms budget={:.3}ms ({:.1}%)",
+            "audio frames={block_frames} scratch={scratch} brake={brake} p50={:.3}ms p99={:.3}ms budget={:.3}ms ({:.1}%)",
             timings[timings.len() / 2] * 1000.0,
             percentile * 1000.0,
             budget * 1000.0,

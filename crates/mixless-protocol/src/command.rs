@@ -180,6 +180,8 @@ pub enum Command {
         deck: DeckId,
         on: bool,
     },
+    /// Hold starts a continuous vinyl slowdown. Releasing an active brake
+    /// stops playback; releasing an inactive brake does nothing.
     SetBrake {
         deck: DeckId,
         on: bool,

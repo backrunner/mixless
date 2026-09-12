@@ -141,19 +141,17 @@ impl Shared {
         let active_loop = roll_range.or(rt.loop_range);
         // Vinyl braking follows the device sample clock and bypasses key lock.
         // The tempo and key controls retain their settings for the next start.
-        let brake_gain = if let Some(elapsed) = rt.brake_elapsed.as_mut() {
-            let progress = (*elapsed as f32 / (device_sr * 1.2)).min(1.);
-            *elapsed = elapsed.saturating_add(1);
-            step *= ((1. - progress) * (1. - progress)) as f64;
-            if progress >= 1. {
-                rt.playing = false;
-                slot.playing.store(false, Ordering::Relaxed);
-                slot.brake.store(false, Ordering::Relaxed);
+        if let Some(elapsed) = rt.brake_elapsed.as_mut() {
+            let time = *elapsed as f64 / (device_sr as f64 * 1.5);
+            // Smooth onset followed by a progressively slower tail. Keep a
+            // positive asymptote so an arbitrarily long hold can reach EOF.
+            // Release controls the stop; elapsed time never stops the deck.
+            let ratio = 0.03 + 0.97 / (1. + time * time);
+            step *= ratio;
+            if rt.playing {
+                *elapsed = elapsed.saturating_add(1);
             }
-            ((1. - progress) / 0.08).clamp(0., 1.)
-        } else {
-            1.
-        };
+        }
         let level = if rt.touching {
             let target = slot.jog_target.load(Ordering::Acquire) as f64 / 65536.0;
             let desired = ((target - rt.position) / (device_sr as f64 * 0.003)).clamp(
@@ -165,12 +163,15 @@ impl Shared {
             step = rt.scratch_speed;
             (step.abs() as f32 / (src_sr / device_sr * 0.025)).min(1.0)
         } else if rt.playing {
-            brake_gain
+            1.
         } else {
             0.0
         };
         rt.amplitude.set(level);
         let amplitude = rt.amplitude.next();
+        if !rt.playing && amplitude == 0. {
+            rt.brake_elapsed = None;
+        }
         let mut ph = rt.position;
         if !rt.touching {
             if let Some((start, end)) = active_loop {
@@ -226,9 +227,15 @@ impl Shared {
         if rt.touching && rt.playing {
             rt.slip_position += rt.step_target as f64;
         }
-        if !rt.touching && active_loop.is_none() && (ph < 0.0 || ph >= buf.frames as f64) {
+        // The stored source position is clamped to the final sample. At a
+        // fractional step, waiting for `frames` would strand playback there.
+        if !rt.touching
+            && active_loop.is_none()
+            && (ph < 0.0 || ph >= buf.frames.saturating_sub(1) as f64)
+        {
             rt.playing = false;
             slot.playing.store(false, Ordering::Relaxed);
+            slot.brake.store(false, Ordering::Relaxed);
         }
         rt.position = if active_loop.is_some() && !rt.touching {
             ph

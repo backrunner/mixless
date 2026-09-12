@@ -29,10 +29,10 @@ mod tests;
 
 use fx::insert_index;
 
-use crate::decode::{AudioBuffer, decode_file};
+use crate::decode::{decode_file, AudioBuffer};
 use crate::device;
 use crate::dsp::{
-    ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue, db_to_lin, xfader_gains,
+    db_to_lin, xfader_gains, ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue,
 };
 use crate::effects::{Effect, EffectKind, EffectParams};
 use crate::resample::Resampler;
@@ -90,7 +90,7 @@ struct DeckRt {
     eq: [SmoothValue; 3],
     step: SmoothValue,
     step_target: f32,
-    brake_elapsed: Option<u32>,
+    brake_elapsed: Option<u64>,
     paused_seek: bool,
     playing: bool,
     loop_range: Option<(f64, f64)>,

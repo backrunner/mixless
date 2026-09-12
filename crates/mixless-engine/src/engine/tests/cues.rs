@@ -84,43 +84,112 @@ fn repeated_cues_crossfade_without_silence_and_land_in_the_next_block() {
 }
 
 #[test]
-fn brake_decelerates_with_key_lock_then_stops_and_restarts_at_original_tempo() {
-    let engine = test_engine(48_000);
-    let deck = DeckId::A;
-    engine
-        .dispatch(Command::SetRate { deck, rate: 1.08 })
-        .unwrap();
-    engine
-        .dispatch(Command::SetPitchSemitones {
-            deck,
-            semitones: 2.,
-        })
-        .unwrap();
-    engine.dispatch(Command::PlayPause { deck }).unwrap();
-    engine.render_offline(4096);
-    engine
-        .dispatch(Command::SetBrake { deck, on: true })
-        .unwrap();
-    let mut previous = engine.snapshot().deck(deck).frame;
-    let mut advances = vec![];
-    for _ in 0..6 {
-        let block = engine.render_offline(9600);
-        assert!(block.iter().all(|s| s.is_finite()));
+fn held_brake_keeps_slowing_until_release_and_preserves_tempo_and_key() {
+    for sr in [44_100, 48_000] {
+        let engine = test_engine(sr);
+        let deck = DeckId::A;
+        engine
+            .dispatch(Command::SetCrossfader { value: -1. })
+            .unwrap();
+        engine
+            .dispatch(Command::SetRate { deck, rate: 1.08 })
+            .unwrap();
+        engine
+            .dispatch(Command::SetPitchSemitones {
+                deck,
+                semitones: 2.,
+            })
+            .unwrap();
+        engine.dispatch(Command::PlayPause { deck }).unwrap();
+        engine.render_offline(4096);
+        engine
+            .dispatch(Command::SetBrake { deck, on: true })
+            .unwrap();
+        let mut previous = engine.snapshot().deck(deck).frame;
+        let mut advances = vec![];
+        let mut last_sample = 0.;
+        // Six seconds deliberately crosses the old 1.2-second auto-stop.
+        for _ in 0..30 {
+            let block = engine.render_offline(sr as usize / 5);
+            assert!(block.iter().all(|s| s.is_finite()));
+            assert!(energy(&block) > 1e-6);
+            last_sample = block[block.len() - 2];
+            let d = engine.snapshot().deck(deck).clone();
+            assert!(d.playing && d.brake);
+            advances.push(d.frame - previous);
+            previous = d.frame;
+        }
+        assert!(advances.windows(2).all(|w| w[1] < w[0]), "{advances:?}");
+        engine
+            .dispatch(Command::SetBrake { deck, on: false })
+            .unwrap();
+        let release = engine.render_offline(512);
+        let mut worst = 0f32;
+        for sample in release.chunks_exact(2).map(|s| s[0]) {
+            worst = worst.max((sample - last_sample).abs());
+            last_sample = sample;
+        }
+        assert!(worst < 0.03, "release discontinuity {worst}");
+        let d = engine.snapshot().deck(deck).clone();
+        assert!(!d.playing && !d.brake);
+        assert!(d.frame - previous < 16, "release jumped back to full speed");
+        assert!(d.keylock);
+        assert_eq!(d.rate, 1.08);
+        assert_eq!(d.pitch_semitones, 2.);
+        // The release ramp is 1 ms; let the existing IIR filter state settle.
+        engine.render_offline(sr as usize / 10);
+        let tail_energy = energy(&engine.render_offline(1024));
+        assert!(tail_energy < 1e-8, "tail energy {tail_energy} at {sr}");
+        engine
+            .dispatch(Command::SetBrake { deck, on: false })
+            .unwrap();
+        assert!(!engine.snapshot().deck(deck).playing);
+        engine.dispatch(Command::PlayPause { deck }).unwrap();
+        assert!(energy(&engine.render_offline(2048)) > 0.001);
+        assert!(engine.snapshot().deck(deck).frame > d.frame + 2000);
+        // A new hold starts at full speed, never at the previous hold's tail.
         let frame = engine.snapshot().deck(deck).frame;
-        advances.push(frame - previous);
-        previous = frame;
+        engine
+            .dispatch(Command::SetBrake { deck, on: true })
+            .unwrap();
+        engine.render_offline(1024);
+        assert!(engine.snapshot().deck(deck).frame > frame + 1000);
+        engine.dispatch(Command::PlayPause { deck }).unwrap();
+        assert!(!engine.snapshot().deck(deck).playing);
     }
-    assert!(advances.windows(2).all(|w| w[1] < w[0]), "{advances:?}");
-    engine.render_offline(512);
-    let d = engine.snapshot().deck(deck).clone();
-    assert!(!d.playing && !d.brake);
-    assert!(d.keylock);
-    assert_eq!(d.rate, 1.08);
-    assert_eq!(d.pitch_semitones, 2.);
-    assert!(energy(&engine.render_offline(1024)) < 1e-8);
-    engine.dispatch(Command::PlayPause { deck }).unwrap();
-    assert!(energy(&engine.render_offline(2048)) > 0.001);
-    assert!(engine.snapshot().deck(deck).frame > d.frame + 2000);
+}
+
+#[test]
+fn held_brake_stops_at_eof_and_late_release_never_restarts_it() {
+    for sr in [44_100, 48_000] {
+        let engine = test_engine(sr);
+        let deck = DeckId::A;
+        let slot = &engine.shared.decks[0];
+        slot.set_playhead(slot.frames.load(Ordering::Relaxed) as f64 - 2400.);
+        engine.dispatch(Command::PlayPause { deck }).unwrap();
+        engine
+            .dispatch(Command::SetBrake { deck, on: true })
+            .unwrap();
+        engine.render_offline(sr as usize);
+        let ended = engine.snapshot().deck(deck).clone();
+        assert!(
+            !ended.playing && !ended.brake,
+            "ended playing={} brake={} frame={}/{} sr={sr}",
+            ended.playing,
+            ended.brake,
+            ended.frame,
+            ended.frames
+        );
+        assert_eq!(ended.frame, ended.frames - 1);
+        // A delayed UI hold/release cannot rearm the brake on an ended deck.
+        engine
+            .dispatch(Command::SetBrake { deck, on: true })
+            .unwrap();
+        engine
+            .dispatch(Command::SetBrake { deck, on: false })
+            .unwrap();
+        assert!(!engine.snapshot().deck(deck).playing && !engine.snapshot().deck(deck).brake);
+    }
 }
 
 #[test]

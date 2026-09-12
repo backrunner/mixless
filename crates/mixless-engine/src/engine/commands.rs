@@ -114,9 +114,7 @@ impl Shared {
                 if s.frames.load(Ordering::Relaxed) == 0 {
                     return;
                 }
-                if s.brake.swap(false, Ordering::Relaxed) {
-                    return;
-                }
+                s.brake.store(false, Ordering::Relaxed);
                 let next = !s.playing.load(Ordering::Relaxed);
                 if next
                     && s.playhead_frames()
@@ -323,7 +321,18 @@ impl Shared {
                 s.roll.store(on, Ordering::Relaxed);
             }
             Command::SetBrake { deck, on } => {
-                self.decks[deck.index()].brake.store(on, Ordering::Relaxed);
+                let slot = &self.decks[deck.index()];
+                if on {
+                    // An ended/empty deck cannot be armed by a late hold.
+                    if slot.playing.load(Ordering::Relaxed)
+                        && slot.frames.load(Ordering::Relaxed) > 0
+                    {
+                        slot.brake.store(true, Ordering::Relaxed);
+                    }
+                } else if slot.brake.load(Ordering::Relaxed) {
+                    slot.playing.store(false, Ordering::Relaxed);
+                    slot.brake.store(false, Ordering::Relaxed);
+                }
             }
             Command::SetQuantize { on } => self.quantize.store(on, Ordering::Relaxed),
             Command::JumpCue { deck, index } => {

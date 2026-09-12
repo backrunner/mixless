@@ -122,6 +122,24 @@ These are Mixless algorithms covering DJ audio effect categories. They do not
 claim sample-identical recreation of proprietary presets or reproduce vendor
 pad banks, Merge FX routing, video FX, Neural Mix stems or Audio Unit hosting.
 
+## Held transport brake
+
+During playback, holding Play past 400 ms starts a source-clock slowdown. For
+elapsed audio time `t` in seconds, source speed is multiplied by
+`0.03 + 0.97 / (1 + (t / 1.5)^2)`. The curve begins with zero slope, continues
+slowing while held and approaches a positive speed so playback can still reach
+EOF. It has no fixed stop timer and uses a 64-bit rendered-sample counter.
+Key Lock and pitch processing are bypassed for the falling-speed sound; saved
+tempo and key controls are unchanged.
+
+Release stops the transport through its existing 1 ms de-click ramp, retaining
+the last slowed speed through that tail. Window deactivation releases the hold.
+EOF clears the brake, and a delayed release cannot restart playback or affect
+a subsequently loaded track. A later Play starts with the saved tempo/key.
+Fractional source steps also finish at the final sample instead of becoming
+stuck there because the playhead is clamped below the old EOF comparison.
+
+
 ## Real-time work
 
 Delay lines, reverb networks, resampling tables and stereo stretch processors

@@ -125,6 +125,10 @@ impl Shared {
             let braking = slot.brake.load(Ordering::Relaxed) && deck.playing;
             deck.brake_elapsed = if braking {
                 Some(deck.brake_elapsed.unwrap_or(0))
+            } else if !deck.playing {
+                // Freeze the last slowed speed through the de-click tail.
+                // Returning to native speed here would chirp on release.
+                deck.brake_elapsed
             } else {
                 None
             };
