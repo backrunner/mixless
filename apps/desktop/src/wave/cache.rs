@@ -30,6 +30,7 @@ pub struct WaveCache {
     pub source: Arc<Waveform>,
     pub(super) columns: usize,
     levels: Vec<Vec<Column>>,
+    pub(super) tiles: tiles::TileCache,
 }
 #[derive(Clone, Copy)]
 struct Energy {
@@ -109,7 +110,11 @@ impl WaveCache {
             source,
             columns: n,
             levels,
+            tiles: Default::default(),
         }
+    }
+    pub fn poll_tiles(&self) -> bool {
+        self.tiles.poll()
     }
     fn sample_level(&self, source_column: f64, level: usize) -> Column {
         let columns = &self.levels[level];

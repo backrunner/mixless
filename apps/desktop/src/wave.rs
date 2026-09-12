@@ -1,12 +1,12 @@
-//! Scrolling, beat-anchored RGB waveform in the Serato/rekordbox style:
-//! playhead fixed at the center, with a symmetric peak envelope tinted by
-//! frequency energy, a darker RMS body and measured beat ticks. Dragging the lane scrubs the deck through
-//! the same Jog command the platter uses.
+//! Source-anchored spectrum waveform: a fixed playhead, cached single-layer
+//! peak textures, measured beat ticks and numbered cue flags. Dragging uses
+//! the same jog transport as the platter.
 
 mod cache;
 mod markers;
 pub mod preview;
 mod raster;
+mod tiles;
 pub use cache::WaveCache;
 
 use std::sync::{Arc, Mutex};
@@ -29,7 +29,7 @@ const FALLBACK_SECONDS: f32 = 8.0;
 
 /// Continuous spectral color: no quantization boundaries to flash during scrolling.
 fn spectrum(bands: [f32; 4]) -> Rgba {
-    let weights = bands.map(|v| v.max(0.).sqrt());
+    let weights = bands.map(|v| v.max(0.).powf(1.25));
     let total = weights.iter().sum::<f32>().max(1e-12);
     let palette = [
         theme::WF_LOW,
@@ -44,10 +44,11 @@ fn spectrum(bands: [f32; 4]) -> Rgba {
             .map(|(color, weight)| color[channel] * weight / total)
             .sum()
     });
+    let brightness = rgb.iter().copied().fold(0.001, f32::max).recip().min(1.6);
     Rgba {
-        r: rgb[0],
-        g: rgb[1],
-        b: rgb[2],
+        r: (rgb[0] * brightness).min(1.),
+        g: (rgb[1] * brightness).min(1.),
+        b: (rgb[2] * brightness).min(1.),
         a: 1.,
     }
 }
@@ -84,7 +85,7 @@ pub fn paint_wave(
     bounds: Bounds<Pixels>,
     vertical: bool,
     d: &DeckSnapshot,
-    wave: Option<&WaveCache>,
+    wave: Option<&Arc<WaveCache>>,
     tempo: Option<&TempoMap>,
     transition: Option<(f32, f32)>,
     device_sr: u32,
@@ -128,7 +129,7 @@ pub fn paint_wave(
         quad_fill(window, ox, oy + axis - 0.5, span, 1.0, center_line);
     }
 
-    raster::paint(
+    tiles::paint(
         window,
         bounds,
         vertical,
@@ -219,14 +220,6 @@ pub fn paint_wave(
                     .map(|cue| (anchor + (cue as f32 - d.frame as f32) / fpp, 8)),
             ),
     );
-
-    // Dim the played side (behind the playhead).
-    let dim = theme::with_alpha(gpui::rgb(0x040508), 0.18);
-    if vertical {
-        quad_fill(window, ox, oy, thick, anchor, dim);
-    } else {
-        quad_fill(window, ox, oy, anchor, thick, dim);
-    }
 
     // Playhead: deck-colored glow + white core.
     if vertical {
@@ -334,7 +327,10 @@ pub fn wave_lane(
         .map(|t| t.global_bpm)
         .filter(|b| b.is_finite() && *b > 0.)
     {
-        d.sounding_bpm = bpm * d.rate;
+        // Geometry is source-based. Multiplying then dividing by a changing
+        // f32 rate leaves bit-level jitter and would invalidate texture keys.
+        d.sounding_bpm = bpm;
+        d.rate = 1.;
     }
     let cell = wave_drag_cell();
     let cell_paint = cell.clone();
@@ -368,7 +364,7 @@ pub fn wave_lane(
                         bounds,
                         vertical,
                         &d,
-                        wave.as_deref(),
+                        wave.as_ref(),
                         tempo.as_deref(),
                         transition,
                         device_sr,

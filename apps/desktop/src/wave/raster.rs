@@ -103,11 +103,11 @@ pub(super) fn paint_sampled(
     };
     let center = cross + thick * 0.5;
     let half = (thick * 0.5 - 4.).max(1.);
-    let step = (scale * 0.75).ceil().max(1.) as usize;
+    let step = 1usize;
     let first = (origin * scale).floor() as i32;
     let end = ((origin + span) * scale).ceil() as i32;
     let cpp = (fpp * columns / frames * (step as f64 / scale as f64)) as f32;
-    for body in [false, true] {
+    {
         window.paint_layer(bounds, |window| {
             for pixel in (first..end).step_by(step) {
                 let start = (pixel as f32 / scale).max(origin);
@@ -117,21 +117,7 @@ pub(super) fn paint_sampled(
                     continue;
                 }
                 let column = sample(source / frames * columns, cpp);
-                let (pos, neg, color) = if body {
-                    let color = Rgba {
-                        r: column.color.r * 0.58,
-                        g: column.color.g * 0.58,
-                        b: column.color.b * 0.58,
-                        a: 1.,
-                    };
-                    (
-                        column.rms.min(column.pos) * 0.82,
-                        column.rms.min(column.neg) * 0.82,
-                        color,
-                    )
-                } else {
-                    (column.pos, column.neg, column.color)
-                };
+                let (pos, neg, color) = (column.pos, column.neg, column.color);
                 strip(
                     window,
                     vertical,
