@@ -1,9 +1,11 @@
 //! Local library: import, metadata, cues. No tokens, no PCM.
 
 mod cues;
+mod editing;
 mod folders;
 mod hash;
 mod imports;
+mod ordering;
 mod verification;
 mod waveform;
 pub use imports::ImportItem;
@@ -16,7 +18,7 @@ use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
 use lofty::probe::Probe;
 use mixless_protocol::{Cue, CueKind, PlaylistId, Track, TrackAnalysis, TrackId};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -38,6 +40,8 @@ pub enum LibraryError {
     Sql(#[from] rusqlite::Error),
     #[error("not found")]
     NotFound,
+    #[error("Track order changed; refresh the list and try again")]
+    OrderChanged,
     #[error("invalid cue index {0}")]
     CueIndex(u8),
     #[error("analysis cache: {0}")]
@@ -114,6 +118,19 @@ impl Library {
                 PRIMARY KEY (playlist_id, position),
                 FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
                 FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS playlist_exclusions (
+                playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+                track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                PRIMARY KEY (playlist_id, track_id)
+            );
+            CREATE TABLE IF NOT EXISTS library_order (
+                track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS cue_versions (
+                track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS external_playlists (
                 source TEXT NOT NULL,
@@ -229,8 +246,10 @@ impl Library {
     pub fn list_tracks(&self) -> Result<Vec<Track>, LibraryError> {
         let conn = self.conn.lock().expect("library mutex");
         let mut stmt = conn.prepare(
-            "SELECT id, path, artwork_path, title, artist, album, duration_ms, isrc, bpm, key, camelot, analyzed, content_hash
-             FROM tracks ORDER BY artist, title",
+            "SELECT t.id, t.path, t.artwork_path, t.title, t.artist, t.album, t.duration_ms,
+                    t.isrc, t.bpm, t.key, t.camelot, t.analyzed, t.content_hash
+             FROM tracks t LEFT JOIN library_order o ON o.track_id=t.id
+             ORDER BY o.position IS NULL, o.position, t.artist, t.title, t.id",
         )?;
         let rows = stmt.query_map([], row_to_track)?;
         Ok(rows.filter_map(|r| r.ok()).collect())

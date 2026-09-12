@@ -24,8 +24,22 @@ impl Library {
             };
             tx.execute("INSERT OR IGNORE INTO cues (track_id,idx,frame,kind,user_set) VALUES (?1,?2,?3,?4,0)",params![id.0,cue.index as i64,cue.frame as i64,kind])?;
         }
+        tx.execute("INSERT INTO cue_versions(track_id,version) VALUES (?1,1) ON CONFLICT(track_id) DO UPDATE SET version=1", [id.0])?;
         tx.commit()?;
         Ok(())
+    }
+    pub fn automatic_cues_current(&self, id: TrackId) -> Result<bool, LibraryError> {
+        Ok(self
+            .conn
+            .lock()
+            .expect("library mutex")
+            .query_row(
+                "SELECT version=1 FROM cue_versions WHERE track_id=?1",
+                [id.0],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
     }
     pub fn clear_cue(&self, id: TrackId, index: u8) -> Result<(), LibraryError> {
         self.conn.lock().expect("library mutex").execute(

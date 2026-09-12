@@ -7,7 +7,10 @@ impl Library {
     /// Register the directory before scanning or analyzing its contents.
     pub fn register_folder(&self, path: &Path) -> Result<PlaylistId, LibraryError> {
         let path = path.canonicalize()?;
-        let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
+        let name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy();
         self.external_playlist("folder", &path.to_string_lossy(), &name)
     }
 
@@ -17,24 +20,42 @@ impl Library {
         self.register_local_files_into(paths, &[])
     }
 
-    pub fn register_local_files_into(&self, paths: &[PathBuf], roots: &[PathBuf]) -> Result<Vec<TrackId>, LibraryError> {
-        let paths = paths.iter().map(fs::canonicalize).collect::<Result<Vec<_>, _>>()?;
-        let roots = roots.iter().map(fs::canonicalize).collect::<Result<Vec<_>, _>>()?;
+    pub fn register_local_files_into(
+        &self,
+        paths: &[PathBuf],
+        roots: &[PathBuf],
+    ) -> Result<Vec<TrackId>, LibraryError> {
+        let paths = paths
+            .iter()
+            .map(fs::canonicalize)
+            .collect::<Result<Vec<_>, _>>()?;
+        let roots = roots
+            .iter()
+            .map(fs::canonicalize)
+            .collect::<Result<Vec<_>, _>>()?;
         let mut conn = self.conn.lock().expect("library mutex");
         let tx = conn.transaction()?;
         let mut ids = Vec::with_capacity(paths.len());
         for path in &paths {
-            let title = path.file_stem().unwrap_or(path.as_os_str()).to_string_lossy();
+            let title = path
+                .file_stem()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy();
             tx.execute(
                 "INSERT INTO tracks(path,title,artist,duration_ms,content_hash,mtime)
                  VALUES (?1,?2,'',0,'',0) ON CONFLICT(path) DO NOTHING",
                 params![path.to_string_lossy(), title],
             )?;
-            let id = TrackId(tx.query_row("SELECT id FROM tracks WHERE path=?1",
-                [path.to_string_lossy()], |row| row.get(0))?);
+            let id = TrackId(tx.query_row(
+                "SELECT id FROM tracks WHERE path=?1",
+                [path.to_string_lossy()],
+                |row| row.get(0),
+            )?);
             add_folder_track(&tx, id, path)?;
             for root in &roots {
-                if path.starts_with(root) { add_folder_member(&tx, id, root)?; }
+                if path.starts_with(root) {
+                    add_folder_member(&tx, id, root)?;
+                }
             }
             ids.push(id);
         }
@@ -99,7 +120,11 @@ fn add_folder_track(
     add_folder_member(conn, track, path.parent().ok_or(LibraryError::NotFound)?)
 }
 
-fn add_folder_member(conn: &Connection, track: TrackId, folder: &Path) -> Result<PlaylistId, LibraryError> {
+fn add_folder_member(
+    conn: &Connection,
+    track: TrackId,
+    folder: &Path,
+) -> Result<PlaylistId, LibraryError> {
     let folder_path = folder.to_string_lossy();
     let existing: Option<i64> = conn
         .query_row(
@@ -126,7 +151,8 @@ fn add_folder_member(conn: &Connection, track: TrackId, folder: &Path) -> Result
     conn.execute(
         "INSERT INTO playlist_items(playlist_id,position,track_id)
          SELECT ?1,COALESCE((SELECT MAX(position)+1 FROM playlist_items WHERE playlist_id=?1),0),?2
-         WHERE NOT EXISTS (SELECT 1 FROM playlist_items WHERE playlist_id=?1 AND track_id=?2)",
+         WHERE NOT EXISTS (SELECT 1 FROM playlist_items WHERE playlist_id=?1 AND track_id=?2)
+         AND NOT EXISTS (SELECT 1 FROM playlist_exclusions WHERE playlist_id=?1 AND track_id=?2)",
         params![id, track.0],
     )?;
     Ok(PlaylistId(id))
