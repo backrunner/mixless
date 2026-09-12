@@ -3,12 +3,18 @@
 //! frequency energy, a darker RMS body and measured beat ticks. Dragging the lane scrubs the deck through
 //! the same Jog command the platter uses.
 
+mod cache;
+mod markers;
+pub mod preview;
+mod raster;
+pub use cache::WaveCache;
+
 use std::sync::{Arc, Mutex};
 
 use gpui::prelude::*;
 use gpui::{
-    Bounds, IntoElement, MouseButton, MouseDownEvent, PathBuilder, Pixels, Rgba, SharedString,
-    Window, canvas, div, px,
+    Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Rgba, SharedString, Window, canvas,
+    div, px,
 };
 use mixless_protocol::{DeckId, DeckSnapshot, TempoMap, Waveform};
 
@@ -22,15 +28,28 @@ const BEATS_SHOWN: f32 = 16.0;
 const FALLBACK_SECONDS: f32 = 8.0;
 
 /// Continuous spectral color: no quantization boundaries to flash during scrolling.
-fn spectrum(low: f32, mid: f32, high: f32) -> Rgba {
-    let weights = [low.sqrt(), mid.sqrt(), high.sqrt()];
-    let total = weights.iter().sum::<f32>().max(1.);
+fn spectrum(bands: [f32; 4]) -> Rgba {
+    let weights = bands.map(|v| v.max(0.).sqrt());
+    let total = weights.iter().sum::<f32>().max(1e-12);
+    let palette = [
+        theme::WF_LOW,
+        theme::WF_LOW_MID,
+        theme::WF_MID,
+        theme::WF_HIGH,
+    ];
     let rgb: [f32; 3] = std::array::from_fn(|channel| {
-        [theme::WF_LOW, theme::WF_MID, theme::WF_HIGH].iter().zip(weights)
-            .map(|(color, weight)| color[channel] * weight / total).sum::<f32>()
+        palette
+            .iter()
+            .zip(weights)
+            .map(|(color, weight)| color[channel] * weight / total)
+            .sum()
     });
-    let brightest = rgb.iter().copied().fold(0.01, f32::max);
-    gpui::rgb(rgba_bytes(rgb[0] / brightest, rgb[1] / brightest, rgb[2] / brightest))
+    Rgba {
+        r: rgb[0],
+        g: rgb[1],
+        b: rgb[2],
+        a: 1.,
+    }
 }
 
 fn source_beat_frames(d: &DeckSnapshot, sr: u32) -> f32 {
@@ -65,8 +84,9 @@ pub fn paint_wave(
     bounds: Bounds<Pixels>,
     vertical: bool,
     d: &DeckSnapshot,
-    wave: Option<&Waveform>,
+    wave: Option<&WaveCache>,
     tempo: Option<&TempoMap>,
+    transition: Option<(f32, f32)>,
     device_sr: u32,
     deck_color: Rgba,
 ) {
@@ -76,7 +96,6 @@ pub fn paint_wave(
         (pf(bounds.size.width), pf(bounds.size.height))
     };
     let axis = thick / 2.0;
-    let max_half = (axis - 5.0).max(1.0);
 
     let ox = pf(bounds.origin.x);
     let oy = pf(bounds.origin.y);
@@ -94,20 +113,11 @@ pub fn paint_wave(
         return;
     }
     let fpp = frames_per_px(d, device_sr, span);
-    let anchor = (d.frame as f32 / fpp).min(span / 2.0);
-    // Never trust a partially-written or older cache to have equally-sized
-    // vectors. The positive/negative/RMS vectors are optional for backwards
-    // compatibility; the four original vectors are the safe common extent.
-    let n = (data.columns as usize)
-        .min(data.peak.len())
-        .min(data.low.len())
-        .min(data.mid.len())
-        .min(data.high.len());
+    let anchor = span / 2.0;
+    let n = data.columns;
     if n == 0 {
         return;
     }
-    let has_rms = data.rms.len() >= n;
-    let frames = d.frames as f32;
     let frame = d.frame as f32;
 
     // A hairline keeps silent passages and phase asymmetry readable.
@@ -118,37 +128,27 @@ pub fn paint_wave(
         quad_fill(window, ox, oy + axis - 0.5, span, 1.0, center_line);
     }
 
-    // Source-anchored bins translate continuously under the playhead. Screen-
-    // anchored peak picking changed shape every frame and caused visible shimmer.
-    // Rounded quads are GPU instances: no per-frame polygon tessellation.
-    let columns_per_pixel = fpp * n as f32 / frames;
-    let stride = (columns_per_pixel.max(1.).log2().floor().exp2() as usize).max(1);
-    let first = (((frame - anchor * fpp).max(0.) / frames * n as f32) as usize / stride) * stride;
-    let last = (((frame + (span - anchor) * fpp).min(frames) / frames * n as f32).ceil() as usize).min(n);
-    for c0 in (first..last).step_by(stride) {
-        let c1 = (c0 + stride).min(n);
-        let p0 = (anchor + (c0 as f32 / n as f32 * frames - frame) / fpp).max(0.);
-        let p1 = (anchor + (c1 as f32 / n as f32 * frames - frame) / fpp).min(span);
-        if p1 <= p0 { continue; }
-        let peak = data.peak[c0..c1].iter().copied().max().unwrap_or(0) as f32 / 255.;
-        if peak == 0. { continue; }
-        let average = |band: &[u8]| band[c0..c1].iter().map(|v| *v as f32).sum::<f32>() / (c1 - c0) as f32;
-        let (l, m, h) = (average(&data.low), average(&data.mid), average(&data.high));
-        let half = peak.powf(0.85) * max_half;
-        let mut column = |half: f32, color: Rgba| {
+    raster::paint(
+        window,
+        bounds,
+        vertical,
+        data,
+        d.frame as f64,
+        d.frames as f64,
+        fpp as f64,
+        anchor as f64,
+    );
+    if let Some((start, end)) = transition {
+        let start = (anchor + (start * sr as f32 - frame) / fpp).clamp(0., span);
+        let end = (anchor + (end * sr as f32 - frame) / fpp).clamp(0., span);
+        if end > start {
+            let color = theme::with_alpha(deck_color, 0.10);
             if vertical {
-                quad_fill(window, ox + axis - half, oy + p0, half * 2., p1 - p0, color);
+                quad_fill(window, ox, oy + start, thick, end - start, color);
             } else {
-                quad_fill(window, ox + p0, oy + axis - half, p1 - p0, half * 2., color);
+                quad_fill(window, ox + start, oy, end - start, thick, color);
             }
-        };
-        column(half, spectrum(l, m, h));
-        // Bright high-frequency tips, a midrange body, and a warm bass core.
-        // Each band uses its measured share; quiet bass cannot fill a cymbal hit.
-        let total = (l + m + h).max(1.);
-        column(half * ((l + m) / total).sqrt(), spectrum(l, m, 0.));
-        let rms = if has_rms { average(&data.rms) / 255. } else { peak * 0.55 };
-        column((rms * max_half).min(half) * (l / total).sqrt(), gpui::rgb(0xff6542));
+        }
     }
 
     if d.loop_on {
@@ -156,8 +156,11 @@ pub fn paint_wave(
         let end = (anchor + (d.loop_end_frame as f32 - frame) / fpp).clamp(0., span);
         if end > start {
             let color = theme::with_alpha(theme::LED_GREEN, 0.18);
-            if vertical { quad_fill(window, ox, oy + start, thick, end - start, color); }
-            else { quad_fill(window, ox + start, oy, end - start, thick, color); }
+            if vertical {
+                quad_fill(window, ox, oy + start, thick, end - start, color);
+            } else {
+                quad_fill(window, ox + start, oy, end - start, thick, color);
+            }
         }
     }
 
@@ -193,41 +196,29 @@ pub fn paint_wave(
     if let Some(cue) = d.automix_cue_frame {
         let p = anchor + (cue as f32 - frame) / fpp;
         if (0.0..span).contains(&p) {
-            if vertical { quad_fill(window, ox, oy + p, thick, 2., theme::WARN); }
-            else { quad_fill(window, ox + p, oy, 2., thick, theme::WARN); }
+            if vertical {
+                quad_fill(window, ox, oy + p, thick, 2., theme::WARN);
+            } else {
+                quad_fill(window, ox + p, oy, 2., thick, theme::WARN);
+            }
         }
     }
 
-    // Hot cues that fall inside the window.
-    for (i, cue) in d.cues.iter().enumerate() {
-        let Some(cue_frame) = cue else { continue };
-        let p = anchor + (*cue_frame as f32 - frame) / fpp;
-        if p < -8.0 || p > span + 8.0 {
-            continue;
-        }
-        let color = theme::cue_color(i);
-        if vertical {
-            quad_fill(window, ox, p + oy, thick, 1.0, color);
-            let mut b = PathBuilder::fill();
-            b.move_to(gpui::point(px(ox), px(p + oy)));
-            b.line_to(gpui::point(px(ox + 8.0), px(p + oy - 5.0)));
-            b.line_to(gpui::point(px(ox + 8.0), px(p + oy + 5.0)));
-            b.close();
-            if let Ok(path) = b.build() {
-                window.paint_path(path, color);
-            }
-        } else {
-            quad_fill(window, p + ox, oy, 1.0, thick, color);
-            let mut b = PathBuilder::fill();
-            b.move_to(gpui::point(px(p + ox), px(oy)));
-            b.line_to(gpui::point(px(p + ox + 6.0), px(oy + 8.0)));
-            b.line_to(gpui::point(px(p + ox - 6.0), px(oy + 8.0)));
-            b.close();
-            if let Ok(path) = b.build() {
-                window.paint_path(path, color);
-            }
-        }
-    }
+    markers::flags(
+        window,
+        bounds,
+        vertical,
+        d.cues
+            .iter()
+            .enumerate()
+            .filter_map(|(i, frame)| {
+                frame.map(|cue| (anchor + (cue as f32 - d.frame as f32) / fpp, i))
+            })
+            .chain(
+                d.temporary_cue_frame
+                    .map(|cue| (anchor + (cue as f32 - d.frame as f32) / fpp, 8)),
+            ),
+    );
 
     // Dim the played side (behind the playhead).
     let dim = theme::with_alpha(gpui::rgb(0x040508), 0.18);
@@ -273,11 +264,6 @@ pub fn paint_wave(
             gpui::rgb(0xf4f6fa),
         );
     }
-}
-
-fn rgba_bytes(r: f32, g: f32, b: f32) -> u32 {
-    let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
-    (to8(r) << 16) | (to8(g) << 8) | to8(b)
 }
 
 /* ---- drag-to-seek -------------------------------------------------------- */
@@ -335,12 +321,21 @@ pub fn wave_lane(
     vertical: bool,
     deck: DeckId,
     d: DeckSnapshot,
-    wave: Option<Arc<Waveform>>,
+    wave: Option<Arc<WaveCache>>,
     tempo: Option<Arc<TempoMap>>,
+    transition: Option<(f32, f32)>,
     device_sr: u32,
     deck_color: Rgba,
     cx: &mut gpui::Context<UiState>,
 ) -> impl IntoElement {
+    let mut d = d;
+    if let Some(bpm) = tempo
+        .as_ref()
+        .map(|t| t.global_bpm)
+        .filter(|b| b.is_finite() && *b > 0.)
+    {
+        d.sounding_bpm = bpm * d.rate;
+    }
     let cell = wave_drag_cell();
     let cell_paint = cell.clone();
     let down = wave_drag_handler(cell, deck, vertical, cx);
@@ -375,6 +370,7 @@ pub fn wave_lane(
                         &d,
                         wave.as_deref(),
                         tempo.as_deref(),
+                        transition,
                         device_sr,
                         deck_color,
                     );
@@ -402,9 +398,9 @@ mod tests {
     }
     #[test]
     fn spectral_extremes_have_distinct_colors() {
-        let low = spectrum(255., 0., 0.);
-        let mid = spectrum(0., 255., 0.);
-        let high = spectrum(0., 0., 255.);
+        let low = spectrum([255., 0., 0., 0.]);
+        let mid = spectrum([0., 0., 255., 0.]);
+        let high = spectrum([0., 0., 0., 255.]);
         assert_ne!(low, mid);
         assert_ne!(mid, high);
         assert_ne!(low, high);

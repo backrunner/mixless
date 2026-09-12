@@ -1,9 +1,12 @@
 //! Playback, hot-cue pads and loop controls in the deck performance row.
 
 use gpui::{IntoElement, SharedString, prelude::*, px};
-use mixless_protocol::{DeckId, DeckSnapshot};
+use mixless_protocol::{CueKind, DeckId, DeckSnapshot};
 
-use crate::{state::UiState, theme};
+use crate::{
+    state::{TransportButton, UiState},
+    theme,
+};
 
 use crate::controls::caption;
 use gpui::{MouseButton, MouseDownEvent};
@@ -44,11 +47,17 @@ impl UiState {
                 .text_size(px(14.))
                 .text_color(if d.playing { theme::LED_GREEN } else { dc })
                 .hover(|s| s.bg(theme::PANEL_RAISED))
-                .child(if d.playing { "❚❚" } else { "▶" });
+                .child(if d.brake {
+                    "↘"
+                } else if d.playing {
+                    "■"
+                } else {
+                    "▶"
+                });
             let state = cx.entity();
-            el.on_click(move |_ev, _window, cx| {
+            el.on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {
-                    s.play_pause(deck);
+                    s.begin_transport_press(deck, TransportButton::Play);
                     cx.notify();
                 });
             })
@@ -69,11 +78,15 @@ impl UiState {
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(theme::DANGER)
                 .hover(|s| s.bg(theme::PANEL_RAISED))
-                .child("CUE");
+                .child(if d.temporary_cue_frame.is_some() {
+                    "CUE ●"
+                } else {
+                    "CUE"
+                });
             let state = cx.entity();
-            el.on_click(move |ev, _window, cx| {
+            el.on_mouse_down(MouseButton::Left, move |_, _window, cx| {
                 state.update(cx, |s, cx| {
-                    s.trigger_cue(deck, 0, ev.modifiers().shift);
+                    s.begin_transport_press(deck, TransportButton::Cue);
                     cx.notify();
                 });
             })
@@ -82,6 +95,65 @@ impl UiState {
         // Give the transport and pad grid the exact same row box. The
         // transport row is anchored to its bottom, so PLAY/CUE share a
         // baseline with pads 5–8 at every deck width.
+        let mut cue_use = gpui::div()
+            .flex()
+            .items_center()
+            .gap(px(3.))
+            .h(px(26.))
+            .mb_1();
+        if let Some((index, id)) =
+            self.cue_role_editor[deck.index()].filter(|(_, id)| Some(*id) == d.track_id)
+        {
+            let _ = id;
+            cue_use = cue_use.child(
+                gpui::div()
+                    .text_size(px(10.))
+                    .text_color(theme::cue_color(index))
+                    .child(format!("{}", index + 1)),
+            );
+            for (kind, label) in [
+                (CueKind::Hot, "AUTO"),
+                (CueKind::In, "IN"),
+                (CueKind::Out, "OUT"),
+            ] {
+                let state = cx.entity();
+                let selected = d.cue_kinds[index] == kind;
+                cue_use = cue_use.child(
+                    gpui::div()
+                        .id(SharedString::from(format!("cue-use-{deck:?}-{label}")))
+                        .flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .h(px(22.))
+                        .rounded(px(3.))
+                        .border_1()
+                        .border_color(if selected {
+                            theme::cue_color(index)
+                        } else {
+                            theme::LINE
+                        })
+                        .bg(theme::PANEL_INSET)
+                        .text_size(px(8.))
+                        .text_color(theme::TEXT)
+                        .child(label)
+                        .hover(|s| s.bg(theme::PANEL_RAISED))
+                        .on_click(move |_, _, cx| {
+                            state.update(cx, |s, cx| {
+                                s.assign_cue_role(deck, kind);
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+        } else if self.cue_shift[deck.index()] {
+            cue_use = cue_use.child(
+                gpui::div()
+                    .text_size(px(9.))
+                    .text_color(theme::MUTED)
+                    .child("Select cue · AUTO / IN / OUT"),
+            );
+        }
         let transport = gpui::div()
             .flex()
             .flex_col()
@@ -89,6 +161,7 @@ impl UiState {
             .justify_end()
             .w(px(132.))
             .h(px(PERFORM_HEIGHT))
+            .child(cue_use)
             .child(
                 gpui::div()
                     .flex()
@@ -117,7 +190,11 @@ impl UiState {
                         .border_1()
                         .text_size(px(11.))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .child((i + 1).to_string())
+                        .child(match d.cue_kinds[i] {
+                            CueKind::In if set => format!("{} IN", i + 1),
+                            CueKind::Out if set => format!("{} OUT", i + 1),
+                            _ => (i + 1).to_string(),
+                        })
                         .hover(|s| s.bg(theme::with_alpha(color, 0.15)));
                     if set {
                         el.bg(color)
@@ -139,6 +216,13 @@ impl UiState {
                         });
                     },
                 );
+                let state = pad_state.clone();
+                let pad = pad.on_mouse_down(MouseButton::Right, move |_, _, cx| {
+                    state.update(cx, |s, cx| {
+                        s.clear_cue(deck, i);
+                        cx.notify();
+                    });
+                });
                 row_el = row_el.child(pad);
             }
             row_el
@@ -215,7 +299,11 @@ impl UiState {
                     theme::TEXT
                 })
                 .hover(|s| s.bg(theme::PANEL_RAISED))
-                .child(if d.loop_beats < 1. { format!("1/{:.0}", 1. / d.loop_beats) } else { format!("{:.0}", d.loop_beats) });
+                .child(if d.loop_beats < 1. {
+                    format!("1/{:.0}", 1. / d.loop_beats)
+                } else {
+                    format!("{:.0}", d.loop_beats)
+                });
             let state = cx.entity();
             el.on_click(move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {

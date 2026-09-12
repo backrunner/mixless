@@ -1,4 +1,4 @@
-use crate::{grid::Grid, Candidate};
+use crate::{Candidate, grid::Grid};
 use mixless_protocol::{BarMap, Cue, CueKind, SectionLabel as S, StrategyId as Id, TrackAnalysis};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -45,7 +45,9 @@ impl ScoreComponents {
 const MINOR: [i32; 12] = [8, 3, 10, 5, 0, 7, 2, 9, 4, 11, 6, 1];
 const MAJOR: [i32; 12] = [11, 6, 1, 8, 3, 10, 5, 0, 7, 2, 9, 4];
 fn sounding_camelot(track: &TrackAnalysis, pitch: f32) -> Option<(i32, bool)> {
-    let cam = track.camelot.as_deref()?;
+    shifted_camelot(track.camelot.as_deref()?, pitch)
+}
+fn shifted_camelot(cam: &str, pitch: f32) -> Option<(i32, bool)> {
     let minor = cam.ends_with('A');
     if !minor && !cam.ends_with('B') {
         return None;
@@ -57,6 +59,48 @@ fn sounding_camelot(track: &TrackAnalysis, pitch: f32) -> Option<(i32, bool)> {
     let table = if minor { MINOR } else { MAJOR };
     let pc = (table[number - 1] + pitch.round() as i32).rem_euclid(12);
     Some((table.iter().position(|v| *v == pc)? as i32, minor))
+}
+
+pub(crate) fn window_key_match(
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+    out: f32,
+    input: f32,
+    pa: f32,
+    pb: f32,
+) -> (f32, f32, bool) {
+    let local = |t: &TrackAnalysis, anchor: f32, kind| {
+        t.mix_regions
+            .iter()
+            .filter(|r| r.kind == kind && (r.anchor_sec - anchor).abs() < 0.15)
+            .max_by(|a, b| a.key_confidence.total_cmp(&b.key_confidence))
+            .map(|r| (r.camelot.clone(), r.key_confidence))
+            .unwrap_or((t.camelot.clone(), t.key_confidence))
+    };
+    let (ka, ca) = local(a, out, mixless_protocol::MixRegionKind::Out);
+    let (kb, cb) = local(b, input, mixless_protocol::MixRegionKind::In);
+    let reliable = ca >= 0.55 && cb >= 0.55;
+    let (Some(ka), Some(kb)) = (
+        ka.as_deref().and_then(|k| shifted_camelot(k, pa)),
+        kb.as_deref(),
+    ) else {
+        return (0., 0., false);
+    };
+    let Some(native) = shifted_camelot(kb, pb) else {
+        return (0., 0., false);
+    };
+    let score = compatibility(ka, native);
+    if score > 0. {
+        return (score, 0., reliable);
+    }
+    for shift in [-1f32, 1., -2., 2.] {
+        if (pb + shift).abs() <= 2.
+            && shifted_camelot(kb, pb + shift).is_some_and(|k| compatibility(ka, k) >= 0.85)
+        {
+            return (if shift.abs() == 1. { 0.5 } else { 0.25 }, shift, reliable);
+        }
+    }
+    (0., 0., reliable)
 }
 fn compatibility(a: (i32, bool), b: (i32, bool)) -> f32 {
     if a == b {

@@ -1,5 +1,5 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
@@ -153,7 +153,7 @@ impl OutputStreams {
                 &device,
                 &cue_config,
                 cue_format,
-                move |data, channels| {
+                move |data, channels, _playback| {
                     // Independent device clocks can drift. Bound accumulated latency.
                     if consumer.slots() > 4096 {
                         while consumer.slots() > 1024 {
@@ -176,11 +176,11 @@ impl OutputStreams {
             &master_device,
             &config,
             format,
-            move |data, channels| {
+            move |data, channels, playback| {
                 shared
                     .block_frames
                     .store((data.len() / channels) as u32, Ordering::Relaxed);
-                Shared::render_interleaved(&shared, &mut rt, data, channels);
+                Shared::render_interleaved(&shared, &mut rt, data, channels, playback);
             },
             move |_| {
                 error_shared.audio_failed.store(true, Ordering::Relaxed);
@@ -230,14 +230,23 @@ fn build_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     format: cpal::SampleFormat,
-    mut render: impl FnMut(&mut [f32], usize) + Send + 'static,
+    mut render: impl FnMut(&mut [f32], usize, std::time::Instant) + Send + 'static,
     on_error: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream, DeviceError> {
     let channels = config.channels as usize;
+    let sample_rate = config.sample_rate.0;
     match format {
         cpal::SampleFormat::F32 => device.build_output_stream(
             config,
-            move |data: &mut [f32], _| render(data, channels),
+            move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                let timestamp = info.timestamp();
+                let playback = std::time::Instant::now()
+                    + timestamp
+                        .playback
+                        .duration_since(&timestamp.callback)
+                        .unwrap_or_default();
+                render(data, channels, playback)
+            },
             on_error,
             None,
         ),
@@ -245,9 +254,18 @@ fn build_stream(
             let mut scratch = vec![0.0; 2048 * channels];
             device.build_output_stream(
                 config,
-                move |data: &mut [i16], _| {
-                    for chunk in data.chunks_mut(scratch.len()) {
-                        render(&mut scratch[..chunk.len()], channels);
+                move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
+                    let timestamp = info.timestamp();
+                    let playback = std::time::Instant::now()
+                        + timestamp
+                            .playback
+                            .duration_since(&timestamp.callback)
+                            .unwrap_or_default();
+                    for (index, chunk) in data.chunks_mut(scratch.len()).enumerate() {
+                        let offset = std::time::Duration::from_secs_f64(
+                            (index * scratch.len() / channels) as f64 / sample_rate as f64,
+                        );
+                        render(&mut scratch[..chunk.len()], channels, playback + offset);
                         for (dst, src) in chunk.iter_mut().zip(&scratch) {
                             *dst = (src.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         }

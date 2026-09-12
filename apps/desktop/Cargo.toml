@@ -20,6 +20,7 @@ mixless-acquire = { path = "../../crates/mixless-acquire" }
 mixless-acquire-yt = { path = "../../crates/mixless-acquire-yt" }
 mixless-midi = { workspace = true }
 gpui = { workspace = true }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 rfd = { workspace = true }
 dirs = { workspace = true }
 tracing = { workspace = true }

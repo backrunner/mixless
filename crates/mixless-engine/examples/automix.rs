@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sections: vec![],
             bars: vec![],
             phrase_boundaries: vec![],
+            mix_regions: vec![],
             waveform_path: None,
             partial: true,
         });

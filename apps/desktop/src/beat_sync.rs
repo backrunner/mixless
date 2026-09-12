@@ -59,7 +59,9 @@ impl SyncRequest {
             | Command::SetReverse { .. }
             | Command::SetJogTouch { touching: true, .. }
             | Command::Jog { .. }
-            | Command::StartAutomix { .. } => true,
+            | Command::StartAutomix { .. }
+            | Command::TriggerTemporaryCue { .. }
+            | Command::SetBrake { on: true, .. } => true,
             Command::SetRate { deck, .. }
             | Command::DisableSync { deck }
             | Command::Sync { deck, .. } => *deck == self.follower,

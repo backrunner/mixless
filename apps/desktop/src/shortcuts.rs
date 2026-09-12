@@ -12,6 +12,7 @@ enum Shortcut {
     Close,
     SwitchDeck,
     Play(DeckId),
+    TemporaryCue(DeckId, bool),
     Cue(DeckId, usize, bool),
     QuickCue,
     Sync,
@@ -25,11 +26,16 @@ pub const HELP: &[(&str, &str)] = &[
     ("Tab / Shift+Tab", "Switch selected deck A / B"),
     ("Space", "Play / pause selected deck"),
     ("Z / X", "Play / pause deck A / B"),
-    ("C", "Jump to cue 1; set it if empty"),
+    (
+        "C / Shift+C",
+        "Set / return to temporary cue; clear with Shift",
+    ),
     ("G", "Quick cue: set the next empty pad"),
     ("1–8", "Jump to selected deck cue; set if empty"),
     ("Q W E R / U I O P", "Deck A / B cues 1–4; set if empty"),
-    ("Shift + cue key", "Set / replace that cue at the playhead"),
+    ("Shift + cue key", "Choose cue use: AUTO / IN / OUT"),
+    ("Hold CUE / Play", "Clear temporary cue / vinyl brake stop"),
+    ("Right-click pad", "Delete saved cue"),
     ("S", "Sync selected deck"),
     ("L", "Toggle loop on selected deck"),
     ("[ / ]", "Halve / double loop size (1/16–64 beats)"),
@@ -70,7 +76,7 @@ fn resolve(ev: &KeyDownEvent, deck: DeckId, modal: bool, picker: bool) -> Option
         "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" => {
             Some((deck, key.as_bytes()[0] as usize - b'1' as usize))
         }
-        "c" => Some((deck, 0)),
+
         _ => ["q", "w", "e", "r"]
             .iter()
             .position(|k| *k == key)
@@ -89,6 +95,7 @@ fn resolve(ev: &KeyDownEvent, deck: DeckId, modal: bool, picker: bool) -> Option
         "?" | "f1" => Some(Shortcut::Help),
         "/" if modifiers.shift => Some(Shortcut::Help),
         "tab" => Some(Shortcut::SwitchDeck),
+        "c" => Some(Shortcut::TemporaryCue(deck, modifiers.shift)),
         "left" => Some(Shortcut::BeatJump(if modifiers.shift { -4 } else { -1 })),
         "right" => Some(Shortcut::BeatJump(if modifiers.shift { 4 } else { 1 })),
         _ if modifiers.shift => None,
@@ -126,6 +133,8 @@ impl UiState {
         match action {
             Shortcut::Help => self.show_shortcuts = !self.show_shortcuts,
             Shortcut::Close => {
+                self.cue_role_editor = [None; 2];
+                self.cue_shift = [false; 2];
                 self.close_fx_editor();
                 self.show_shortcuts = false;
                 self.show_import_modal = false;
@@ -139,6 +148,7 @@ impl UiState {
                 }
             }
             Shortcut::Play(deck) => self.play_pause(deck),
+            Shortcut::TemporaryCue(deck, clear) => self.temporary_cue(deck, clear),
             Shortcut::Cue(deck, index, replace) => self.trigger_cue(deck, index, replace),
             Shortcut::QuickCue => {
                 // Take a fresh engine snapshot: several key presses can arrive
@@ -152,8 +162,7 @@ impl UiState {
                     {
                         self.set_cue_now(self.focus, index);
                     } else {
-                        self.error =
-                            "All 8 cues are set. Use Shift + a cue key to replace one.".into();
+                        self.error = "All 8 cues are set. Right-click a pad to clear it.".into();
                     }
                 }
             }

@@ -8,6 +8,7 @@ mod controls;
 mod fader;
 mod fx;
 mod menus;
+mod performance;
 mod preferences;
 mod root;
 mod settings;
@@ -52,6 +53,9 @@ fn main() {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(24.))),
             }),
+            // Disable AppKit's implicit titlebar mover at construction time.
+            // The explicitly empty header area still calls performWindowDrag.
+            is_movable: false,
             window_min_size: Some(size(px(1180.), px(760.))),
             window_background: WindowBackgroundAppearance::Opaque,
             ..Default::default()
@@ -69,13 +73,13 @@ fn main() {
                     if !window.is_window_active() {
                         state.end_drag();
                         state.end_momentary_fx();
+                        state.cancel_transport_press();
                         cx.notify();
                     }
                 })
                 .detach();
                 branding::configure_main_window();
                 state.refresh_playlists();
-                state.select_playlist(state.playlists.first().map(|playlist| playlist.id));
                 state.poll();
                 cx.notify();
                 cx.spawn(async move |this, cx| {

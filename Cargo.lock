@@ -3534,6 +3534,7 @@ version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
  "gpui",
+ "image",
  "lofty",
  "mixless-acquire",
  "mixless-acquire-yt",

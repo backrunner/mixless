@@ -180,17 +180,24 @@ impl Shared {
         let sr = slot.src_sr.load(Ordering::Relaxed).max(1) as f64;
         let frames = slot.frames.load(Ordering::Relaxed) as f64;
         let was_on = slot.loop_on.load(Ordering::Relaxed);
-        let mut start = if was_on { slot.loop_start.load(Ordering::Relaxed) as f64 / 65536. }
-            else { slot.playhead_frames() };
+        let mut start = if was_on {
+            slot.loop_start.load(Ordering::Relaxed) as f64 / 65536.
+        } else {
+            slot.playhead_frames()
+        };
         let mut bpm = slot.bpm_milli.load(Ordering::Relaxed) as f64 / 100.;
-        if bpm < 1. { bpm = 120.; }
+        if bpm < 1. {
+            bpm = 120.;
+        }
         let mut length = beats * 60. / bpm * sr;
         if let Ok(grid) = slot.beat_grid.lock() {
             if let Some(grid) = grid.as_ref() {
                 let mut beat = grid.beat_at(start / sr).0;
                 if !was_on && self.quantize.load(Ordering::Relaxed) {
                     let quantum = beats.min(1.);
-                    beat = (beat / quantum).round() * quantum;
+                    // Anchor to the preceding subdivision. Rounding forward puts
+                    // the playhead before the loop and wraps it to the far end.
+                    beat = (beat / quantum).floor() * quantum;
                     start = (grid.time_at(beat) * sr).max(0.);
                 }
                 length = (grid.time_at(beat + beats) * sr - start).max(1.);
@@ -198,9 +205,12 @@ impl Shared {
         }
         length = length.min(frames).max(0.);
         start = start.clamp(0., (frames - length).max(0.));
-        slot.loop_start.store((start * 65536.).round() as u64, Ordering::Relaxed);
-        slot.loop_length_frames.store(length.round() as u64, Ordering::Relaxed);
-        slot.loop_sixteenths.store((beats * 16.) as u32, Ordering::Relaxed);
+        slot.loop_start
+            .store((start * 65536.).round() as u64, Ordering::Relaxed);
+        slot.loop_length_frames
+            .store(length.round() as u64, Ordering::Relaxed);
+        slot.loop_sixteenths
+            .store((beats * 16.) as u32, Ordering::Relaxed);
         slot.loop_on.store(on && length > 1., Ordering::Release);
     }
 
@@ -402,7 +412,13 @@ mod tests {
         assert!((jump / 48_000.0 - 4.0 / 3.0).abs() < 1e-5);
         slot.frames.store(48_000 * 60, Ordering::Relaxed);
         slot.set_playhead(16.0 * 48_000.0);
-        engine.dispatch(Command::SetLoopBeats { deck: DeckId::A, beats: 4., on: true }).unwrap();
+        engine
+            .dispatch(Command::SetLoopBeats {
+                deck: DeckId::A,
+                beats: 4.,
+                on: true,
+            })
+            .unwrap();
         let loop_len = slot.loop_length_frames.load(Ordering::Relaxed) as f64;
         assert!((loop_len / 48_000.0 - 4.0 / 3.0).abs() < 1e-5);
     }
@@ -626,12 +642,14 @@ mod tests {
     #[test]
     fn invalid_missing_and_stale_grids_cannot_claim_sync() {
         let engine = super::super::tests::test_engine(48_000);
-        assert!(engine
-            .dispatch(Command::Sync {
-                deck: DeckId::A,
-                keylock: true
-            })
-            .is_err());
+        assert!(
+            engine
+                .dispatch(Command::Sync {
+                    deck: DeckId::A,
+                    keylock: true
+                })
+                .is_err()
+        );
         for beats in [
             vec![],
             vec![0.0],
@@ -639,27 +657,31 @@ mod tests {
             vec![0.5, 0.4],
             vec![0.0, 0.0],
         ] {
-            assert!(engine
+            assert!(
+                engine
+                    .set_beat_grid(
+                        DeckId::A,
+                        TrackId(0),
+                        TempoMap {
+                            beats,
+                            ..Default::default()
+                        }
+                    )
+                    .is_err()
+            );
+        }
+        assert!(
+            engine
                 .set_beat_grid(
                     DeckId::A,
-                    TrackId(0),
+                    TrackId(99),
                     TempoMap {
-                        beats,
+                        beats: vec![0.0, 0.5],
                         ..Default::default()
                     }
                 )
-                .is_err());
-        }
-        assert!(engine
-            .set_beat_grid(
-                DeckId::A,
-                TrackId(99),
-                TempoMap {
-                    beats: vec![0.0, 0.5],
-                    ..Default::default()
-                }
-            )
-            .is_err());
+                .is_err()
+        );
         assert!(!engine.snapshot().decks[0].synced);
     }
 

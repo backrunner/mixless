@@ -58,9 +58,26 @@ impl DeckSlot {
             seek_from: AtomicU64::new(0),
             seek_to: AtomicU64::new(0),
             cues: std::array::from_fn(|_| AtomicU64::new(0)),
+            cue_kinds: std::array::from_fn(|_| AtomicU32::new(0)),
+            temporary_cue: AtomicU64::new(0),
             level: [AtomicU32::new(0), AtomicU32::new(0)],
             waveform: Mutex::new(None),
         }
+    }
+
+    pub(super) fn seek_cue(&self, frame: u64) {
+        let frame = frame.min(self.frames.load(Ordering::Relaxed).saturating_sub(1));
+        let start = self.loop_start.load(Ordering::Relaxed) / 65536;
+        let end = start + self.loop_length_frames.load(Ordering::Relaxed);
+        if frame < start || frame >= end {
+            self.loop_on.store(false, Ordering::Relaxed);
+        }
+        self.roll.store(false, Ordering::Relaxed);
+        self.brake.store(false, Ordering::Relaxed);
+        self.seek_from
+            .store(self.playhead.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.seek_to.store(frame * 65536, Ordering::Relaxed);
+        self.seek_pending.store(true, Ordering::Release);
     }
 
     pub(super) fn playhead_frames(&self) -> f64 {
@@ -138,11 +155,7 @@ impl Shared {
                 sounding_bpm: {
                     let bpm = bpm.unwrap_or(s.bpm_milli.load(Ordering::Relaxed) as f32 / 100.0);
                     let rate = s.rate_micro.load(Ordering::Relaxed) as f32 / 1_000_000.0;
-                    if bpm <= 0.0 {
-                        0.0
-                    } else {
-                        bpm * rate
-                    }
+                    if bpm <= 0.0 { 0.0 } else { bpm * rate }
                 },
                 eq_db: [
                     s.eq_db[0].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
@@ -176,7 +189,8 @@ impl Shared {
                 loop_bars: (s.loop_sixteenths.load(Ordering::Relaxed) / 64) as u16,
                 loop_beats: s.loop_sixteenths.load(Ordering::Relaxed) as f32 / 16.,
                 loop_start_frame: s.loop_start.load(Ordering::Relaxed) / 65536,
-                loop_end_frame: s.loop_start.load(Ordering::Relaxed) / 65536 + s.loop_length_frames.load(Ordering::Relaxed),
+                loop_end_frame: s.loop_start.load(Ordering::Relaxed) / 65536
+                    + s.loop_length_frames.load(Ordering::Relaxed),
                 vinyl: s.vinyl.load(Ordering::Relaxed),
                 slip: s.slip.load(Ordering::Relaxed),
                 synced: follower == i as u32 + 1,
@@ -193,6 +207,12 @@ impl Shared {
                 }),
                 fx: std::array::from_fn(|index| s.inserts[index].snapshot()),
                 cues,
+                cue_kinds: std::array::from_fn(|j| match s.cue_kinds[j].load(Ordering::Relaxed) {
+                    1 => CueKind::In,
+                    2 => CueKind::Out,
+                    _ => CueKind::Hot,
+                }),
+                temporary_cue_frame: s.temporary_cue.load(Ordering::Relaxed).checked_sub(1),
                 level: [
                     f32::from_bits(s.level[0].load(Ordering::Relaxed)),
                     f32::from_bits(s.level[1].load(Ordering::Relaxed)),

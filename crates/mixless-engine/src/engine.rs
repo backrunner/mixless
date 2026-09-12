@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mixless_protocol::{
-    Command, DeckId, DeckSnapshot, EngineSnapshot, Event, FilterKind, FxParams, FxSlot, TrackId,
-    XfCurve,
+    Command, CueKind, DeckId, DeckSnapshot, EngineSnapshot, Event, FilterKind, FxParams, FxSlot,
+    TrackId, XfCurve,
 };
 use thiserror::Error;
 
@@ -19,6 +19,7 @@ mod sync;
 mod commands;
 mod fx;
 mod host;
+mod presentation;
 mod render;
 mod runtime;
 mod state;
@@ -28,10 +29,10 @@ mod tests;
 
 use fx::insert_index;
 
-use crate::decode::{decode_file, AudioBuffer};
+use crate::decode::{AudioBuffer, decode_file};
 use crate::device;
 use crate::dsp::{
-    db_to_lin, xfader_gains, ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue,
+    ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue, db_to_lin, xfader_gains,
 };
 use crate::effects::{Effect, EffectKind, EffectParams};
 use crate::resample::Resampler;
@@ -67,6 +68,7 @@ impl Default for EngineConfig {
 }
 
 struct DeckRt {
+    presentation_step: f64,
     cue_sample: [f32; 2],
     cue_trim: SmoothValue,
     isolator_l: Isolator,
@@ -88,6 +90,8 @@ struct DeckRt {
     eq: [SmoothValue; 3],
     step: SmoothValue,
     step_target: f32,
+    brake_elapsed: Option<u32>,
+    paused_seek: bool,
     playing: bool,
     loop_range: Option<(f64, f64)>,
     slip: bool,
@@ -171,7 +175,9 @@ struct DeckSlot {
     seek_pending: AtomicBool,
     seek_from: AtomicU64,
     seek_to: AtomicU64,
-    cues: [AtomicU64; 8], // 0 = empty, else frame+1
+    cues: [AtomicU64; 8],      // 0 = empty, else frame+1
+    cue_kinds: [AtomicU32; 8], // AUTO=0, IN=1, OUT=2
+    temporary_cue: AtomicU64,
     /// Post fader/gain peak level per channel (f32 bits, decayed per block).
     level: [AtomicU32; 2],
     /// Overview waveform computed at load time (host thread only).
@@ -179,6 +185,7 @@ struct DeckSlot {
 }
 
 pub struct Shared {
+    presentation: presentation::PresentationClock,
     pub(crate) audio_failed: AtomicBool,
     pub(crate) cue_failed: AtomicBool,
     cue_device: Mutex<Option<String>>,

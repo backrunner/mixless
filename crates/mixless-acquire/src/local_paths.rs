@@ -2,9 +2,15 @@
 use std::{collections::HashSet, path::PathBuf};
 
 pub fn collect_audio(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<String>) {
+    let mut files = Vec::new();
+    let errors = visit_audio(paths, |path| files.push(path));
+    (files, errors)
+}
+
+/// Deterministic discovery with incremental publication; no audio file is opened.
+pub fn visit_audio(paths: &[PathBuf], mut found: impl FnMut(PathBuf)) -> Vec<String> {
     let mut pending: Vec<_> = paths.iter().rev().cloned().collect();
     let mut seen = HashSet::new();
-    let mut files = Vec::new();
     let mut errors = Vec::new();
     while let Some(path) = pending.pop() {
         let canonical = match path.canonicalize() {
@@ -43,10 +49,10 @@ pub fn collect_audio(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<String>) {
                     )
                 })
         {
-            files.push(canonical);
+            found(canonical);
         }
     }
-    (files, errors)
+    errors
 }
 
 #[cfg(test)]

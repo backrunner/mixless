@@ -125,9 +125,11 @@ fn audio_callback_budget() {
             let start = std::time::Instant::now();
             engine.shared.process_block(&mut rt, &mut output, 2);
             timings.push(start.elapsed().as_secs_f64());
-            assert!(output
-                .iter()
-                .all(|sample| sample.is_finite() && sample.abs() <= 1.0));
+            assert!(
+                output
+                    .iter()
+                    .all(|sample| sample.is_finite() && sample.abs() <= 1.0)
+            );
         }
         timings.sort_by(f64::total_cmp);
         let percentile = timings[timings.len() * 99 / 100];
@@ -140,5 +142,55 @@ fn audio_callback_budget() {
             percentile / budget * 100.0
         );
         assert!(percentile < budget * if scratch { 0.35 } else { 0.5 });
+    }
+}
+
+#[test]
+#[ignore = "serial release budget for retriggered time-stretched cues"]
+fn cue_callback_budget() {
+    for block_frames in [128, 512] {
+        let engine = test_engine(48_000);
+        for deck in [DeckId::A, DeckId::B] {
+            engine.dispatch(Command::PlayPause { deck }).unwrap();
+            engine
+                .dispatch(Command::SetRate { deck, rate: 1.08 })
+                .unwrap();
+            engine
+                .dispatch(Command::SetPitchSemitones {
+                    deck,
+                    semitones: 2.,
+                })
+                .unwrap();
+            engine.set_cue_frame(deck, 0, 24000);
+            engine.set_cue_frame(deck, 1, 48000);
+        }
+        engine.render_offline(4096);
+        let mut rt = engine.rt.lock().unwrap();
+        let mut output = vec![0.; block_frames * 2];
+        let mut timings = Vec::with_capacity(2000);
+        for i in 0..2000 {
+            for deck in [DeckId::A, DeckId::B] {
+                engine
+                    .dispatch(Command::JumpCue {
+                        deck,
+                        index: (i % 2) as u8,
+                    })
+                    .unwrap();
+            }
+            let started = std::time::Instant::now();
+            engine.shared.process_block(&mut rt, &mut output, 2);
+            timings.push(started.elapsed().as_secs_f64());
+            assert!(output.iter().all(|s| s.is_finite() && s.abs() <= 1.));
+        }
+        timings.sort_by(f64::total_cmp);
+        let p99 = timings[timings.len() * 99 / 100];
+        let budget = block_frames as f64 / 48000.;
+        eprintln!(
+            "cue frames={block_frames} p50={:.3}ms p99={:.3}ms budget={:.3}ms",
+            timings[timings.len() / 2] * 1000.,
+            p99 * 1000.,
+            budget * 1000.
+        );
+        assert!(p99 < budget * 0.5);
     }
 }

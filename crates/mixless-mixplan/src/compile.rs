@@ -1,4 +1,4 @@
-use crate::{grid::Grid, Candidate};
+use crate::{Candidate, grid::Grid};
 use mixless_protocol::{
     AutomationLanes, EqLane, FilterLane, LoopOp, MixPlan, MixPlanSummary, PerformanceOffset,
     Polyline, ScratchOp, StrategyId as S, TrackAnalysis,
@@ -239,6 +239,7 @@ pub(crate) fn compile(
         outgoing_source: Polyline::default(),
         incoming_start_bar: 0.0,
         transition_mode: None,
+        stages: Vec::new(),
         master_bpm: Polyline::default(),
         lanes,
         handoff_bar: hold.then_some(n * 0.5),

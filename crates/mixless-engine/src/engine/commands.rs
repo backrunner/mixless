@@ -12,7 +12,9 @@ impl Engine {
         let finite = match &cmd {
             Command::Jog { delta_frames, .. } => delta_frames.is_finite(),
             Command::SetChannelFilter { amount, .. } => amount.is_finite(),
-            Command::SetLoopBeats { beats, .. } => beats.is_finite() && (0.0625..=64.).contains(beats),
+            Command::SetLoopBeats { beats, .. } => {
+                beats.is_finite() && (0.0625..=64.).contains(beats)
+            }
             Command::SetFilterResonance { resonance, .. } => resonance.is_finite(),
             Command::SetFilter { cutoff_hz, .. } => cutoff_hz.is_finite(),
             Command::SetRate { rate, .. } => rate.is_finite(),
@@ -90,15 +92,18 @@ impl Engine {
 impl Shared {
     fn apply_cmd(&self, cmd: &Command) {
         match *cmd {
-            Command::SetJogTouch { touching: true, .. } | Command::SetReverse { .. } => {
-                self.clear_sync()
-            }
+            Command::SetJogTouch { touching: true, .. }
+            | Command::SetReverse { .. }
+            | Command::SetBrake { on: true, .. } => self.clear_sync(),
             Command::Jog { deck, .. } | Command::SetRate { deck, .. } => {
                 if self.sync_follower.load(Ordering::Acquire) == deck.index() as u32 + 1 {
                     self.clear_sync();
                 }
             }
-            Command::PlayPause { .. } | Command::JumpCue { .. } | Command::BeatJump { .. } => {
+            Command::PlayPause { .. }
+            | Command::JumpCue { .. }
+            | Command::TriggerTemporaryCue { .. }
+            | Command::BeatJump { .. } => {
                 self.sync_align.store(true, Ordering::Release);
             }
             _ => {}
@@ -106,7 +111,20 @@ impl Shared {
         match *cmd {
             Command::PlayPause { deck } => {
                 let s = &self.decks[deck.index()];
+                if s.frames.load(Ordering::Relaxed) == 0 {
+                    return;
+                }
+                if s.brake.swap(false, Ordering::Relaxed) {
+                    return;
+                }
                 let next = !s.playing.load(Ordering::Relaxed);
+                if next
+                    && s.playhead_frames()
+                        >= s.frames.load(Ordering::Relaxed).saturating_sub(1) as f64
+                {
+                    s.seek_to.store(0, Ordering::Relaxed);
+                    s.seek_pending.store(true, Ordering::Release);
+                }
                 s.playing.store(next, Ordering::Relaxed);
             }
             Command::Jog { deck, delta_frames } => {
@@ -195,7 +213,9 @@ impl Shared {
                     .store(v, Ordering::Relaxed);
             }
             Command::SetFilterResonanceEnabled { deck, on } => {
-                self.decks[deck.index()].resonance_enabled.store(on, Ordering::Relaxed);
+                self.decks[deck.index()]
+                    .resonance_enabled
+                    .store(on, Ordering::Relaxed);
             }
             Command::SetFilterResonance { deck, resonance } => {
                 self.decks[deck.index()].resonance_milli.store(
@@ -311,11 +331,45 @@ impl Shared {
                     let s = &self.decks[deck.index()];
                     let packed = s.cues[index as usize].load(Ordering::Relaxed);
                     if packed > 0 {
-                        let from = s.playhead.load(Ordering::Relaxed);
-                        let to = packed - 1;
-                        s.seek_from.store(from, Ordering::Relaxed);
-                        s.seek_to.store(to * 65536, Ordering::Relaxed);
-                        s.seek_pending.store(true, Ordering::Release);
+                        s.seek_cue(packed - 1);
+                    }
+                }
+            }
+            Command::TriggerTemporaryCue { deck } => {
+                let s = &self.decks[deck.index()];
+                if s.frames.load(Ordering::Relaxed) == 0 {
+                    return;
+                }
+                let packed = s.temporary_cue.load(Ordering::Relaxed);
+                if packed == 0 {
+                    s.temporary_cue
+                        .store(s.playhead_frames() as u64 + 1, Ordering::Relaxed);
+                } else {
+                    s.seek_cue(packed - 1);
+                }
+            }
+            Command::ClearTemporaryCue { deck } => {
+                self.decks[deck.index()]
+                    .temporary_cue
+                    .store(0, Ordering::Relaxed);
+            }
+            Command::SetCueKind {
+                track_id,
+                index,
+                kind,
+            } => {
+                if (index as usize) < 8 {
+                    for slot in &self.decks {
+                        if slot.track_id.load(Ordering::Acquire) == track_id.0 as u64 {
+                            slot.cue_kinds[index as usize].store(
+                                match kind {
+                                    CueKind::Hot => 0,
+                                    CueKind::In => 1,
+                                    CueKind::Out => 2,
+                                },
+                                Ordering::Relaxed,
+                            );
+                        }
                     }
                 }
             }
@@ -328,6 +382,7 @@ impl Shared {
             Command::ClearCue { deck, index } => {
                 if (index as usize) < 8 {
                     self.decks[deck.index()].cues[index as usize].store(0, Ordering::Relaxed);
+                    self.decks[deck.index()].cue_kinds[index as usize].store(0, Ordering::Relaxed);
                 }
             }
             Command::BeatJump { deck, bars } => {
@@ -358,8 +413,16 @@ impl Shared {
             Command::LoopHalve { deck } | Command::LoopDouble { deck } => {
                 let slot = &self.decks[deck.index()];
                 let beats = slot.loop_sixteenths.load(Ordering::Relaxed) as f32 / 16.;
-                let factor = if matches!(cmd, Command::LoopHalve { .. }) { 0.5 } else { 2. };
-                self.configure_loop(deck.index(), (beats * factor).clamp(0.0625, 64.), slot.loop_on.load(Ordering::Relaxed));
+                let factor = if matches!(cmd, Command::LoopHalve { .. }) {
+                    0.5
+                } else {
+                    2.
+                };
+                self.configure_loop(
+                    deck.index(),
+                    (beats * factor).clamp(0.0625, 64.),
+                    slot.loop_on.load(Ordering::Relaxed),
+                );
             }
             _ => {}
         }

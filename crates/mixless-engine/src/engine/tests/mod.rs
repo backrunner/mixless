@@ -1,5 +1,6 @@
 //! Shared offline fixtures for behavioral engine tests.
 
+mod cues;
 mod fx;
 mod output;
 mod performance;

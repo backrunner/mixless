@@ -120,10 +120,14 @@ impl UiState {
             .gap_2()
             .flex_none()
             .child(focus_btn)
-            .when(self.automix_active && d.automix_cue_frame.is_some(), |el| el.child(
-                gpui::div().text_size(px(8.)).text_color(theme::WARN)
-                    .child(if d.playing { "AUTO" } else { "AUTO CUE" })
-            ))
+            .when(self.automix_active && d.automix_cue_frame.is_some(), |el| {
+                el.child(
+                    gpui::div()
+                        .text_size(px(8.))
+                        .text_color(theme::WARN)
+                        .child(if d.playing { "AUTO" } else { "AUTO CUE" }),
+                )
+            })
             .child(
                 gpui::div()
                     .flex()
@@ -137,7 +141,7 @@ impl UiState {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
                             .overflow_hidden()
-                            .child(d.title.clone().unwrap_or_else(|| "— empty —".into())),
+                            .child(d.title.clone().unwrap_or_default()),
                     )
                     .child(
                         gpui::div()

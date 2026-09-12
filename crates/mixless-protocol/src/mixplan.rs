@@ -186,8 +186,18 @@ pub struct MixPlanSummary {
     pub length_bars: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MixStage {
+    pub start_bar: f32,
+    pub end_bar: f32,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MixPlan {
+    /// Human-readable stages corresponding to the actual control envelopes.
+    #[serde(default)]
+    pub stages: Vec<MixStage>,
     pub summary: Option<MixPlanSummary>,
     pub incoming_offset_end: PerformanceOffset,
     #[serde(default)]
@@ -235,6 +245,12 @@ pub struct MixPlan {
 impl MixPlan {
     pub fn duration_sec(&self) -> f32 {
         self.clock.nodes.last().map_or(0.0, |n| n.1)
+    }
+    pub fn stage_at_elapsed(&self, seconds: f32) -> Option<&MixStage> {
+        self.stages.iter().find(|stage| {
+            seconds >= self.clock.sample(stage.start_bar)
+                && seconds < self.clock.sample(stage.end_bar)
+        })
     }
     pub fn master_at(&self, bar: f32) -> DeckId {
         if self.handoff_bar.is_some_and(|at| bar >= at) {

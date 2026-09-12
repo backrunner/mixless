@@ -1,79 +1,62 @@
-//! Offline overview-waveform extraction. Runs on the caller thread at load
-//! time, never on the audio callback.
-
+//! Offline high-resolution envelopes and time-smoothed four-band energy.
+use crate::{decode::AudioBuffer, dsp::Biquad};
 use mixless_protocol::Waveform;
 
-use crate::decode::AudioBuffer;
-use crate::dsp::Biquad;
-
-/// Band split points (Hz) for the low/mid/high coloring, close to what
-/// DJ software uses for its red/green/blue waveform tinting.
-const LOW_HZ: f32 = 250.0;
-const HIGH_HZ: f32 = 2_500.0;
-
-/// Compute an overview waveform with `columns` columns from a decoded buffer.
-///
-/// Single pass: each stereo channel runs through a low-pass and a high-pass so
-/// each column can report how its energy splits across bands. Peaks are
-/// normalized to the track maximum; band shares are per-column ratios.
+/// Independent band filters avoid the phase cancellation of `x - low - high`.
+/// Only spectral color is smoothed; attack locations retain sample-bin accuracy.
 pub fn compute_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
     let frames = buf.frames as usize;
-    let columns = columns.max(1);
-    let duration_sec = frames as f32 / buf.sample_rate.max(1) as f32;
-    if frames == 0 {
-        return Waveform {
-            columns: columns as u32,
-            duration_sec,
-            peak: vec![0; columns],
-            peak_pos: vec![0; columns],
-            peak_neg: vec![0; columns],
-            rms: vec![0; columns],
-            low: vec![0; columns],
-            mid: vec![0; columns],
-            high: vec![0; columns],
-        };
+    let columns = columns.max(1).min(frames.max(1));
+    let sr = buf.sample_rate.max(1) as f32;
+    let duration_sec = frames as f32 / sr;
+    let q = std::f32::consts::FRAC_1_SQRT_2;
+    let mut low = std::array::from_fn::<_, 2, _>(|_| Biquad::lowpass(sr, 180., q));
+    let mut low_mid = std::array::from_fn::<_, 2, _>(|_| {
+        [Biquad::highpass(sr, 180., q), Biquad::lowpass(sr, 800., q)]
+    });
+    let mut mid = std::array::from_fn::<_, 2, _>(|_| {
+        [Biquad::highpass(sr, 800., q), Biquad::lowpass(sr, 4000., q)]
+    });
+    let mut high = std::array::from_fn::<_, 2, _>(|_| Biquad::highpass(sr, 4000., q));
+    let mut envelope = vec![[0f32; 3]; columns];
+    let mut energy = vec![[0f64; 4]; columns];
+    for c in 0..columns {
+        let first = (c * frames).div_ceil(columns);
+        let last = ((c + 1) * frames).div_ceil(columns);
+        for frame in buf.samples[first * 2..last * 2].chunks_exact(2) {
+            for ch in 0..2 {
+                let x = frame[ch];
+                envelope[c][0] = envelope[c][0].max(x.max(0.));
+                envelope[c][1] = envelope[c][1].max((-x).max(0.));
+                envelope[c][2] += x * x;
+                let lm = low_mid[ch][0].process(x);
+                let m = mid[ch][0].process(x);
+                let bands = [
+                    low[ch].process(x),
+                    low_mid[ch][1].process(lm),
+                    mid[ch][1].process(m),
+                    high[ch].process(x),
+                ];
+                for band in 0..4 {
+                    energy[c][band] += bands[band] as f64 * bands[band] as f64;
+                }
+            }
+        }
+        envelope[c][2] = (envelope[c][2] / ((last - first) * 2).max(1) as f32).sqrt();
     }
-
-    let sr = buf.sample_rate as f32;
-    let mut lp = std::array::from_fn::<_, 2, _>(|_| {
-        Biquad::lowpass(sr, LOW_HZ, std::f32::consts::FRAC_1_SQRT_2)
-    });
-    let mut hp = std::array::from_fn::<_, 2, _>(|_| {
-        Biquad::highpass(sr, HIGH_HZ, std::f32::consts::FRAC_1_SQRT_2)
-    });
-
-    let per_col = frames as f64 / columns as f64;
-    let mut peak_pos = vec![0.0f32; columns];
-    let mut peak_neg = vec![0.0f32; columns];
-    let mut sum_sq = vec![0.0f32; columns];
-    let mut sample_count = vec![0u32; columns];
-    let mut e_low = vec![0.0f32; columns];
-    let mut e_mid = vec![0.0f32; columns];
-    let mut e_high = vec![0.0f32; columns];
-
-    for i in 0..frames {
-        let c = ((i as f64 / per_col) as usize).min(columns - 1);
-        for ch in 0..2 {
-            let x = buf.samples[i * 2 + ch];
-            let low = lp[ch].process(x);
-            let high = hp[ch].process(x);
-            let mid = x - low - high;
-            peak_pos[c] = peak_pos[c].max(x.max(0.0));
-            peak_neg[c] = peak_neg[c].max((-x).max(0.0));
-            sum_sq[c] += x * x;
-            sample_count[c] += 1;
-            e_low[c] += low * low;
-            e_mid[c] += mid * mid;
-            e_high[c] += high * high;
+    // Centered 16 ms energy window: a sustained bass note keeps one color as
+    // its waveform crosses zero. Prefix sums keep extraction linear in length.
+    let mut sums = vec![[0f64; 4]; columns + 1];
+    for i in 0..columns {
+        for band in 0..4 {
+            sums[i + 1][band] = sums[i][band] + energy[i][band];
         }
     }
-
-    let max_peak = peak_pos
+    let radius = (0.008 * columns as f32 / duration_sec.max(0.001)).ceil() as usize;
+    let max_peak = envelope
         .iter()
-        .chain(peak_neg.iter())
-        .copied()
-        .fold(0.0f32, f32::max)
-        .max(1e-6);
+        .flat_map(|p| [p[0], p[1]])
+        .fold(1e-6f32, f32::max);
     let mut out = Waveform {
         columns: columns as u32,
         duration_sec,
@@ -82,33 +65,32 @@ pub fn compute_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
         peak_neg: Vec::with_capacity(columns),
         rms: Vec::with_capacity(columns),
         low: Vec::with_capacity(columns),
+        low_mid: Vec::with_capacity(columns),
         mid: Vec::with_capacity(columns),
         high: Vec::with_capacity(columns),
+        detail_pos: Vec::with_capacity(columns),
+        detail_neg: Vec::with_capacity(columns),
+        detail_rms: Vec::with_capacity(columns),
     };
     for c in 0..columns {
-        let pos = (peak_pos[c] / max_peak * 255.0).round() as u8;
-        let neg = (peak_neg[c] / max_peak * 255.0).round() as u8;
-        out.peak_pos.push(pos);
-        out.peak_neg.push(neg);
-        out.peak.push(pos.max(neg));
-        let rms = if sample_count[c] > 0 {
-            (sum_sq[c] / sample_count[c] as f32).sqrt()
-        } else {
-            0.0
-        };
-        out.rms
-            .push((rms / max_peak * 255.0).clamp(0.0, 255.0).round() as u8);
-        let total = e_low[c] + e_mid[c] + e_high[c];
-        if total > 1e-9 {
-            out.low.push((e_low[c] / total * 255.0).round() as u8);
-            out.mid.push((e_mid[c] / total * 255.0).round() as u8);
-            out.high.push((e_high[c] / total * 255.0).round() as u8);
-        } else {
-            // Silent column: neutral gray tint.
-            out.low.push(85);
-            out.mid.push(85);
-            out.high.push(85);
-        }
+        let detail = envelope[c].map(|v| (v / max_peak * 65535.).clamp(0., 65535.).round() as u16);
+        let coarse = detail.map(|v| ((v as u32 + 128) / 257) as u8);
+        out.peak.push(coarse[0].max(coarse[1]));
+        out.peak_pos.push(coarse[0]);
+        out.peak_neg.push(coarse[1]);
+        out.rms.push(coarse[2]);
+        out.detail_pos.push(detail[0]);
+        out.detail_neg.push(detail[1]);
+        out.detail_rms.push(detail[2]);
+        let left = c.saturating_sub(radius);
+        let right = (c + radius + 1).min(columns);
+        let e: [f64; 4] = std::array::from_fn(|b| (sums[right][b] - sums[left][b]).max(0.));
+        let total = e.iter().sum::<f64>().max(1e-20);
+        let bands = e.map(|v| (v / total * 255.).round() as u8);
+        out.low.push(bands[0]);
+        out.low_mid.push(bands[1]);
+        out.mid.push(bands[2]);
+        out.high.push(bands[3]);
     }
     out
 }
@@ -131,6 +113,34 @@ mod tests {
             frames: frames as u64,
             sample_rate: sr,
         })
+    }
+
+    #[test]
+    fn mid_bands_are_separate_and_detail_keeps_more_than_eight_bits() {
+        let lm = compute_waveform(&tone(48000, 400., 0.2), 300);
+        let hm = compute_waveform(&tone(48000, 1800., 0.2), 300);
+        assert!(lm.low_mid[150] > lm.low[150] && lm.low_mid[150] > lm.mid[150]);
+        assert!(hm.mid[150] > hm.low_mid[150] && hm.mid[150] > hm.high[150]);
+        let buf = AudioBuffer {
+            samples: (0..1024).flat_map(|i| [i as f32 / 2048.; 2]).collect(),
+            frames: 1024,
+            sample_rate: 48000,
+        };
+        let ramp = compute_waveform(&buf, 1024);
+        assert!(ramp.detail_pos.windows(2).all(|v| v[1] > v[0]));
+        assert!(ramp.peak_pos.windows(2).any(|v| v[1] == v[0]));
+    }
+
+    #[test]
+    fn short_audio_has_no_empty_columns_before_its_first_sample() {
+        let buf = AudioBuffer {
+            samples: vec![0.25; 16],
+            frames: 8,
+            sample_rate: 48_000,
+        };
+        let wave = compute_waveform(&buf, 4096);
+        assert_eq!(wave.columns, 8);
+        assert!(wave.peak.iter().all(|p| *p == 255));
     }
 
     #[test]

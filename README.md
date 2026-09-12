@@ -68,7 +68,8 @@ Choose **Mixless > Preferences...** in the macOS menu bar or press **Cmd+,**.
 The single preferences window contains General, Audio I/O and MIDI Mapping tabs.
 
 - General saves waveform layout, FX visibility, quantize, key lock, vinyl/slip,
-  crossfader curve and reverse. Changes also apply to the current session.
+  crossfader curve and reverse. Filter / EQ resonance is enabled by default and
+  can be disabled here. Changes also apply to the current session.
 - Audio I/O selects the master and a separate headphone output, sample rate
   (up to 96 kHz), buffer size and headphone volume. **Apply audio** reopens the
   streams; unavailable devices or unsupported formats report an error and retain
@@ -94,21 +95,37 @@ The highlighted deck receives selected-deck commands; **Tab** switches A/B.
 | --- | --- |
 | Space | Play/pause selected deck |
 | Z / X | Play/pause deck A / B |
-| C | Jump to cue 1, or set it if empty |
+| C / Shift+C | Set or return to temporary Cue / clear it |
 | G | Quickly set the next empty cue pad |
 | 1–8 | Selected deck hot cues 1–8 |
 | Q W E R / U I O P | Deck A / B hot cues 1–4 |
-| Shift + cue key (including C) | Set/replace that cue at the current playhead |
+| Shift + numbered cue key | Choose AUTO / IN / OUT for that saved Cue |
 | S | Sync selected deck |
 | L | Toggle selected deck loop |
-| [ / ] | Halve/double loop size, from 1 to 16 bars |
+| [ / ] | Halve/double loop size, from 1/16 to 64 beats |
 | Left / Right | Jump backward/forward 1 bar |
 | Shift + Left / Right | Jump backward/forward 4 bars |
 | F | Center crossfader |
 | Escape | Close the open panel |
 
-Empty cue pads set a point on first use; existing cues jump without changing
-play/pause. Mouse clicks use the same behavior, including Shift to replace.
+Empty cue pads save the current position; existing pads jump on mouse-down without
+changing playback. Click **SHIFT** to the left of SYNC, then a pad, to choose its
+Automix role: **AUTO**, **IN**, or **OUT**. The keyboard Shift modifier works too.
+Changing a role keeps the saved position. Right-click a pad to delete it; the next
+ordinary press records a new position. Analysis fills unused pads without replacing manual edits.
+
+The transport **CUE** is a separate, deck-local temporary point: first press saves
+it, subsequent presses return immediately, and holding 400 ms clears it. A **T**
+flag marks it in the scrolling waveform. Loading another track clears it.
+During playback, a short Play click stops on release; holding 400 ms triggers a
+1.2-second vinyl brake with falling speed and pitch, including with Key Lock on.
+Press Play again to resume at the saved tempo/key settings.
+
+Starting AUTO with empty decks starts the first playable song in list order,
+including when Shuffle is on. A short entrance follows audio progress, raising
+Level and optionally opening Filter for a percussive, low-vocal intro. Later
+songs follow the selected sequence/shuffle mode and loop continuously.
+
 Cue points are saved with the track. G leaves existing cues intact when all
 8 slots are full. Shortcuts do not run in import/help dialogs or file pickers,
 and holding a key does not repeatedly trigger an action.
@@ -116,21 +133,40 @@ and holding a key does not repeatedly trigger an action.
 The library fills the remaining window height. Use **+ Files** or **+ Folder**
 for local imports (folders include subfolders; duplicate paths are skipped),
 or **Spotify** for playlist import and progress details. Each local folder is
-its own playlist under **LOCAL FOLDERS**: tracks belong to their immediate
-parent folder, so nested folders and equally named folders at different paths
-stay separate. Reimports add files without duplicating or clearing existing
+its own playlist under **LOCAL FOLDERS**: the selected root includes its subfolders,
+and immediate parent folders also remain separately selectable. Folder labels
+use the shortest unique name; hover reveals the full path. Reimports add files without duplicating or clearing existing
 members. Existing local tracks are grouped on the next launch. Startup and
 completed imports select a playlist; **All Tracks** is an explicit combined view.
 Native file
-selection is asynchronous and folder scanning runs on a worker. Drag a library
+selection is asynchronous and folder scanning publishes rows in batches before
+musical analysis completes. Additional imports can be queued while importing.
+Drag a library
 track onto either deck to load it; the receiving deck highlights during the drag.
-Loading a track manually takes over from Automix.
+Loading a track manually takes over from Automix. A and B can load independently;
+audio becomes playable after decoding and waveform preparation, with beat/key
+analysis attached when ready. Loaded rows show A/B badges.
 
-The waveform uses a symmetric peak envelope colored by low/mid/high spectral
-energy, with a darker RMS body and a fixed playhead. Beat and downbeat markers
-come from stored analysis; tracks without a measured grid show no invented bar
-lines. Tempo changes preserve the source-time grid. This is an independent
-renderer inspired by DJ workstations, not a pixel-identical reproduction.
+Jog platters show the track's embedded cover inside a circular hub, with a
+separate progress ring and rotating position marker. Covers are cropped and
+resized on a background worker, and decoded previews are shared across decks
+and repeat loads. Changing the visible folder keeps the loaded cover; missing
+or unreadable artwork falls back to the default platter. The marker uses the
+waveform's interpolated playback clock. Scratching works over the cover, and
+the outer rim pulses red with a countdown near the end of a playing track.
+
+The waveform uses 16-bit positive/negative envelopes and a darker RMS body.
+Four independent spectral bands map bass to red, low-mid to yellow, high-mid
+to green and treble to blue, following djay's documented color convention.
+Only color energy is time-smoothed; transient positions keep source-bin precision.
+Detailed data (32 source frames per bin, capped at 1,048,576 bins) persists in
+the library. Background workers build multiresolution levels; drawing interpolates
+between bins and levels on screen-aligned columns with antialiased edge coverage.
+The display head interpolates from CoreAudio playback timestamps between blocks,
+and falls back to engine position during seek, pause, scratch or device stalls.
+A stable zoom scale avoids breathing with local BPM estimates. The pointer stays
+fixed at the center from the first frame, including after a cue jump. Beat and downbeat markers use stored analysis;
+tracks without a measured grid show no invented bar lines.
 
 Drag a horizontal or vertical waveform to move the audio beneath its fixed
 playhead. Release preserves play/pause and commits the final pointer position.
@@ -156,13 +192,26 @@ Research sources, behavior and limitations are in [BEAT_SYNC.md](BEAT_SYNC.md).
 
 ## Automix
 
-The `AUTO` control plans one outgoing/incoming pair at a time. It loads the
+Selecting a playlist prepares its analyses and adjacent transitions, including
+the last-to-first transition, in the background. `AUTO` can be enabled or disabled
+during playback. It repeats the list indefinitely in sequential or shuffled order;
+each shuffle cycle visits every entry before reshuffling. Files appended during
+import join the running queue at the next handoff. The `AUTO` control executes
+one outgoing/incoming pair at a time. It loads the
 next local track in the idle deck, resolves the next transition from the
 offline analyses and compiles the envelope into the audio thread. `PAUSE`,
 `RESUME`, `SKIP` and direct fader/EQ/filter edits are available while a plan is
 running; editing a lane takes over that lane only. User mix-in/mix-out cues are
 hard constraints, hot cues are soft anchors, and an impossible cue window is
 reported instead of bypassed.
+Analysis keeps several entry/exit regions with local key, vocal, rhythm and
+energy evidence. Pair planning compares these windows before selecting the cue
+and technique. Musical spans can include long 24/48/64-bar layered blends, with separate high/bass/mid exchanges, nonlinear Level/filter/crossfader curves and optional echo exits. The library shows full-track, fixed-width waveforms with numbered colored cue flags. While the incoming deck is paused, AUTO sets its cue, tempo,
+key lock, optional harmonic shift (at most two semitones), EQ and closed level.
+During the handoff the engine drives transport, filter, EQ, channel fader,
+crossfader and selected FX. The transition strip shows the selected source
+windows, countdown/progress, technique and live incoming controls; those windows
+are highlighted on the waveforms. Decks flash red with a countdown near the end.
 
 For a device-free preview from two files:
 
@@ -181,6 +230,11 @@ Performance measurements and the model roadmap are in
 
 Implementation details, verification and current limitations are in
 [AUTOMIX.md](AUTOMIX.md).
+
+The desktop interaction and performance checks are recorded in
+[DJ_WORKSPACE_CHECKS.md](DJ_WORKSPACE_CHECKS.md). Set `MIXLESS_PROFILE_UI=1` when
+launching to log CPU draw p50/p99 and observed frame intervals every 240 frames;
+these timings do not measure GPU presentation or establish listening quality.
 
 Audio DSP behavior, regression checks and remaining limitations are documented
 in [AUDIO_DSP.md](AUDIO_DSP.md).

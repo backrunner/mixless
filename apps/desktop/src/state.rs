@@ -1,6 +1,12 @@
 //! Shared app core + UI state. The engine/library live behind `Arc` so
 //! background threads can import and load tracks without blocking the UI.
 
+mod artwork;
+mod cues;
+mod transport;
+pub use transport::TransportButton;
+mod library_refresh;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -46,8 +52,13 @@ enum ImportRequest {
 
 pub fn app_core() -> Arc<AppCore> {
     // Same data dir as the previous Tauri build, so libraries carry over.
-    let data_dir = std::env::var_os("MIXLESS_DATA_DIR").map(PathBuf::from).unwrap_or_else(||
-        dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("app.mixless.desktop"));
+    let data_dir = std::env::var_os("MIXLESS_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("app.mixless.desktop")
+        });
     std::fs::create_dir_all(&data_dir).ok();
     let acquired_dir = data_dir.join("acquired");
     std::fs::create_dir_all(&acquired_dir).ok();
@@ -195,7 +206,9 @@ impl FaderCtl {
 
 pub struct UiState {
     pub library_view: gpui::Entity<crate::views::library::LibraryView>,
+    pub library_previews: crate::wave::preview::PreviewStore,
     pub library_key: Option<crate::views::library::LibraryKey>,
+    library_refresh: library_refresh::LibraryRefresh,
     settings_revision: u64,
     pub analysis_revision: u64,
     pub core: Arc<AppCore>,
@@ -221,10 +234,19 @@ pub struct UiState {
     pub fx: [[FxState; FxSlot::INSERTS.len()]; 2],
     pub fx_editor: Option<(DeckId, usize)>,
     pub wave: [Option<(i64, Arc<Waveform>)>; 2],
+    pub wave_cache: [Option<Arc<crate::wave::WaveCache>>; 2],
+    pub presentation_frames: [f64; 2],
+    pub deck_artwork: [artwork::DeckArtwork; 2],
+    artwork_cache: Arc<artwork::ArtworkCache>,
+    wave_cache_rx: [Option<Receiver<Arc<crate::wave::WaveCache>>>; 2],
     pub wave_tempo: [Option<Arc<TempoMap>>; 2],
     grid_rx: [Option<Receiver<Result<TempoMap, String>>>; 2],
-    deck_load_rx: Option<Receiver<Result<(), String>>>,
+    deck_load_rx: [Option<Receiver<Result<(), String>>>; 2],
+    deck_load_epoch: Arc<[AtomicU64; 2]>,
     sync_request: Option<crate::beat_sync::SyncRequest>,
+    pub cue_shift: [bool; 2],
+    pub cue_role_editor: [Option<(usize, TrackId)>; 2],
+    transport_press: Option<transport::TransportPress>,
     pub drag: Option<DragCtl>,
     pub pending_drag: Option<(f32, f32)>,
     /// `(deck, slot, was_on)` for the FX button currently held by the mouse.
@@ -237,6 +259,7 @@ pub struct UiState {
     pub automix_active: bool,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
+    pub automix_plan: Option<(DeckId, Arc<mixless_protocol::MixPlan>)>,
     automix_epoch: Arc<AtomicU64>,
     automix_rx: Option<Receiver<crate::automix::AutomixMsg>>,
 }
@@ -257,6 +280,8 @@ impl UiState {
         Self {
             library_view,
             library_key: None,
+            library_previews: Default::default(),
+            library_refresh: library_refresh::LibraryRefresh::default(),
             settings_revision: 0,
             analysis_revision: 0,
             core: core.clone(),
@@ -285,10 +310,19 @@ impl UiState {
             ],
             fx_editor: None,
             wave: [None, None],
+            wave_cache: [None, None],
+            presentation_frames: [0.; 2],
+            deck_artwork: Default::default(),
+            artwork_cache: Default::default(),
+            wave_cache_rx: [None, None],
             wave_tempo: [None, None],
             grid_rx: [None, None],
-            deck_load_rx: None,
+            deck_load_rx: [None, None],
+            deck_load_epoch: Arc::new(std::array::from_fn(|_| AtomicU64::new(0))),
             sync_request: None,
+            cue_shift: [false; 2],
+            cue_role_editor: [None; 2],
+            transport_press: None,
             drag: None,
             pending_drag: None,
             momentary_fx: None,
@@ -298,6 +332,7 @@ impl UiState {
             automix_active: false,
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
+            automix_plan: None,
             automix_epoch: Arc::new(AtomicU64::new(0)),
             automix_rx: None,
         }
@@ -323,6 +358,12 @@ impl UiState {
     }
 
     pub fn play_pause(&mut self, deck: DeckId) {
+        if self.core.engine.snapshot().deck(deck).frames == 0 {
+            return;
+        }
+        if self.automix_active {
+            self.stop_automix();
+        }
         self.dispatch(Command::PlayPause { deck });
     }
 
@@ -360,6 +401,9 @@ impl UiState {
     }
 
     pub fn jump_cue(&mut self, deck: DeckId, index: usize) {
+        if self.automix_active {
+            self.stop_automix();
+        }
         self.dispatch(Command::JumpCue {
             deck,
             index: index as u8,
@@ -367,34 +411,22 @@ impl UiState {
     }
 
     /// Empty pads set a cue; populated pads jump without changing playback.
-    pub fn trigger_cue(&mut self, deck: DeckId, index: usize, replace: bool) {
+    pub fn trigger_cue(&mut self, deck: DeckId, index: usize, shift: bool) {
         let snapshot = self.core.engine.snapshot();
         let d = &snapshot.decks[deck.index()];
         if index >= d.cues.len() || d.track_id.is_none() {
             return;
         }
-        if replace || d.cues[index].is_none() {
+        if shift || self.cue_shift[deck.index()] {
+            if d.cues[index].is_none() {
+                self.set_cue_now(deck, index);
+            }
+            self.cue_role_editor[deck.index()] = Some((index, d.track_id.unwrap()));
+            self.cue_shift[deck.index()] = false;
+        } else if d.cues[index].is_none() {
             self.set_cue_now(deck, index);
         } else {
             self.jump_cue(deck, index);
-        }
-    }
-
-    pub fn set_cue_now(&mut self, deck: DeckId, index: usize) {
-        let snapshot = self.core.engine.snapshot();
-        let d = &snapshot.decks[deck.index()];
-        let Some(id) = d.track_id else { return };
-        if index >= d.cues.len() {
-            return;
-        }
-        let frame = d.frame;
-        self.core.engine.set_cue_frame(deck, index as u8, frame);
-        if let Err(error) = self
-            .core
-            .library
-            .set_cue(id, index as u8, frame, CueKind::Hot, true)
-        {
-            self.error = format!("Could not save cue {}: {error}", index + 1).into();
         }
     }
 
@@ -835,60 +867,77 @@ impl UiState {
 
     /* ---- library --------------------------------------------------------- */
 
-    pub fn refresh_tracks(&mut self) {
-        self.playlist_issues = self
-            .playlist_sel
-            .and_then(|id| self.core.library.import_items(PlaylistId(id)).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|item| !matches!(item.status.as_str(), "local" | "acquired"))
-            .collect();
-        match if let Some(id) = self.playlist_sel {
-            self.core
-                .library
-                .playlist_tracks(PlaylistId(id))
-                .map_err(|e| e.to_string())
-        } else {
-            self.core.library.list_tracks().map_err(|e| e.to_string())
-        } {
-            Ok(list) => {
-                crate::analysis::schedule(&self.core, &list);
-                crate::automix::prepare_playlist(&self.core, list.iter().map(|t| t.id).collect());
-                self.tracks = Arc::new(list)
-            }
-            Err(e) => {
-                self.tracks = Arc::new(Vec::new());
-                self.track_sel = None;
-                self.error = e.into();
-            }
-        }
-    }
-
-    pub fn refresh_playlists(&mut self) {
-        match self.core.library.list_playlists() {
-            Ok(list) => self.playlists = Arc::new(list),
-            Err(e) => self.error = e.to_string().into(),
-        }
-    }
-
     pub fn select_playlist(&mut self, id: Option<i64>) {
+        self.library_refresh.initial = false;
         self.playlist_sel = id;
         self.track_sel = None;
+        self.tracks = Arc::new(Vec::new());
         self.refresh_tracks();
     }
 
     pub fn load_deck(&mut self, deck: DeckId, track_id: TrackId) {
         self.sync_request = None;
-        if self.deck_load_rx.is_some() {
-            return;
-        }
         self.stop_automix();
+        let index = deck.index();
+        let generation = self.deck_load_epoch[index].fetch_add(1, Ordering::AcqRel) + 1;
+        let epoch = self.deck_load_epoch.clone();
         let core = self.core.clone();
         let (tx, rx) = channel();
-        self.deck_load_rx = Some(rx);
+        let (grid_tx, grid_rx) = channel();
+        self.deck_load_rx[index] = Some(rx);
+        self.grid_rx[index] = Some(grid_rx);
+        self.error = "".into();
         std::thread::spawn(move || {
-            let result = load_deck_blocking(&core, deck, track_id);
-            let _ = tx.send(result);
+            let active = || epoch[index].load(Ordering::Acquire) == generation;
+            let loaded_hash = match crate::analysis::load_manual(&core, deck, track_id, &active) {
+                Ok(Some(hash)) => {
+                    let _ = tx.send(Ok(()));
+                    hash
+                }
+                Ok(None) => return,
+                Err(error) => {
+                    let _ = tx.send(Err(error));
+                    return;
+                }
+            };
+            let grid = (|| {
+                let prepared = crate::analysis::prepare(&core, track_id)?;
+                if prepared.track.content_hash != loaded_hash {
+                    return Err("File changed after loading; reload the track".into());
+                }
+                let _commit = core
+                    .automix_commit
+                    .lock()
+                    .map_err(|_| "Deck load lock poisoned")?;
+                if !active() {
+                    return Err("Load replaced".into());
+                }
+                if prepared.analysis.tempo.beats.len() >= 2 {
+                    core.engine
+                        .set_beat_grid(deck, track_id, prepared.analysis.tempo.clone())
+                        .map_err(|e| e.to_string())?;
+                }
+                core.engine
+                    .set_bpm(deck, prepared.analysis.tempo.global_bpm);
+                for cue in core.library.cues(track_id).map_err(|e| e.to_string())? {
+                    core.engine.set_cue_frame(deck, cue.index, cue.frame);
+                    let _ = core.engine.dispatch(mixless_protocol::Command::SetCueKind {
+                        track_id,
+                        index: cue.index,
+                        kind: if cue.user_set {
+                            cue.kind
+                        } else {
+                            mixless_protocol::CueKind::Hot
+                        },
+                    });
+                }
+                core.analysis.loaded.lock().expect("loaded analysis")[index] =
+                    Some(prepared.clone());
+                Ok(prepared.analysis.tempo.clone())
+            })();
+            if active() {
+                let _ = grid_tx.send(grid);
+            }
         });
     }
 
@@ -898,31 +947,28 @@ impl UiState {
             self.stop_automix();
             return;
         }
-        let tracks: Vec<_> = if let Some(id) = self.playlist_sel {
-            match self.core.library.playlist_tracks(PlaylistId(id)) {
-                Ok(tracks) => tracks.into_iter().map(|track| track.id).collect(),
-                Err(error) => {
-                    self.error = error.to_string().into();
-                    return;
-                }
-            }
-        } else {
-            self.tracks.iter().map(|track| track.id).collect()
-        };
+        let tracks: Vec<_> = self.tracks.iter().map(|track| track.id).collect();
         if tracks.is_empty() {
             self.error = "Import a track to start Automix".into();
             return;
         }
+        for epoch in self.deck_load_epoch.iter() {
+            epoch.fetch_add(1, Ordering::AcqRel);
+        }
+        self.deck_load_rx = [None, None];
+        self.grid_rx = [None, None];
         let generation = self.automix_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         self.automix_active = true;
-        self.automix_status = "Preparing the next track".into();
+        self.automix_status = "Loading next track".into();
         self.error = "".into();
         let (tx, rx) = channel();
         self.automix_rx = Some(rx);
         let core = self.core.clone();
         let epoch = self.automix_epoch.clone();
         let shuffle = self.automix_shuffle.clone();
-        std::thread::spawn(move || crate::automix::run(core, tracks, shuffle, epoch, generation, tx));
+        std::thread::spawn(move || {
+            crate::automix::run(core, tracks, shuffle, epoch, generation, tx)
+        });
     }
 
     pub fn stop_automix(&mut self) {
@@ -931,6 +977,7 @@ impl UiState {
         self.automix_epoch.fetch_add(1, Ordering::AcqRel);
         self.automix_active = false;
         self.automix_status.clear();
+        self.automix_plan = None;
         self.automix_rx = None;
         self.dispatch(Command::StopAutomix);
     }
@@ -976,19 +1023,25 @@ impl UiState {
     }
 
     pub fn import_files(&mut self, paths: Vec<PathBuf>) {
-        if paths.is_empty() { return; }
+        if paths.is_empty() {
+            return;
+        }
         // Publish selected directories immediately, including queued and empty ones.
         let mut first = None;
         for path in &paths {
             if path.is_dir() {
                 match self.core.library.register_folder(path) {
-                    Ok(id) => { first.get_or_insert(id); }
+                    Ok(id) => {
+                        first.get_or_insert(id);
+                    }
                     Err(error) => self.error = error.to_string().into(),
                 }
             }
         }
         self.refresh_playlists();
-        if let Some(id) = first { self.select_playlist(Some(id.0)); }
+        if let Some(id) = first {
+            self.select_playlist(Some(id.0));
+        }
         self.import_queue.push_back(ImportRequest::Local(paths));
         self.start_next_import();
     }
@@ -998,15 +1051,33 @@ impl UiState {
         self.start_next_import();
     }
 
+    pub fn import_status(&self) -> SharedString {
+        if self.import_queue.is_empty() {
+            return self.acquire.clone();
+        }
+        format!(
+            "{} · {} imports queued",
+            self.acquire,
+            self.import_queue.len()
+        )
+        .into()
+    }
+
     fn start_next_import(&mut self) {
-        if self.import_rx.is_some() { return; }
-        let Some(request) = self.import_queue.pop_front() else { self.busy = false; return };
+        if self.import_rx.is_some() {
+            return;
+        }
+        let Some(request) = self.import_queue.pop_front() else {
+            self.busy = false;
+            return;
+        };
         self.busy = true;
         self.error = "".into();
         self.acquire = match &request {
             ImportRequest::Local(_) => "Finding audio files",
             ImportRequest::Spotify(_) => "Reading playlist",
-        }.into();
+        }
+        .into();
         let (tx, rx) = channel();
         self.import_rx = Some(rx);
         let core = self.core.clone();
@@ -1017,11 +1088,30 @@ impl UiState {
     }
 
     pub fn poll(&mut self) -> bool {
-        let mut changed = false;
+        let mut changed = self.poll_transport_press();
+        changed |= self.poll_library();
+        if self.library_previews.poll() {
+            self.library_key = None;
+            changed = true;
+        }
         let analysis_revision = self.core.analysis.revision.load(Ordering::Acquire);
         if self.analysis_revision != analysis_revision {
             self.analysis_revision = analysis_revision;
-            self.refresh_tracks();
+            let updates = self.core.analysis.take_updates();
+            for id in updates.keys() {
+                self.library_previews.invalidate(*id);
+            }
+            if self
+                .tracks
+                .iter()
+                .any(|track| updates.contains_key(&track.id))
+            {
+                for track in Arc::make_mut(&mut self.tracks) {
+                    if let Some(updated) = updates.get(&track.id) {
+                        *track = updated.clone();
+                    }
+                }
+            }
             if !self.busy {
                 self.acquire = self.core.analysis.summary().into();
             }
@@ -1041,6 +1131,13 @@ impl UiState {
                 changed = true;
                 match message {
                     crate::automix::AutomixMsg::Status(status) => self.automix_status = status,
+                    crate::automix::AutomixMsg::Preparing(title) => {
+                        self.automix_plan = None;
+                        self.automix_status = format!("Loading {title}");
+                    }
+                    crate::automix::AutomixMsg::Plan(deck, plan) => {
+                        self.automix_plan = Some((deck, plan))
+                    }
                     crate::automix::AutomixMsg::Done(result) => {
                         self.automix_active = false;
                         finished = true;
@@ -1074,22 +1171,26 @@ impl UiState {
         changed |= snapshot != self.snapshot;
         self.fx = std::array::from_fn(|index| snapshot.decks[index].fx);
         self.snapshot = snapshot;
+        self.presentation_frames = self.core.engine.presentation_frames(&self.snapshot);
 
-        if let Some(rx) = self.deck_load_rx.take() {
-            match rx.try_recv() {
-                Ok(Ok(())) => changed = true,
-                Ok(Err(error)) => {
-                    self.error = error.into();
-                    changed = true;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => self.deck_load_rx = Some(rx),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.error = "Deck load worker stopped unexpectedly".into();
-                    changed = true;
+        for index in 0..2 {
+            if let Some(rx) = self.deck_load_rx[index].take() {
+                match rx.try_recv() {
+                    Ok(Ok(())) => changed = true,
+                    Ok(Err(error)) => {
+                        self.error = error.into();
+                        changed = true;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        self.deck_load_rx[index] = Some(rx)
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.error = "Deck load worker stopped unexpectedly".into();
+                        changed = true;
+                    }
                 }
             }
         }
-
         for (i, deck_id) in [DeckId::A, DeckId::B].into_iter().enumerate() {
             let tid = self.snapshot.decks[i].track_id.map(|t| t.0);
             let cached = self.wave[i].as_ref().map(|(id, _)| *id);
@@ -1099,10 +1200,41 @@ impl UiState {
                 (None, None) => false,
                 _ => true,
             };
+            changed |= self.deck_artwork[i].poll(
+                &self.core,
+                &self.artwork_cache,
+                self.snapshot.decks[i].track_id,
+                wave_changed,
+            );
             if tid != cached || wave_changed {
                 changed = true;
                 self.wave_tempo[i] = None;
                 self.wave[i] = current_wave.map(|w| (tid.unwrap_or(-1), w));
+                self.wave_cache[i] = None;
+                self.wave_cache_rx[i] = None;
+                if let Some((_, wave)) = &self.wave[i] {
+                    let (tx, rx) = channel();
+                    let wave = wave.clone();
+                    self.wave_cache_rx[i] = Some(rx);
+                    std::thread::spawn(move || {
+                        let _ = tx.send(Arc::new(crate::wave::WaveCache::new(wave)));
+                    });
+                }
+            }
+            if let Some(rx) = self.wave_cache_rx[i].take() {
+                match rx.try_recv() {
+                    Ok(cache) => {
+                        if self.wave[i]
+                            .as_ref()
+                            .is_some_and(|(_, wave)| Arc::ptr_eq(wave, &cache.source))
+                        {
+                            self.wave_cache[i] = Some(cache);
+                            changed = true;
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => self.wave_cache_rx[i] = Some(rx),
+                    Err(_) => {}
+                }
             }
             if tid.is_some() && self.wave_tempo[i].is_none() {
                 if let Ok(loaded) = self.core.analysis.loaded.try_lock() {
@@ -1164,7 +1296,6 @@ impl UiState {
                 match rx.try_recv() {
                     Ok(ImportMsg::LibraryChanged) => {
                         self.refresh_tracks();
-                        self.refresh_playlists();
                         changed = true;
                     }
                     Ok(ImportMsg::Progress(p)) => {
@@ -1200,7 +1331,6 @@ impl UiState {
             }
             if finished {
                 self.refresh_tracks();
-                self.refresh_playlists();
                 self.start_next_import();
             } else {
                 self.import_rx = Some(rx);
@@ -1210,6 +1340,9 @@ impl UiState {
             match rx.try_recv() {
                 Ok(Ok(updated)) => {
                     if updated > 0 {
+                        for artwork in &mut self.deck_artwork {
+                            artwork.invalidate();
+                        }
                         self.refresh_tracks();
                         changed = true;
                     }
@@ -1228,6 +1361,7 @@ impl UiState {
     /// timer. Idle windows fall back to the lightweight background poller.
     pub fn needs_continuous_repaint(&self) -> bool {
         self.drag.is_some()
+            || self.transport_press.is_some()
             || self
                 .snapshot
                 .decks
@@ -1240,42 +1374,64 @@ pub fn fx_slot(i: usize) -> FxSlot {
     FxSlot::INSERTS[i]
 }
 
-/// Load a track onto a deck on a background thread: decode + waveform are slow.
-pub fn load_deck_blocking(core: &AppCore, deck: DeckId, track_id: TrackId) -> Result<(), String> {
-    let prepared = crate::analysis::load(core, deck, track_id, || true)?;
-    if !prepared {
-        return Ok(());
-    }
-    let track = core
-        .library
-        .get_track(track_id)
-        .map_err(|e| format!("Load failed: {e}"))?;
-    let cues = core.library.cues(track.id).unwrap_or_default();
-    for cue in cues {
-        core.engine.set_cue_frame(deck, cue.index, cue.frame);
-    }
-    Ok(())
-}
-
 fn import_files_blocking(core: &Arc<AppCore>, paths: Vec<PathBuf>, tx: &Sender<ImportMsg>) {
-    let roots: Vec<_> = paths.iter().filter(|p| p.is_dir()).filter_map(|p| p.canonicalize().ok()).collect();
-    let (paths, errors) = mixless_acquire::local_paths::collect_audio(&paths);
-    let _ = tx.send(ImportMsg::Progress(format!("Found {} audio files", paths.len())));
-    let result = (|| -> Result<ImportReport, String> {
-        let mut report = ImportReport { total: paths.len(), errors, ..Default::default() };
-        let ids = core.library.register_local_files_into(&paths, &roots).map_err(|e| e.to_string())?;
-        report.local = ids.len();
-        // The complete list is visible before any analysis starts.
-        let _ = tx.send(ImportMsg::LibraryChanged);
-        for id in ids { core.analysis.forget(id); }
-        let tracks = core.library.list_tracks().map_err(|e| e.to_string())?;
-        crate::analysis::schedule(core, &tracks);
-        if !report.errors.is_empty() {
-            report.warning = Some("Some files could not be read. See import details.".into());
+    let roots: Vec<_> = paths
+        .iter()
+        .filter(|p| p.is_dir())
+        .filter_map(|p| p.canonicalize().ok())
+        .collect();
+    let mut report = ImportReport::default();
+    let mut batch = Vec::new();
+    let mut ids = Vec::new();
+    let mut publish = |batch: &mut Vec<PathBuf>| {
+        if batch.is_empty() {
+            return;
         }
-        Ok(report)
-    })();
-    let _ = tx.send(ImportMsg::Done(result));
+        report.total += batch.len();
+        match core.library.register_local_files_into(batch, &roots) {
+            Ok(added) => ids.extend(added),
+            Err(_) => {
+                // A file removed during scanning must not hide its healthy siblings.
+                for path in batch.iter() {
+                    match core
+                        .library
+                        .register_local_files_into(std::slice::from_ref(path), &roots)
+                    {
+                        Ok(added) => ids.extend(added),
+                        Err(error) => {
+                            report.failed += 1;
+                            report.errors.push(format!("{}: {error}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        batch.clear();
+        let _ = tx.send(ImportMsg::LibraryChanged);
+        let _ = tx.send(ImportMsg::Progress(format!(
+            "Scanning folder · {} files",
+            report.total
+        )));
+    };
+    let mut last_publish = std::time::Instant::now();
+    let errors = mixless_acquire::local_paths::visit_audio(&paths, |path| {
+        batch.push(path);
+        if batch.len() >= 64 || last_publish.elapsed() >= std::time::Duration::from_millis(50) {
+            publish(&mut batch);
+            last_publish = std::time::Instant::now();
+        }
+    });
+    publish(&mut batch);
+    report.errors.extend(errors);
+    report.local = ids.len();
+    for id in ids {
+        core.analysis.forget(id);
+    }
+    match core.library.list_tracks() {
+        Ok(tracks) => crate::analysis::schedule(core, &tracks),
+        Err(error) => report.errors.push(error.to_string()),
+    }
+    let _ = tx.send(ImportMsg::Done(Ok(report)));
 }
 
 fn import_spotify_blocking(core: &AppCore, url: &str, tx: &Sender<ImportMsg>) {

@@ -89,6 +89,27 @@ pub struct PhraseBoundary {
     pub novelty: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MixRegionKind {
+    In,
+    Out,
+}
+
+/// A source-time mixing window, measured from phrase and bar evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MixRegion {
+    pub kind: MixRegionKind,
+    pub start_sec: f32,
+    pub end_sec: f32,
+    pub anchor_sec: f32,
+    pub confidence: f32,
+    pub vocal_risk: f32,
+    pub kick: f32,
+    pub rms: f32,
+    pub camelot: Option<String>,
+    pub key_confidence: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackAnalysis {
     pub track_id: TrackId,
@@ -101,6 +122,8 @@ pub struct TrackAnalysis {
     pub sections: Vec<Section>,
     #[serde(default)]
     pub phrase_boundaries: Vec<PhraseBoundary>,
+    #[serde(default)]
+    pub mix_regions: Vec<MixRegion>,
     pub bars: Vec<BarFeature>,
     pub waveform_path: Option<String>,
     pub partial: bool,
@@ -108,9 +131,9 @@ pub struct TrackAnalysis {
 
 /// Precomputed overview waveform for one track.
 ///
-/// Every column holds the peak amplitude plus the relative energy of three
-/// frequency bands (low/mid/high), quantized to 0..=255 so it stays compact
-/// over IPC. Band shares for one column sum to roughly 255.
+/// Every column holds 16-bit positive/negative/RMS envelopes plus four band
+/// shares (bass, low-mid, high-mid, treble), quantized to 0..=255. Legacy
+/// 8-bit envelopes remain available for older consumers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Waveform {
     pub columns: u32,
@@ -129,10 +152,20 @@ pub struct Waveform {
     pub rms: Vec<u8>,
     /// Per-column low-band energy share.
     pub low: Vec<u8>,
+    /// Low-mid share, separated from the bass for red/yellow/green/blue rendering.
+    #[serde(default)]
+    pub low_mid: Vec<u8>,
     /// Per-column mid-band energy share.
     pub mid: Vec<u8>,
     /// Per-column high-band energy share.
     pub high: Vec<u8>,
+    /// 16-bit envelopes for detailed display; older payloads fall back to u8.
+    #[serde(default)]
+    pub detail_pos: Vec<u16>,
+    #[serde(default)]
+    pub detail_neg: Vec<u16>,
+    #[serde(default)]
+    pub detail_rms: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

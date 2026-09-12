@@ -19,7 +19,6 @@ impl UiState {
         compact_height: bool,
     ) -> gpui::AnyElement {
         let dc = theme::deck_color(deck);
-        let flip = deck == DeckId::B;
         let tempo_fader_min_height = if compact_height { 112.0 } else { 136.0 };
         let sync_btn = {
             let el = gpui::div()
@@ -73,6 +72,38 @@ impl UiState {
             })
         };
 
+        let shift_btn = gpui::div()
+            .id(SharedString::from(format!("shift-{deck:?}")))
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(38.))
+            .h(px(22.))
+            .rounded(px(4.))
+            .border_1()
+            .border_color(if self.cue_shift[deck.index()] {
+                dc
+            } else {
+                theme::LINE
+            })
+            .bg(if self.cue_shift[deck.index()] {
+                theme::with_alpha(dc, 0.2)
+            } else {
+                theme::PANEL_INSET.into()
+            })
+            .text_color(if self.cue_shift[deck.index()] {
+                dc
+            } else {
+                theme::MUTED
+            })
+            .text_size(px(8.))
+            .font_weight(gpui::FontWeight::BOLD)
+            .child("SHIFT")
+            .on_click(cx.listener(move |state, _, _, cx| {
+                state.toggle_cue_shift(deck);
+                cx.notify();
+            }));
+
         // Keep SYNC/key lock beside the key knob so the pitch lane gets
         // most of the existing body height, including in compact windows.
         let tempo_buttons = gpui::div()
@@ -113,7 +144,7 @@ impl UiState {
                         cx.notify();
                     }))
             });
-        gpui::div()
+        let tempo_column = gpui::div()
             .flex()
             .flex_none()
             .flex_col()
@@ -127,7 +158,6 @@ impl UiState {
                     .flex_none()
                     .items_start()
                     .gap(px(6.))
-                    .when(flip, |el| el.flex_row_reverse())
                     .child(tempo_buttons)
                     .child(knob(
                         KnobSpec {
@@ -165,7 +195,13 @@ impl UiState {
                 )
                 .flex_1()
                 .min_h(px(tempo_fader_min_height)),
-            )
+            );
+        gpui::div()
+            .flex()
+            .flex_none()
+            .gap(px(4.))
+            .child(shift_btn.flex_none())
+            .child(tempo_column)
             .into_any_element()
     }
 }

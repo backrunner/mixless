@@ -25,8 +25,15 @@ impl Biquad {
         let omega = 2. * PI * (frequency / sr).clamp(0.0001, 0.45);
         let alpha = omega.sin() / (2. * quality);
         let a0 = 1. + alpha;
-        Self { b0: alpha / a0, b1: 0., b2: -alpha / a0,
-            a1: -2. * omega.cos() / a0, a2: (1. - alpha) / a0, z1: 0., z2: 0. }
+        Self {
+            b0: alpha / a0,
+            b1: 0.,
+            b2: -alpha / a0,
+            a1: -2. * omega.cos() / a0,
+            a2: (1. - alpha) / a0,
+            z1: 0.,
+            z2: 0.,
+        }
     }
 
     pub(crate) fn lowpass(sr: f32, freq: f32, q: f32) -> Self {
@@ -132,7 +139,9 @@ impl Isolator {
         }
     }
 
-    pub fn set_resonance(&mut self, amount: f32) { self.resonance.set(amount.clamp(0., 1.)); }
+    pub fn set_resonance(&mut self, amount: f32) {
+        self.resonance.set(amount.clamp(0., 1.));
+    }
 
     pub fn process(&mut self, x: f32) -> f32 {
         let low_split = self.low_lp.process(x);
@@ -141,18 +150,15 @@ impl Isolator {
         let mid = self.mid_lp.process(upper_split);
         let high = self.high_hp.process(upper_split);
         let g = |i: usize, v: f32| {
-            if self.kill[i] {
-                0.0
-            } else {
-                v * self.gain[i]
-            }
+            if self.kill[i] { 0.0 } else { v * self.gain[i] }
         };
         // Resonance follows the exposed crossover. Neutral and all-kill remain
         // unchanged; smoothing avoids a click when preferences change mid-track.
         let gains: [f32; 3] = std::array::from_fn(|i| if self.kill[i] { 0. } else { self.gain[i] });
         let low_edge = (gains[0] - gains[1]).abs().min(1.);
         let high_edge = (gains[1] - gains[2]).abs().min(1.);
-        let edge = self.resonance_low.process(x) * low_edge + self.resonance_high.process(x) * high_edge;
+        let edge =
+            self.resonance_low.process(x) * low_edge + self.resonance_high.process(x) * high_edge;
         g(0, low) + g(1, mid) + g(2, high) + self.resonance.next() * edge
     }
 }
@@ -167,6 +173,7 @@ pub struct ChannelFilter {
     counter: usize,
     wet: f32,
     compensation: f32,
+    coefficients_for: (f32, f32),
     pub amount: f32,
 }
 
@@ -181,6 +188,7 @@ impl ChannelFilter {
             counter: 0,
             wet: 0.0,
             compensation: 1.0,
+            coefficients_for: (f32::NAN, f32::NAN),
             amount: 0.0,
         }
     }
@@ -206,7 +214,8 @@ impl ChannelFilter {
     pub fn process(&mut self, x: f32) -> f32 {
         let amount = self.sweep.next();
         let resonance = self.resonance.next();
-        if self.counter == 0 {
+        if self.counter == 0 && self.coefficients_for != (amount, resonance) {
+            self.coefficients_for = (amount, resonance);
             let quality = std::f32::consts::FRAC_1_SQRT_2 + 2.8 * resonance;
             self.low.set(
                 self.sample_rate,
@@ -304,11 +313,7 @@ impl SmoothValue {
 }
 
 pub fn flush_small(value: f32) -> f32 {
-    if value.abs() < 1e-20 {
-        0.0
-    } else {
-        value
-    }
+    if value.abs() < 1e-20 { 0.0 } else { value }
 }
 
 pub fn db_to_lin(db: f32) -> f32 {
@@ -549,18 +554,25 @@ mod tests {
             iso.gain = gain;
             let mut output = Vec::new();
             for i in 0..48_000 {
-                let sample = iso.process((std::f32::consts::TAU * 150. * i as f32 / 48_000.).sin() * 0.25);
+                let sample =
+                    iso.process((std::f32::consts::TAU * 150. * i as f32 / 48_000.).sin() * 0.25);
                 assert!(sample.is_finite() && sample.abs() < 1.);
-                if i >= 24_000 { output.push(sample); }
+                if i >= 24_000 {
+                    output.push(sample);
+                }
             }
             output
         };
-        let off = render(0., [0.,1.,1.]);
-        let on = render(1., [0.,1.,1.]);
-        let difference = off.iter().zip(on).map(|(a,b)| (a-b).powi(2)).sum::<f32>() / off.len() as f32;
+        let off = render(0., [0., 1., 1.]);
+        let on = render(1., [0., 1., 1.]);
+        let difference = off
+            .iter()
+            .zip(on)
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f32>()
+            / off.len() as f32;
         assert!(difference > 0.001);
-        assert_eq!(render(0., [1.;3]), render(1., [1.;3]));
-        assert!(render(1., [0.;3]).iter().all(|v| *v == 0.));
+        assert_eq!(render(0., [1.; 3]), render(1., [1.; 3]));
+        assert!(render(1., [0.; 3]).iter().all(|v| *v == 0.));
     }
-
 }

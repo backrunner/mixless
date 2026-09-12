@@ -1,10 +1,11 @@
 //! Local library: import, metadata, cues. No tokens, no PCM.
 
+mod cues;
 mod folders;
-mod waveform;
 mod hash;
-mod verification;
 mod imports;
+mod verification;
+mod waveform;
 pub use imports::ImportItem;
 
 use std::fs;
@@ -15,7 +16,7 @@ use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
 use lofty::probe::Probe;
 use mixless_protocol::{Cue, CueKind, PlaylistId, Track, TrackAnalysis, TrackId};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use thiserror::Error;
 

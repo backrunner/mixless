@@ -12,7 +12,11 @@ use crate::theme;
 
 impl Render for UiState {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        if let Some((x, y)) = self.pending_drag.take() { self.drag_move(x, y); }
+        let draw_started = crate::performance::begin();
+        let active_decks = self.snapshot.decks.iter().filter(|d| d.playing).count();
+        if let Some((x, y)) = self.pending_drag.take() {
+            self.drag_move(x, y);
+        }
         self.poll();
         if window.focused(cx).is_none()
             || (!self.show_import_modal && self.url_focus.is_focused(window))
@@ -39,7 +43,8 @@ impl Render for UiState {
                     drag_state.update(cx, |state, _cx| {
                         if state.drag.is_some() {
                             if ev.dragging() {
-                                state.pending_drag = Some((ev.position.x.into(), ev.position.y.into()));
+                                state.pending_drag =
+                                    Some((ev.position.x.into(), ev.position.y.into()));
                             } else {
                                 state.end_drag();
                             }
@@ -58,7 +63,8 @@ impl Render for UiState {
                             state.end_drag();
                         }
                         let ended_momentary = state.end_momentary_fx();
-                        if was_dragging || ended_momentary {
+                        let ended_transport = state.end_transport_press();
+                        if was_dragging || ended_momentary || ended_transport {
                             cx.notify();
                         }
                     });
@@ -110,19 +116,33 @@ impl Render for UiState {
         });
 
         let library_key = (
-            std::sync::Arc::as_ptr(&self.tracks) as usize, std::sync::Arc::as_ptr(&self.playlists) as usize,
-            self.playlist_sel, self.track_sel, self.focus, self.snapshot.decks.each_ref().map(|d| d.track_id),
-            self.analysis_revision, self.busy, self.picker_open, self.acquire.clone(),
+            std::sync::Arc::as_ptr(&self.tracks) as usize,
+            std::sync::Arc::as_ptr(&self.playlists) as usize,
+            self.playlist_sel,
+            self.track_sel,
+            self.focus,
+            self.snapshot.decks.each_ref().map(|d| d.track_id),
+            self.analysis_revision,
+            self.busy,
+            self.picker_open,
+            self.import_status(),
         );
         if self.library_key.as_ref() != Some(&library_key) {
             self.library_key = Some(library_key);
             self.library_view.update(cx, |_, cx| cx.notify());
         }
-        let library = gpui::AnyView::from(self.library_view.clone())
-            .cached(gpui::div().flex_1().w_full().min_h(px(library_height)).style().clone());
+        let library = gpui::AnyView::from(self.library_view.clone()).cached(
+            gpui::div()
+                .flex_1()
+                .w_full()
+                .min_h(px(library_height))
+                .style()
+                .clone(),
+        );
         let import_modal = self.render_import_modal(window, cx);
         let fxbar = self.show_fx.then(|| self.render_fxbar(cx, mixer_width));
         let shortcuts = self.show_shortcuts.then(|| self.render_shortcuts(cx));
+        let automix_bar = self.automix_active.then(|| self.render_automix_bar());
         let fx_editor = self
             .fx_editor
             .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
@@ -146,6 +166,7 @@ impl Render for UiState {
             .child(drag_capture)
             .child(topbar)
             .when_some(waves, |el, w| el.child(w))
+            .when_some(automix_bar, |el, bar| el.child(bar))
             .child(
                 gpui::div()
                     .flex()
@@ -202,5 +223,17 @@ impl Render for UiState {
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))
             .when_some(fx_editor, |el, modal| el.child(modal))
+            .when(draw_started.is_some(), |el| {
+                el.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, _, _| crate::performance::finish(draw_started, active_decks),
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size(px(1.)),
+                )
+            })
     }
 }

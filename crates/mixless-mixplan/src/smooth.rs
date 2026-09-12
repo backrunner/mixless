@@ -1,13 +1,13 @@
 //! Conservative DJ policy: musical safety gates precede ranking. A scalar
 //! score cannot compensate for clashing foregrounds or an unreliable beat grid.
 use crate::{
+    PlanContext, PlannerOptions,
     constraints::{covers_user_range, user_range},
     grid::Grid,
     musical::{average_rms, bass_handoff, feature, incoming_trim, percussion_only},
     phrasing::{boundary_quality, points},
     policy::{self, Evidence as FxEvidence, Technique},
-    score::{key_match, section},
-    PlanContext, PlannerOptions,
+    score::{section, window_key_match},
 };
 use mixless_protocol::{
     AutomationLanes, BarMap, EqLane, FilterLane, MixPlan, MixPlanSummary, Polyline, ScratchOp,
@@ -18,7 +18,7 @@ const MAX_LOG_TEMPO_PER_SEC: f32 = 0.0035;
 const KILL: f32 = -96.;
 fn ease(t: f32) -> f32 {
     let t = t.clamp(0., 1.);
-    t * t * t * (10. + t * (-15. + 6. * t))
+    (t * t * t * (10. + t * (-15. + 6. * t))).clamp(0., 1.)
 }
 fn line(nodes: &[(f32, f32)]) -> Polyline {
     Polyline {
@@ -56,6 +56,21 @@ fn neutral() -> AutomationLanes {
         scratch_b: None,
     }
 }
+fn fits_region(
+    t: &TrackAnalysis,
+    kind: mixless_protocol::MixRegionKind,
+    anchor: f32,
+    start: f32,
+    end: f32,
+) -> bool {
+    let mut matching = t
+        .mix_regions
+        .iter()
+        .filter(|r| r.kind == kind && (r.anchor_sec - anchor).abs() < 0.15)
+        .peekable();
+    matching.peek().is_none()
+        || matching.any(|r| start + 0.05 >= r.start_sec && end <= r.end_sec + 0.05)
+}
 fn grid_reliable(t: &TrackAnalysis, start: f32, end: f32) -> bool {
     if t.tempo.beats.len() < 8 || t.tempo.downbeats.len() < 2 {
         return false;
@@ -88,15 +103,17 @@ pub(crate) fn plan(ctx: &PlanContext<'_>, options: &PlannerOptions) -> MixPlan {
                 TransitionMode::LoopRoll,
                 TransitionMode::PhraseBridge,
             ] {
-                let lengths: &[u16] = if mode == TransitionMode::BeatBlend {
-                    &[16, 32, 8]
-                } else if mode == TransitionMode::LoopRoll {
-                    &[8, 16]
-                } else {
-                    &[4]
-                };
-                for &length in lengths {
-                    if let Some(p) = pair(ctx, options, out, input, mode, length) {
+                for length in crate::duration::candidates(ctx, options, out, input, mode) {
+                    if let Some(p) = pair(
+                        ctx,
+                        options,
+                        out,
+                        input,
+                        mode,
+                        length,
+                        best.as_ref()
+                            .map_or(-1., |p| p.summary.as_ref().unwrap().score),
+                    ) {
                         if best.as_ref().is_none_or(|old| {
                             p.summary.as_ref().unwrap().score > old.summary.as_ref().unwrap().score
                         }) {
@@ -117,6 +134,7 @@ fn pair(
     input: f32,
     mode: TransitionMode,
     length: u16,
+    minimum_score: f32,
 ) -> Option<MixPlan> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
     let ga = Grid(a);
@@ -138,9 +156,11 @@ fn pair(
             outgoing_is_double: factor == 0.5,
         }
     };
-    let (key, shift) = key_match(
+    let (key, shift, key_reliable) = window_key_match(
         a,
         b,
+        ga.sec(out),
+        gb.sec(input),
         ctx.offset_a.pitch_semitones,
         ctx.offset_b.pitch_semitones,
     );
@@ -154,7 +174,13 @@ fn pair(
     }
     let hold = options.strategy == Some(S::EnergyHold) && blend;
     let correction = outgoing_bpm * factor / incoming_bpm;
-    let harmonic = shift == 0. && key >= 0.85 && a.key_confidence >= 0.5 && b.key_confidence >= 0.5;
+    let key_shift = if blend && options.harmonic_key_shift && key_reliable && key >= 0.25 {
+        shift
+    } else {
+        0.
+    };
+    let harmonic =
+        key_reliable && ((shift == 0. && key >= 0.85) || (key_shift != 0. && key >= 0.25));
     if blend && ((correction - 1.).abs() > 0.08 || ga.meter() != gb.meter()) {
         return None;
     }
@@ -181,19 +207,54 @@ fn pair(
     if !blend && !loop_roll {
         n = n.min(available);
     }
-    if n == 0 || n > available || n > 64 {
+    if n == 0 || n > available || n > 128 {
         return None;
     }
     let n = n as f32;
     let start_beat = out - n * ga.meter();
     let start = ga.sec(start_beat);
     let end = ga.sec(out);
-    let bin = gb.sec(input);
-    let out_phrase = boundary_quality(a, end);
-    let in_phrase = boundary_quality(b, bin);
+    let mut bin = gb.sec(input);
+    if mode == TransitionMode::PhraseBridge && input <= 0.001 {
+        // A manually marked pickup can precede the first measured beat.
+        // Start this unsynchronized bridge at the cue itself; inventing a beat
+        // at zero or forcing the pickup into a beat blend would be misleading.
+        if let Some((cue, _)) = user_range(ctx.cues_in, b.sample_rate) {
+            bin = bin.min(cue);
+        } else if let Some(cue) = ctx
+            .cues_in
+            .iter()
+            .filter(|c| {
+                c.user_set
+                    && c.kind == mixless_protocol::CueKind::Hot
+                    && crate::cue_policy::inferred_cue_kind(b, c.frame)
+                        == mixless_protocol::CueKind::In
+            })
+            .map(|c| c.frame as f32 / b.sample_rate as f32)
+            .filter(|sec| gb.floor_bar(*sec) <= 0.001)
+            .min_by(f32::total_cmp)
+        {
+            bin = bin.min(cue);
+        }
+    }
+    let out_phrase = boundary_quality(a, end).max(crate::cue_policy::manual_quality(
+        a,
+        ctx.cues_out,
+        end,
+        true,
+    ));
+    let in_phrase = boundary_quality(b, bin).max(crate::cue_policy::manual_quality(
+        b,
+        ctx.cues_in,
+        bin,
+        false,
+    ));
     let start_phrase = boundary_quality(a, start);
     let explicit_out = user_range(ctx.cues_out, a.sample_rate).is_some();
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
+    if blend && explicit_out && (out - ga.floor_bar(end)).abs() > 0.01 {
+        return None;
+    }
     // A metrical downbeat is not automatically the beginning of a phrase.
     // Strong structural evidence takes precedence over the old fixed offsets.
     if (!a.phrase_boundaries.is_empty() && !explicit_out && out_phrase < 0.5)
@@ -221,7 +282,7 @@ fn pair(
     lanes.rate_a.nodes.clear();
     lanes.rate_b.nodes.clear();
     lanes.pitch_a = Polyline::constant(ctx.offset_a.pitch_semitones);
-    lanes.pitch_b = Polyline::constant(ctx.offset_b.pitch_semitones);
+    lanes.pitch_b = Polyline::constant(ctx.offset_b.pitch_semitones + key_shift);
     let mut clock = Polyline::default();
     let mut source_a = Polyline::default();
     let mut source_b = Polyline::default();
@@ -299,6 +360,14 @@ fn pair(
     {
         return None;
     }
+    // Leave an incoming phrase to play after the overlap, rather than
+    // consuming the entire next track in a long mix.
+    if blend && !explicit_in {
+        let reserve = (8. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec * 0.25);
+        if b_end > b.duration_sec - reserve + 0.01 {
+            return None;
+        }
+    }
     if !blend {
         lanes.rate_b = Polyline::constant(ctx.offset_b.rate);
         source_b = Polyline::default();
@@ -364,6 +433,11 @@ fn pair(
         if !harmonic && !percussion_only(a, start, end) && !percussion_only(b, bin, b_end) {
             return None;
         }
+    }
+    if !fits_region(a, mixless_protocol::MixRegionKind::Out, end, start, end)
+        || !fits_region(b, mixless_protocol::MixRegionKind::In, bin, bin, b_end)
+    {
+        return None;
     }
     if blend && (!grid_reliable(a, start, end) || !grid_reliable(b, bin, b_end)) {
         return None;
@@ -509,6 +583,75 @@ fn pair(
             (bin + 4. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec),
         )
     };
+    let structural = matches!(
+        section(a, end - 0.001),
+        mixless_protocol::SectionLabel::Outro
+            | mixless_protocol::SectionLabel::Break
+            | mixless_protocol::SectionLabel::Drop
+            | mixless_protocol::SectionLabel::Chorus
+    );
+    let position = 0.03 * end / a.duration_sec - 0.03 * bin / b.duration_sec;
+    // Phrase-compatible pairings are preferred even when BPM/key are equal.
+    // The vocal rule is hard: a verse and a chorus with two foregrounds never
+    // share the same overlap window.
+    if sa == mixless_protocol::SectionLabel::Verse
+        && sb == mixless_protocol::SectionLabel::Chorus
+        && vocal_a > 0.45
+        && vocal_b > 0.45
+    {
+        return None;
+    }
+    let structural_score = match (sa, sb) {
+        (mixless_protocol::SectionLabel::Outro, mixless_protocol::SectionLabel::Intro)
+        | (mixless_protocol::SectionLabel::Drop, mixless_protocol::SectionLabel::Intro)
+        | (mixless_protocol::SectionLabel::BuildUp, mixless_protocol::SectionLabel::Drop)
+        | (mixless_protocol::SectionLabel::Break, mixless_protocol::SectionLabel::Intro) => 1.0,
+        (mixless_protocol::SectionLabel::Chorus, mixless_protocol::SectionLabel::Intro)
+        | (mixless_protocol::SectionLabel::Breakdown, mixless_protocol::SectionLabel::Intro) => {
+            0.85
+        }
+        (mixless_protocol::SectionLabel::Unknown, _)
+        | (_, mixless_protocol::SectionLabel::Unknown) => 0.55,
+        _ => 0.35,
+    };
+    let quality = if blend {
+        0.57 + 0.10 * key + 0.10 * structural_score - 0.10 * clash
+    } else if loop_roll {
+        0.39 + 0.08 * structural_score + 0.05 * (1. - vocal_a.min(vocal_b))
+    } else {
+        0.35 + 0.10 * structural_score
+            + 0.02 * fx_decision.confidence
+            + 0.08 * (1. - vocal_a.min(vocal_b))
+            + if drop_cut { 0.22 } else { 0. }
+    };
+    let phrase = if blend {
+        (out_phrase + in_phrase + start_phrase + end_phrase) / 4.
+    } else {
+        (out_phrase + in_phrase) / 2.
+    };
+    let energy = match (rms_a, rms_b) {
+        (Some(a), Some(b)) => (1. - (20. * (a / b).log10()).abs() / 18.).clamp(0., 1.),
+        _ => 0.5,
+    };
+    let kick = match (feature(a, end - 0.01), feature(b, bin + 0.01)) {
+        (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),
+        _ => 0.5,
+    };
+    let length_fit = if blend {
+        // Stable low-foreground phrases can sustain a long layered mix.
+        // Busy material gains no reward merely for taking longer.
+        (n / 64.).min(1.) * 0.07 * (1. - vocal_a.max(vocal_b)).powi(2)
+    } else {
+        0.
+    };
+    let score = ((quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 + length_fit
+        - key_shift.abs() * 0.025
+        + if structural { 0.03 } else { 0. })
+        / 1.2)
+        .clamp(0., 1.);
+    if score <= minimum_score {
+        return None;
+    }
     // Match the material heard at the exchange, preserving source dynamics.
     let trim_b = incoming_trim(b, bin, rms_a, rms_b);
     let rhythmic_handoff = blend
@@ -633,6 +776,20 @@ fn pair(
             lanes.eq_a.low = line(&[(0., 0.), (handoff - fade, 0.), (handoff, KILL)]);
         }
     }
+    let stages = crate::choreography::arrange(
+        &mut lanes,
+        mode,
+        n,
+        handoff,
+        ga.meter(),
+        trim_b,
+        harmonic,
+        rhythmic_handoff,
+        vocal_a,
+        vocal_b,
+        sa,
+        fx_decision.technique,
+    );
     if scratch_cut {
         let on_bar = (n - 0.5).max(0.0);
         let peak_bar = (n - 0.25).max(on_bar + 0.0625);
@@ -652,68 +809,10 @@ fn pair(
     // held thereafter. A key change is made by handing over musical material.
     let ending = mixless_protocol::PerformanceOffset {
         rate: lanes.rate_b.sample(n),
-        pitch_semitones: ctx.offset_b.pitch_semitones,
-    };
-    let structural = matches!(
-        section(a, end - 0.001),
-        mixless_protocol::SectionLabel::Outro
-            | mixless_protocol::SectionLabel::Break
-            | mixless_protocol::SectionLabel::Drop
-            | mixless_protocol::SectionLabel::Chorus
-    );
-    let position = 0.03 * end / a.duration_sec - 0.03 * bin / b.duration_sec;
-    // Phrase-compatible pairings are preferred even when BPM/key are equal.
-    // The vocal rule is hard: a verse and a chorus with two foregrounds never
-    // share the same overlap window.
-    if sa == mixless_protocol::SectionLabel::Verse
-        && sb == mixless_protocol::SectionLabel::Chorus
-        && vocal_a > 0.45
-        && vocal_b > 0.45
-    {
-        return None;
-    }
-    let structural_score = match (sa, sb) {
-        (mixless_protocol::SectionLabel::Outro, mixless_protocol::SectionLabel::Intro)
-        | (mixless_protocol::SectionLabel::Drop, mixless_protocol::SectionLabel::Intro)
-        | (mixless_protocol::SectionLabel::BuildUp, mixless_protocol::SectionLabel::Drop)
-        | (mixless_protocol::SectionLabel::Break, mixless_protocol::SectionLabel::Intro) => 1.0,
-        (mixless_protocol::SectionLabel::Chorus, mixless_protocol::SectionLabel::Intro)
-        | (mixless_protocol::SectionLabel::Breakdown, mixless_protocol::SectionLabel::Intro) => {
-            0.85
-        }
-        (mixless_protocol::SectionLabel::Unknown, _)
-        | (_, mixless_protocol::SectionLabel::Unknown) => 0.55,
-        _ => 0.35,
-    };
-    let quality = if blend {
-        0.57 + 0.10 * key + 0.10 * structural_score - 0.10 * clash
-    } else if loop_roll {
-        0.39 + 0.08 * structural_score + 0.05 * (1. - vocal_a.min(vocal_b))
-    } else {
-        0.35 + 0.10 * structural_score
-            + 0.02 * fx_decision.confidence
-            + 0.08 * (1. - vocal_a.min(vocal_b))
-            + if drop_cut { 0.22 } else { 0. }
-    };
-    let phrase = if blend {
-        (out_phrase + in_phrase + start_phrase + end_phrase) / 4.
-    } else {
-        (out_phrase + in_phrase) / 2.
-    };
-    let energy = match (rms_a, rms_b) {
-        (Some(a), Some(b)) => (1. - (20. * (a / b).log10()).abs() / 18.).clamp(0., 1.),
-        _ => 0.5,
-    };
-    let kick = match (feature(a, end - 0.01), feature(b, bin + 0.01)) {
-        (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),
-        _ => 0.5,
-    };
-    let length_cost = if blend {
-        (n - 16.).abs() / 16. * 0.008
-    } else {
-        0.
+        pitch_semitones: ctx.offset_b.pitch_semitones + key_shift,
     };
     Some(MixPlan {
+        stages,
         summary: Some(MixPlanSummary {
             pair: (a.track_id, b.track_id),
             strategy: if blend {
@@ -735,9 +834,7 @@ fn pair(
                     _ => S::EchoOut,
                 }
             },
-            score: (quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 - length_cost
-                + if structural { 0.03 } else { 0. })
-            .clamp(0., 1.),
+            score,
             used_fallback: !blend
                 && !loop_roll
                 && !matches!(

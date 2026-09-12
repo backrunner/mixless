@@ -1,9 +1,12 @@
 //! Pure next-pair planning. No decoding, devices, I/O or playlist-wide search.
+pub mod cue_policy;
 mod handoff;
 pub use handoff::short_handoff;
 mod candidates;
+mod choreography;
 mod compile;
 pub mod constraints;
+mod duration;
 mod grid;
 mod musical;
 mod phrasing;
@@ -33,6 +36,8 @@ pub const STRATEGIES: [StrategyId; 9] = [
 
 #[derive(Debug, Clone)]
 pub struct PlannerOptions {
+    /// Set the inaudible incoming deck by at most two semitones, then hold it.
+    pub harmonic_key_shift: bool,
     /// Audition-oriented policy. False preserves the original catalog golden tables.
     pub smooth: bool,
     pub who_stretches: WhoStretches,
@@ -45,6 +50,7 @@ pub struct PlannerOptions {
 impl Default for PlannerOptions {
     fn default() -> Self {
         Self {
+            harmonic_key_shift: false,
             smooth: true,
             who_stretches: WhoStretches::B,
             literal_half_double: false,
@@ -161,6 +167,31 @@ impl Planner {
             }) {
                 return fail("Invalid section bounds");
             }
+            if track.mix_regions.iter().any(|r| {
+                ![
+                    r.start_sec,
+                    r.end_sec,
+                    r.anchor_sec,
+                    r.confidence,
+                    r.vocal_risk,
+                    r.kick,
+                    r.rms,
+                    r.key_confidence,
+                ]
+                .iter()
+                .all(|v| v.is_finite())
+                    || r.start_sec < 0.
+                    || r.end_sec <= r.start_sec
+                    || r.end_sec > track.duration_sec + 0.1
+                    || r.anchor_sec < r.start_sec
+                    || r.anchor_sec > r.end_sec
+                    || ![r.confidence, r.vocal_risk, r.kick, r.key_confidence]
+                        .iter()
+                        .all(|v| (0.0..=1.0).contains(v))
+                    || r.rms < 0.
+            }) {
+                return fail("Invalid mix region evidence");
+            }
             if !track.duration_sec.is_finite()
                 || track.duration_sec <= 0.0
                 || track.sample_rate == 0
@@ -239,7 +270,9 @@ impl Planner {
                 }
             }
         }
-        fail("No safe remaining window satisfies track bounds, user mix-in/out cues and vocal exclusions")
+        fail(
+            "No safe remaining window satisfies track bounds, user mix-in/out cues and vocal exclusions",
+        )
     }
 
     fn candidate(

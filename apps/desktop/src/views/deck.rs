@@ -60,16 +60,26 @@ impl UiState {
         let center_col = gpui::div().flex().flex_1().min_w_0().min_h_0().child(jog(
             JogSpec {
                 deck,
-                frame: d.frame,
+                frame: self.presentation_frames[deck.index()],
                 frames: d.frames,
                 src_sample_rate: d.src_sample_rate,
                 playing: d.playing,
                 color: dc,
                 initial,
-                end_warning: if d.playing && !d.loop_on && !d.reverse && d.src_sample_rate > 0 {
-                    let remaining = d.frames.saturating_sub(d.frame) as f32 / d.src_sample_rate as f32 / d.rate.max(0.01);
+                artwork: self.deck_artwork[deck.index()].image.clone(),
+                end_warning: if d.frames > 0
+                    && d.playing
+                    && !d.loop_on
+                    && !d.reverse
+                    && d.src_sample_rate > 0
+                {
+                    let remaining = d.frames.saturating_sub(d.frame) as f32
+                        / d.src_sample_rate as f32
+                        / d.rate.max(0.01);
                     (remaining <= 30.).then_some(remaining)
-                } else { None },
+                } else {
+                    None
+                },
             },
             cx,
         ));

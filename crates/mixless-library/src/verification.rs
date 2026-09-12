@@ -90,6 +90,7 @@ mod tests {
             key_confidence: 0.,
             sections: vec![],
             phrase_boundaries: vec![],
+            mix_regions: vec![],
             bars: vec![],
             waveform_path: None,
             partial: false,

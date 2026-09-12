@@ -43,6 +43,13 @@ pub enum Command {
     DisableSync {
         deck: DeckId,
     },
+    /// Create a deck-local temporary cue, or jump to it without changing playback.
+    TriggerTemporaryCue {
+        deck: DeckId,
+    },
+    ClearTemporaryCue {
+        deck: DeckId,
+    },
     JumpCue {
         deck: DeckId,
         index: u8,
@@ -100,7 +107,10 @@ pub enum Command {
         deck: DeckId,
         amount: f32,
     },
-    SetFilterResonanceEnabled { deck: DeckId, on: bool },
+    SetFilterResonanceEnabled {
+        deck: DeckId,
+        on: bool,
+    },
     SetFilterResonance {
         deck: DeckId,
         resonance: f32,

@@ -2,7 +2,7 @@
 //! cargo run -p mixless-analyze --example automix -- a.wav b.wav preview.wav
 use mixless_analyze::Analyzer;
 use mixless_engine::{Engine, EngineConfig};
-use mixless_mixplan::Planner;
+use mixless_mixplan::{Planner, PlannerOptions};
 use mixless_protocol::{Command, DeckId, TrackId};
 use std::{error::Error, path::Path};
 
@@ -22,16 +22,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         let id = TrackId(i as i64 + 1);
         let analysis = analyzer.analyze_track(id, path)?;
         println!(
-            "{deck:?}: {:.2} BPM, {}, {} measured bars",
+            "{deck:?}: {:.2} BPM, {}, {} measured bars, {} entry/exit regions",
             analysis.tempo.global_bpm,
             analysis.camelot.as_deref().unwrap_or("unknown key"),
-            analysis.bars.len()
+            analysis.bars.len(),
+            analysis.mix_regions.len()
         );
         engine.load_file(deck, id, path, path.display().to_string(), String::new())?;
         engine.set_bpm(deck, analysis.tempo.global_bpm);
         analyses.push(analysis);
     }
-    let plan = Planner::new().plan_pair(
+    let plan = Planner::with_options(PlannerOptions {
+        harmonic_key_shift: true,
+        ..Default::default()
+    })
+    .plan_pair(
         &analyses[0],
         &analyses[1],
         &[],
@@ -59,6 +64,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         plan.master_bpm.sample(n),
         analyses[1].tempo.global_bpm,
         plan.clock.sample(plan.handoff_bar.unwrap_or(n))
+    );
+    println!(
+        "Incoming key offset: {:+.0} semitones",
+        plan.incoming_offset_end.pitch_semitones
     );
     // Include surrounding music so the pace and energy change can be judged.
     let before = plan.t_in_a.min(4.);

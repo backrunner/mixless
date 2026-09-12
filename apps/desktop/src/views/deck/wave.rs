@@ -1,8 +1,7 @@
 //! Horizontal track overview and vertical performance waveform lanes.
 
 use gpui::{IntoElement, SharedString, prelude::*, px};
-use mixless_protocol::{DeckId, Waveform};
-use std::sync::Arc;
+use mixless_protocol::DeckId;
 
 use super::{deck_label, fmt_time};
 use crate::{state::UiState, theme};
@@ -14,8 +13,9 @@ impl UiState {
         deck: DeckId,
         height: f32,
     ) -> gpui::AnyElement {
-        let d = self.deck(deck).clone();
-        let wave = self.wave[deck.index()].clone().map(|(_, w)| w);
+        let mut d = self.deck(deck).clone();
+        d.frame = self.presentation_frames[deck.index()].round() as u64;
+        let wave = self.wave_cache[deck.index()].clone();
         let track = d
             .track_id
             .and_then(|id| self.tracks.iter().find(|t| t.id == id));
@@ -78,7 +78,7 @@ impl UiState {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
                             .overflow_hidden()
-                            .child(d.title.clone().unwrap_or_else(|| "— empty —".into())),
+                            .child(d.title.clone().unwrap_or_default()),
                     )
                     .child(
                         gpui::div()
@@ -135,6 +135,7 @@ impl UiState {
                     d,
                     wave,
                     self.wave_tempo[deck.index()].clone(),
+                    self.transition_window(deck),
                     device_sr,
                     dc,
                     cx,
@@ -149,8 +150,9 @@ impl UiState {
         cx: &mut gpui::Context<Self>,
         deck: DeckId,
     ) -> gpui::AnyElement {
-        let d = self.deck(deck).clone();
-        let wave: Option<Arc<Waveform>> = self.wave[deck.index()].clone().map(|(_, w)| w);
+        let mut d = self.deck(deck).clone();
+        d.frame = self.presentation_frames[deck.index()].round() as u64;
+        let wave = self.wave_cache[deck.index()].clone();
         let device_sr = self.snapshot.sample_rate;
         let dc = theme::deck_color(deck);
         let sr = if d.src_sample_rate > 0 {
@@ -187,6 +189,7 @@ impl UiState {
                     d,
                     wave,
                     self.wave_tempo[deck.index()].clone(),
+                    self.transition_window(deck),
                     device_sr,
                     dc,
                     cx,

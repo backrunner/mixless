@@ -1,6 +1,10 @@
 use super::*;
+#[path = "choreography_regressions.rs"]
+mod choreography_regressions;
 #[path = "smooth_regressions.rs"]
 mod smooth_regressions;
+#[path = "window_regressions.rs"]
+mod window_regressions;
 use mixless_protocol::{BarFeature, CueKind, Section, SectionLabel as S, TempoMap, TempoSegment};
 fn track(id: i64, bpm: f32, cam: &str, label: S, bars: u32, kick: f32, rms: f32) -> TrackAnalysis {
     let seconds = bars as f32 * 240.0 / bpm;
@@ -52,6 +56,7 @@ fn track(id: i64, bpm: f32, cam: &str, label: S, bars: u32, kick: f32, rms: f32)
             })
             .collect(),
         phrase_boundaries: vec![],
+        mix_regions: vec![],
         waveform_path: None,
         partial: false,
     }
@@ -205,10 +210,12 @@ fn smooth_safety_gates_include_vocal_exclusions_cues_and_local_grid_failures() {
         bar.vocal_presence = 0.9;
     }
     let planner = Planner::new();
-    assert!(planner
-        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default())
-        .summary
-        .is_none());
+    assert!(
+        planner
+            .plan_pair(&a, &b, &[], &[], Default::default(), Default::default())
+            .summary
+            .is_none()
+    );
     let (mut a, b) = pair();
     for segment in &mut a.tempo.segments {
         segment.confidence = 0.4;
@@ -224,17 +231,19 @@ fn smooth_safety_gates_include_vocal_exclusions_cues_and_local_grid_failures() {
         kind: CueKind::In,
         user_set: true,
     };
-    assert!(planner
-        .plan_pair(
-            &a,
-            &b,
-            &[],
-            &[impossible],
-            Default::default(),
-            Default::default()
-        )
-        .summary
-        .is_none());
+    assert!(
+        planner
+            .plan_pair(
+                &a,
+                &b,
+                &[],
+                &[impossible],
+                Default::default(),
+                Default::default()
+            )
+            .summary
+            .is_none()
+    );
 }
 
 #[test]
@@ -289,10 +298,12 @@ fn smooth_skips_measured_leading_silence_and_rejects_silent_tracks() {
     for bar in &mut b.bars {
         bar.rms = 0.;
     }
-    assert!(planner
-        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default())
-        .summary
-        .is_none());
+    assert!(
+        planner
+            .plan_pair(&a, &b, &[], &[], Default::default(), Default::default())
+            .summary
+            .is_none()
+    );
 }
 fn plan(a: &TrackAnalysis, b: &TrackAnalysis) -> MixPlan {
     Planner::with_options(PlannerOptions {
@@ -697,15 +708,17 @@ fn measured_phrase_boundaries_override_array_bar_numbers_and_preserve_future_can
     assert!(p.summary.is_some(), "{:?}", p.failure_reason);
     assert!(p.t_in_a >= 180.);
     for sec in [p.t_in_a, p.t_out_a] {
-        assert!(a
-            .phrase_boundaries
-            .iter()
-            .any(|b| (b.time_sec - sec).abs() < 0.01));
+        assert!(
+            a.phrase_boundaries
+                .iter()
+                .any(|b| (b.time_sec - sec).abs() < 0.01)
+        );
     }
-    assert!(b
-        .phrase_boundaries
-        .iter()
-        .any(|b| (b.time_sec - p.t_in_b).abs() < 0.01));
+    assert!(
+        b.phrase_boundaries
+            .iter()
+            .any(|b| (b.time_sec - p.t_in_b).abs() < 0.01)
+    );
 }
 
 #[test]
@@ -719,7 +732,19 @@ fn a_completed_build_can_cut_to_a_drop_without_an_echo_tail() {
     assert!(!p.summary.as_ref().unwrap().used_fallback);
     close(p.lanes.fx_send_a.sample(3.9), 0.);
     close(p.lanes.filter_a.lp_hz.sample(3.9), 20000.);
-    close(p.incoming_start_bar, 4.);
+    let n = p.summary.as_ref().unwrap().length_bars as f32;
+    close(p.incoming_start_bar, n);
+    let audible_cut = p.clock.sample(n)
+        - p.clock.sample(
+            p.lanes
+                .xfader
+                .nodes
+                .iter()
+                .find(|(_, v)| *v > -0.99)
+                .unwrap()
+                .0,
+        );
+    assert!(audible_cut < 0.1);
 }
 
 #[test]
@@ -727,8 +752,10 @@ fn malformed_boundary_confidence_cannot_authorize_a_transition() {
     let (mut a, b) = pair();
     measured_phrases(&mut a, &[32, 48, 64]);
     a.phrase_boundaries[1].confidence = f32::NAN;
-    assert!(Planner::new()
-        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default())
-        .summary
-        .is_none());
+    assert!(
+        Planner::new()
+            .plan_pair(&a, &b, &[], &[], Default::default(), Default::default())
+            .summary
+            .is_none()
+    );
 }

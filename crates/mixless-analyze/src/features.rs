@@ -1,13 +1,13 @@
 use mixless_protocol::{
     BarFeature, SectionLabel as S, TempoMap, TempoSegment, TrackAnalysis, TrackId,
 };
-use rustfft::{num_complex::Complex, FftPlanner};
+use rustfft::{FftPlanner, num_complex::Complex};
 const SR: f32 = 22050.;
 const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 6;
+pub const ANALYSIS_VERSION: u32 = 8;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -58,11 +58,24 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     let mut previous_low = 0.;
     let mut frames = Vec::new();
     let mut global = [0f32; 12];
-    let bins: Vec<_> = (2..FFT / 2 - 1).map(|k| {
-        let hz = k as f32 * SR / FFT as f32;
-        (k, hz, if hz < 150. { 0 } else if hz < 2000. { 1 } else { 2 },
-         ((69. + 12. * (hz / 440.).log2()).round() as i32).rem_euclid(12) as usize)
-    }).take_while(|(_, hz, _, _)| *hz <= 8000.).collect();
+    let bins: Vec<_> = (2..FFT / 2 - 1)
+        .map(|k| {
+            let hz = k as f32 * SR / FFT as f32;
+            (
+                k,
+                hz,
+                if hz < 150. {
+                    0
+                } else if hz < 2000. {
+                    1
+                } else {
+                    2
+                },
+                ((69. + 12. * (hz / 440.).log2()).round() as i32).rem_euclid(12) as usize,
+            )
+        })
+        .take_while(|(_, hz, _, _)| *hz <= 8000.)
+        .collect();
     for start in (0..mono.len().saturating_sub(FFT)).step_by(HOP) {
         let mut frame = Frame {
             time: (start + FFT / 2) as f32 / SR,
@@ -317,6 +330,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         sections,
         bars,
         phrase_boundaries,
+        mix_regions: vec![],
         waveform_path: None,
         partial: true,
     }
@@ -342,10 +356,13 @@ fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     };
     let min = (60. / 180. / dt) as usize;
     let max = (60. / 70. / dt).ceil() as usize;
+    // Compute each autocorrelation once, including across phrase probes.
+    let correlations: Vec<_> = (min - 1..=max + 1).map(corr).collect();
     let best = (min..=max)
-        .max_by(|a, b| corr(*a).total_cmp(&corr(*b)))
+        .max_by(|a, b| correlations[*a - min + 1].total_cmp(&correlations[*b - min + 1]))
         .unwrap_or(min);
-    let (left, mid, right) = (corr(best - 1), corr(best), corr(best + 1));
+    let at = best - min + 1;
+    let (left, mid, right) = (correlations[at - 1], correlations[at], correlations[at + 1]);
     let offset = (0.5 * (left - right) / (left - 2. * mid + right).min(-1e-6)).clamp(-0.5, 0.5);
     let mut bpm = 60. / ((best as f32 + offset) * dt);
     // Grid-search phase and tempo across the whole recording; a coarse integer
@@ -385,7 +402,7 @@ fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     let confidence = (aligned * 1.5).min(mid.max(0.)).clamp(0., 1.) * (duration / 16.).min(1.);
     (bpm.clamp(70., 180.), phase, confidence)
 }
-fn key(chroma: &[f32; 12]) -> (Option<String>, Option<String>, f32) {
+pub(crate) fn key(chroma: &[f32; 12]) -> (Option<String>, Option<String>, f32) {
     let sum = chroma.iter().sum::<f32>();
     if sum < 1e-8 {
         return (None, None, 0.);
@@ -467,10 +484,11 @@ mod tests {
         assert_eq!(a.tempo.segments[0].confidence, 0.);
         assert!(a.tempo.beats.is_empty());
         assert!(a.tempo.downbeats.is_empty());
-        assert!(a
-            .bars
-            .iter()
-            .all(|b| b.rms == 0. && b.section == S::Silence));
+        assert!(
+            a.bars
+                .iter()
+                .all(|b| b.rms == 0. && b.section == S::Silence)
+        );
     }
     #[test]
     fn accented_click_grid_tracks_fractional_bpm_at_source_rates() {
@@ -484,10 +502,11 @@ mod tests {
             );
             assert!((a.tempo.global_bpm - 127.5).abs() < 0.3);
             assert!(a.tempo.beats.windows(2).all(|p| p[1] > p[0]));
-            assert!(a
-                .bars
-                .iter()
-                .all(|b| b.rms.is_finite() && b.vocal_presence.is_finite()));
+            assert!(
+                a.bars
+                    .iter()
+                    .all(|b| b.rms.is_finite() && b.vocal_presence.is_finite())
+            );
             assert!(a.bars.iter().any(|b| b.kick_salience > 0.3));
         }
     }
@@ -577,10 +596,11 @@ mod tests {
             frame[1] = -frame[0];
         }
         let a = analyze(TrackId(5), &samples, 22050);
-        assert!(a
-            .bars
-            .iter()
-            .any(|b| b.rms > 0.01 && b.section != S::Silence));
+        assert!(
+            a.bars
+                .iter()
+                .any(|b| b.rms > 0.01 && b.section != S::Silence)
+        );
         assert!(!a.tempo.beats.is_empty());
     }
 }

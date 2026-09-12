@@ -4,14 +4,16 @@ use std::sync::{Arc, Mutex};
 
 use gpui::prelude::*;
 use gpui::{
-    Bounds, ClickEvent, Context, ElementId, IntoElement, MouseButton, MouseDownEvent, PathBuilder,
-    Pixels, Rgba, SharedString, Window, canvas, div, point, px, quad,
+    Bounds, Context, ElementId, IntoElement, MouseButton, MouseDownEvent, PathBuilder, Pixels,
+    Rgba, SharedString, Window, canvas, div, point, px, quad,
 };
-use mixless_protocol::DeckId;
 
 use crate::fader::{CAP_HEIGHT, FaderLane};
 use crate::state::{FaderCtl, KnobCtl, UiState};
 use crate::theme;
+
+mod jog;
+pub use jog::{JogSpec, jog};
 
 /// Pixels → f32 (the field is private in gpui 0.2).
 pub fn pf(p: Pixels) -> f32 {
@@ -130,6 +132,31 @@ fn arc(cx: f32, cy: f32, r: f32, start_deg: f32, end_deg: f32, width: f32) -> Pa
     b
 }
 
+// Reuse tessellated knob arcs while the decks animate. Only moving a knob
+// or resizing its bounds needs new geometry; paint color remains independent.
+fn knob_arc(cx: f32, cy: f32, r: f32, from: f32, to: f32) -> Option<gpui::Path<Pixels>> {
+    type Key = [u32; 5];
+    thread_local! {
+        static PATHS: std::cell::RefCell<(std::collections::HashMap<Key, gpui::Path<Pixels>>, std::collections::VecDeque<Key>)> = Default::default();
+    }
+    let key = [cx, cy, r, from, to].map(f32::to_bits);
+    PATHS.with(|paths| {
+        let mut paths = paths.borrow_mut();
+        if let Some(path) = paths.0.get(&key) {
+            return Some(path.clone());
+        }
+        let path = arc(cx, cy, r, from, to, 2.).build().ok()?;
+        if paths.0.len() >= 1024 {
+            if let Some(old) = paths.1.pop_front() {
+                paths.0.remove(&old);
+            }
+        }
+        paths.1.push_back(key);
+        paths.0.insert(key, path.clone());
+        Some(path)
+    })
+}
+
 /* ---- knob -------------------------------------------------------------- */
 
 pub struct KnobSpec {
@@ -164,6 +191,7 @@ pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
         window.prevent_default();
         cx.stop_propagation();
         if ev.click_count >= 2 {
+            s.end_drag();
             s.reset_knob(ctl);
         } else {
             s.begin_knob(ctl, ev.position.y.into());
@@ -226,7 +254,7 @@ fn paint_knob(window: &mut Window, bounds: Bounds<Pixels>, t: f32, bipolar: bool
     // The canvas includes 3 px of padding on each side. Keep the stroke
     // inside that padding instead of treating it as part of the knob radius.
     let ring_r = r - 1.5;
-    if let Ok(p) = arc(cx, cy, ring_r, start, start + 270.0, 2.0).build() {
+    if let Some(p) = knob_arc(cx, cy, ring_r, start, start + 270.0) {
         window.paint_path(p, gpui::rgb(0x232327));
     }
     if t > 0.001 {
@@ -236,7 +264,7 @@ fn paint_knob(window: &mut Window, bounds: Bounds<Pixels>, t: f32, bipolar: bool
             (start, end)
         };
         if b > a {
-            if let Ok(p) = arc(cx, cy, ring_r, a, b, 2.0).build() {
+            if let Some(p) = knob_arc(cx, cy, ring_r, a, b) {
                 window.paint_path(p, color);
             }
         }
@@ -719,215 +747,6 @@ fn paint_meter(window: &mut Window, bounds: Bounds<Pixels>, level: f32, width: f
             theme::LED_RED,
         );
     }
-}
-
-/* ---- jog wheel ----------------------------------------------------------- */
-
-pub struct JogSpec {
-    pub deck: DeckId,
-    pub frame: u64,
-    pub frames: u64,
-    pub src_sample_rate: u32,
-    pub playing: bool,
-    pub color: Rgba,
-    pub initial: char,
-    pub end_warning: Option<f32>,
-}
-
-/// Jog wheel that fills its container. Scrubbing is angular: circular pointer
-/// gestures rotate the platter (one revolution = 1.8 s of audio, matching the
-/// 33⅓ rpm marker); vertical drags near the center still work linearly.
-pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
-    let JogSpec {
-        deck,
-        frame,
-        frames,
-        src_sample_rate,
-        playing,
-        color,
-        initial,
-        end_warning,
-    } = spec;
-
-    let cell = Arc::new(Mutex::new(Bounds::<Pixels>::default()));
-    let cell_paint = cell.clone();
-    let cell_down = cell;
-
-    let down = cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
-        window.prevent_default();
-        cx.stop_propagation();
-        let b = *cell_down.lock().unwrap();
-        s.begin_jog(deck, ev.position.x.into(), ev.position.y.into(), b);
-        cx.notify();
-    });
-    let dbl = cx.listener(move |s: &mut UiState, ev: &ClickEvent, _window, cx| {
-        if let ClickEvent::Mouse(mouse) = ev
-            && mouse.up.click_count >= 2
-        {
-            s.play_pause(deck);
-            cx.notify();
-        }
-    });
-
-    div()
-        .id(ElementId::Name(SharedString::from(format!(
-            "jog-{:?}",
-            deck
-        ))))
-        .flex()
-        .flex_1()
-        .min_h_0()
-        .w_full()
-        .relative()
-        .on_mouse_down(MouseButton::Left, down)
-        .on_click(dbl)
-        .child(
-            canvas(
-                move |_, _, _| {},
-                move |bounds, _, window, _| {
-                    *cell_paint.lock().unwrap() = bounds;
-                    paint_jog(
-                        window,
-                        bounds,
-                        frame,
-                        frames,
-                        src_sample_rate,
-                        playing,
-                        color,
-                        end_warning,
-                    );
-                },
-            )
-            .size_full(),
-        )
-        .child(
-            div()
-                .absolute()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(26.))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(theme::TEXT)
-                .child(initial.to_string()),
-        )
-        .when_some(end_warning, |el, seconds| el.child(
-            div().absolute().bottom(px(8.)).w_full().flex().justify_center()
-                .text_size(px(10.)).text_color(theme::LED_RED)
-                .child(format!("-{:.0}s", seconds.ceil()))
-        ))
-}
-
-fn paint_jog(
-    window: &mut Window,
-    bounds: Bounds<Pixels>,
-    frame: u64,
-    frames: u64,
-    src_sr: u32,
-    playing: bool,
-    color: Rgba,
-    end_warning: Option<f32>,
-) {
-    let cx = pf(bounds.origin.x) + pf(bounds.size.width) / 2.0;
-    let cy = pf(bounds.origin.y) + pf(bounds.size.height) / 2.0;
-    let r = (pf(bounds.size.width).min(pf(bounds.size.height)) / 2.0 - 6.0).max(8.0);
-
-    // Static circular surfaces use GPUI's native rounded quads. Besides being
-    // true fills, these avoid repeatedly tessellating thousands of path
-    // segments on every animation frame.
-    disc(window, cx, cy, r, gpui::rgb(0x202024));
-    quad_ring(window, cx, cy, r - 1.0, 1.5, gpui::rgb(0x3d3d44));
-
-    // Platter: dark vinyl with concentric grooves.
-    let platter_r = r - 5.0;
-    disc(window, cx, cy, platter_r, gpui::rgb(0x0e0e11));
-    // Grooves: alternating light/dark rings, denser toward the outside.
-    let mut gr = platter_r - 6.0;
-    let mut i = 0;
-    while gr > platter_r * 0.42 {
-        let alpha = if i % 2 == 0 { 0.16 } else { 0.07 };
-        quad_ring(
-            window,
-            cx,
-            cy,
-            gr,
-            1.0,
-            theme::with_alpha(gpui::white(), alpha).into(),
-        );
-        gr -= 3.5;
-        i += 1;
-    }
-
-    // Track progress ring just inside the bezel (Serato/rekordbox style).
-    let pos = if frames > 0 {
-        (frame as f32 / frames as f32).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    quad_ring(window, cx, cy, r - 3.0, 2.0, gpui::rgb(0x1a1a1e));
-    if pos > 0.001 {
-        if let Ok(p) = arc(cx, cy, r - 3.0, -90.0, -90.0 + 360.0 * pos, 2.5).build() {
-            window.paint_path(p, theme::with_alpha(color, 0.9));
-        }
-    }
-
-    // Spinning marker at ~33 1/3 rpm: glow underlay + bright radial needle.
-    let spin = if src_sr > 0 {
-        (((frame as f64 / src_sr as f64) * 200.0) % 360.0) as f32
-    } else {
-        0.0
-    };
-    let a = spin.to_radians();
-    let (x0, y0) = (
-        cx + (platter_r * 0.48) * a.sin(),
-        cy - (platter_r * 0.48) * a.cos(),
-    );
-    let (x1, y1) = (
-        cx + (platter_r - 7.0) * a.sin(),
-        cy - (platter_r - 7.0) * a.cos(),
-    );
-    let mut marker = |width: f32, col: gpui::Hsla| {
-        let mut b = PathBuilder::stroke(px(width));
-        b.move_to(point(px(x0), px(y0)));
-        b.line_to(point(px(x1), px(y1)));
-        if let Ok(p) = b.build() {
-            window.paint_path(p, col);
-        }
-    };
-    marker(7.0, theme::with_alpha(color, 0.25));
-    marker(3.0, color.into());
-
-    // Play halo around the platter edge.
-    if playing {
-        quad_ring(
-            window,
-            cx,
-            cy,
-            platter_r + 1.5,
-            2.0,
-            theme::with_alpha(color, 0.45).into(),
-        );
-    }
-
-    if let Some(seconds) = end_warning {
-        let speed = if seconds <= 10. { 2. } else { 1. };
-        let pulse = 0.5 + 0.5 * (seconds * speed * std::f32::consts::TAU).sin();
-        quad_ring(window, cx, cy, r - 1., 3.5, theme::with_alpha(theme::LED_RED, 0.3 + pulse * 0.7).into());
-    }
-
-    // Center label: recessed well with a deck-colored ring.
-    let lr = r * 0.24;
-    disc(window, cx, cy, lr, gpui::rgb(0x101013));
-    disc(window, cx, cy, lr - 2.5, theme::PANEL_RAISED);
-    quad_ring(
-        window,
-        cx,
-        cy,
-        lr - 1.0,
-        1.5,
-        theme::with_alpha(color, 0.6).into(),
-    );
 }
 
 /// Tiny caption under a control group.

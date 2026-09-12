@@ -34,9 +34,10 @@ pub const TRACK_DARK: Rgba = c(0x26262b);
 
 /// High-contrast RGB waveform palette. These colors encode frequency content
 /// and deliberately remain distinct from the product's interaction accents.
-pub const WF_LOW: [f32; 3] = [1.0, 0.22, 0.12];
+pub const WF_LOW: [f32; 3] = [1.0, 0.23, 0.20];
+pub const WF_LOW_MID: [f32; 3] = [1.0, 0.82, 0.20];
 pub const WF_MID: [f32; 3] = [0.20, 0.95, 0.48];
-pub const WF_HIGH: [f32; 3] = [0.26, 0.84, 1.0];
+pub const WF_HIGH: [f32; 3] = [0.20, 0.48, 1.0];
 
 pub const CUE_COLORS: [Rgba; 8] = [
     c(0xe5484d),

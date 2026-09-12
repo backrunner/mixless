@@ -220,8 +220,14 @@ fn fractional_loops_use_beats_and_keep_the_anchor_when_resized() {
         engine.dispatch(Command::SetQuantize { on: false }).unwrap();
         let slot = &engine.shared.decks[0];
         slot.set_playhead(source_rate as f64 * 0.3);
-        for beats in [0.0625,0.125,0.25,0.5,1.,2.,4.] {
-            engine.dispatch(Command::SetLoopBeats { deck: DeckId::A, beats, on: true }).unwrap();
+        for beats in [0.0625, 0.125, 0.25, 0.5, 1., 2., 4.] {
+            engine
+                .dispatch(Command::SetLoopBeats {
+                    deck: DeckId::A,
+                    beats,
+                    on: true,
+                })
+                .unwrap();
             let snapshot = engine.snapshot();
             let d = &snapshot.decks[0];
             assert_eq!(d.loop_beats, beats);
@@ -229,15 +235,29 @@ fn fractional_loops_use_beats_and_keep_the_anchor_when_resized() {
             let expected = source_rate as f32 * 0.5 * beats;
             assert!(((d.loop_end_frame - d.loop_start_frame) as f32 - expected).abs() <= 1.);
         }
-        engine.dispatch(Command::SetLoopBeats { deck: DeckId::A, beats: 0.0625, on: true }).unwrap();
-        engine.dispatch(Command::PlayPause { deck: DeckId::A }).unwrap();
-        for _ in 0..100 { engine.render_offline(128); }
+        engine
+            .dispatch(Command::SetLoopBeats {
+                deck: DeckId::A,
+                beats: 0.0625,
+                on: true,
+            })
+            .unwrap();
+        engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        for _ in 0..100 {
+            engine.render_offline(128);
+        }
         let d = engine.snapshot().decks[0].clone();
         assert!(d.frame >= d.loop_start_frame && d.frame <= d.loop_end_frame + 1);
-        engine.dispatch(Command::LoopDouble { deck: DeckId::A }).unwrap();
-        assert_eq!(engine.snapshot().decks[0].loop_beats,0.125);
-        engine.dispatch(Command::LoopHalve { deck: DeckId::A }).unwrap();
-        assert_eq!(engine.snapshot().decks[0].loop_beats,0.0625);
+        engine
+            .dispatch(Command::LoopDouble { deck: DeckId::A })
+            .unwrap();
+        assert_eq!(engine.snapshot().decks[0].loop_beats, 0.125);
+        engine
+            .dispatch(Command::LoopHalve { deck: DeckId::A })
+            .unwrap();
+        assert_eq!(engine.snapshot().decks[0].loop_beats, 0.0625);
     }
 }
 
@@ -246,14 +266,75 @@ fn quantized_fractional_loop_uses_measured_grid_origin() {
     let engine = test_engine(48_000);
     let slot = &engine.shared.decks[0];
     let id = TrackId(slot.track_id.load(Ordering::Relaxed) as i64);
-    engine.set_beat_grid(DeckId::A,id,mixless_protocol::TempoMap {
-        global_bpm: 120., meter_num: 4, meter_den: 4,
-        beats: (0..16).map(|i| 0.1 + i as f32 * 0.5).collect(),
-        downbeats: vec![0.1,2.1], ..Default::default()
-    }).unwrap();
+    engine
+        .set_beat_grid(
+            DeckId::A,
+            id,
+            mixless_protocol::TempoMap {
+                global_bpm: 120.,
+                meter_num: 4,
+                meter_den: 4,
+                beats: (0..16).map(|i| 0.1 + i as f32 * 0.5).collect(),
+                downbeats: vec![0.1, 2.1],
+                ..Default::default()
+            },
+        )
+        .unwrap();
     slot.set_playhead(0.365 * 48_000.);
-    engine.dispatch(Command::SetLoopBeats { deck: DeckId::A, beats: 0.5, on: true }).unwrap();
+    engine
+        .dispatch(Command::SetLoopBeats {
+            deck: DeckId::A,
+            beats: 0.5,
+            on: true,
+        })
+        .unwrap();
     let d = engine.snapshot().decks[0].clone();
     assert!(d.loop_start_frame.abs_diff(16_800) <= 1);
-    assert_eq!(d.loop_end_frame - d.loop_start_frame,12_000);
+    assert_eq!(d.loop_end_frame - d.loop_start_frame, 12_000);
+}
+
+#[test]
+fn quantized_loop_never_anchors_ahead_of_the_playhead() {
+    let engine = test_engine(48_000);
+    let slot = &engine.shared.decks[0];
+    let id = TrackId(slot.track_id.load(Ordering::Relaxed) as i64);
+    engine
+        .set_beat_grid(
+            DeckId::A,
+            id,
+            mixless_protocol::TempoMap {
+                global_bpm: 120.,
+                meter_num: 4,
+                meter_den: 4,
+                beats: (0..16).map(|i| 0.1 + i as f32 * 0.5).collect(),
+                downbeats: vec![0.1, 2.1],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for beats in [0.0625, 0.125, 0.25, 0.5, 1., 4.] {
+        engine
+            .dispatch(Command::SetLoopBeats {
+                deck: DeckId::A,
+                beats,
+                on: false,
+            })
+            .unwrap();
+        slot.set_playhead(0.59 * 48_000.);
+        engine
+            .dispatch(Command::SetLoopBeats {
+                deck: DeckId::A,
+                beats,
+                on: true,
+            })
+            .unwrap();
+        let d = engine.snapshot().decks[0].clone();
+        assert!(
+            d.loop_start_frame <= d.frame,
+            "{beats}: {} > {}",
+            d.loop_start_frame,
+            d.frame
+        );
+        assert!(d.loop_end_frame > d.frame);
+    }
 }

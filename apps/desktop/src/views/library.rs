@@ -132,7 +132,7 @@ fn source_row(
         .items_center()
         .gap(px(6.))
         .w_full()
-        .h(px(26.))
+        .h(px(40.))
         .px(px(8.))
         .rounded(px(4.))
         .cursor_pointer()
@@ -194,18 +194,37 @@ fn source_row(
 struct PathTip(String);
 impl gpui::Render for PathTip {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        gpui::div().px_2().py_1().rounded(px(4.)).bg(theme::PANEL_RAISED)
-            .text_size(px(11.)).text_color(theme::TEXT).child(self.0.clone())
+        gpui::div()
+            .px_2()
+            .py_1()
+            .rounded(px(4.))
+            .bg(theme::PANEL_RAISED)
+            .text_size(px(11.))
+            .text_color(theme::TEXT)
+            .child(self.0.clone())
     }
 }
 
-fn folder_name(playlist: &mixless_library::PlaylistSummary, all: &[mixless_library::PlaylistSummary]) -> String {
-    let Some(path) = &playlist.folder_path else { return playlist.name.clone() };
+fn folder_name(
+    playlist: &mixless_library::PlaylistSummary,
+    all: &[mixless_library::PlaylistSummary],
+) -> String {
+    let Some(path) = &playlist.folder_path else {
+        return playlist.name.clone();
+    };
     let path = std::path::Path::new(path);
-    let mut suffix = path.file_name().map(std::path::PathBuf::from).unwrap_or_else(|| path.to_path_buf());
+    let mut suffix = path
+        .file_name()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| path.to_path_buf());
     let mut parent = path.parent();
-    while all.iter().any(|other| other.id != playlist.id && other.folder_path.as_ref()
-        .is_some_and(|other| std::path::Path::new(other).ends_with(&suffix))) {
+    while all.iter().any(|other| {
+        other.id != playlist.id
+            && other
+                .folder_path
+                .as_ref()
+                .is_some_and(|other| std::path::Path::new(other).ends_with(&suffix))
+    }) {
         let Some(dir) = parent else { break };
         let Some(name) = dir.file_name() else { break };
         suffix = std::path::Path::new(name).join(suffix);
@@ -214,13 +233,26 @@ fn folder_name(playlist: &mixless_library::PlaylistSummary, all: &[mixless_libra
     suffix.to_string_lossy().into_owned()
 }
 
-pub type LibraryKey = (usize, usize, Option<i64>, Option<i64>, mixless_protocol::DeckId,
-    [Option<TrackId>; 2], u64, bool, bool, SharedString);
+pub type LibraryKey = (
+    usize,
+    usize,
+    Option<i64>,
+    Option<i64>,
+    mixless_protocol::DeckId,
+    [Option<TrackId>; 2],
+    u64,
+    bool,
+    bool,
+    SharedString,
+);
 
-pub struct LibraryView { pub owner: gpui::WeakEntity<UiState> }
+pub struct LibraryView {
+    pub owner: gpui::WeakEntity<UiState>,
+}
 impl gpui::Render for LibraryView {
     fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        self.owner.update(cx, |state, cx| state.render_library(cx, 160.))
+        self.owner
+            .update(cx, |state, cx| state.render_library(cx, 160.))
             .unwrap_or_else(|_| gpui::div().into_any_element())
     }
 }
@@ -276,7 +308,8 @@ impl UiState {
                                     .flex()
                                     .items_center()
                                     .justify_between()
-                                    .h(px(26.))
+                                    .w_full()
+                                    .h(px(40.))
                                     .px(px(8.))
                                     .text_size(px(9.))
                                     .text_color(theme::MUTED)
@@ -305,7 +338,9 @@ impl UiState {
                     let row = if let Some(path) = &pl.folder_path {
                         let path = path.clone();
                         row.tooltip(move |_, cx| cx.new(|_| PathTip(path.clone())).into())
-                    } else { row };
+                    } else {
+                        row
+                    };
                     let st = playlist_state.clone();
                     let id = pl.id;
                     rows.push(
@@ -417,11 +452,13 @@ impl UiState {
             );
 
         let shown = self.tracks.clone();
-        let analysis_core = self.core.clone();
+        let analysis_statuses = self.core.analysis.statuses();
         let loaded_tracks = self.snapshot.decks.each_ref().map(|d| d.track_id);
         let track_sel = self.track_sel;
         let focus_deck = self.focus;
         let track_state = cx.entity();
+        let previews = self.library_previews.clone();
+        let preview_core = self.core.clone();
 
         let header = gpui::div()
             .flex()
@@ -436,6 +473,7 @@ impl UiState {
             .child(gpui::div().flex_none().w(px(28.)))
             .child(gpui::div().flex_none().w(px(COL_COVER)))
             .child(gpui::div().flex_1().min_w_0().child("TITLE"))
+            .child(gpui::div().flex_none().w(px(220.)).child("WAVEFORM · CUES"))
             .child(gpui::div().flex_none().w(px(COL_ARTIST)).child("ARTIST"))
             .child(gpui::div().flex_none().w(px(COL_ALBUM)).child("ALBUM"))
             .child(
@@ -485,7 +523,11 @@ impl UiState {
                         .bpm
                         .map(|b| format!("{b:.1}"))
                         .unwrap_or_else(|| "—".into());
-                    let status_overlay = status::overlay(&analysis_core.analysis.status(t));
+                    let status_overlay = status::overlay(
+                        analysis_statuses
+                            .get(&t.id)
+                            .unwrap_or(&crate::analysis::Status::Queued),
+                    );
                     let dur = fmt_duration(t.duration_ms as u64);
 
                     let row = gpui::div()
@@ -495,7 +537,7 @@ impl UiState {
                         .w_full()
                         .flex()
                         .items_center()
-                        .h(px(26.))
+                        .h(px(40.))
                         .px(px(ROW_PAD))
                         .gap_2()
                         .text_size(px(12.))
@@ -503,12 +545,35 @@ impl UiState {
                         .when(!selected && ix % 2 == 1, |el| el.bg(gpui::rgb(0x101013)))
                         .when(!selected, |el| el.hover(|s| s.bg(gpui::rgb(0x1c1c20))))
                         .child(
-                            gpui::div().flex().flex_none().w(px(28.)).gap(px(2.))
-                                .children(loaded_tracks.iter().enumerate().filter(|(_, id)| **id == Some(t.id)).map(|(i, _)| {
-                                    gpui::div().text_size(px(10.)).font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(theme::deck_color(if i == 0 { mixless_protocol::DeckId::A } else { mixless_protocol::DeckId::B }))
-                                        .child(if i == 0 { "A" } else { "B" })
-                                }))
+                            gpui::div()
+                                .flex()
+                                .flex_none()
+                                .w(px(28.))
+                                .gap(px(2.))
+                                .children(
+                                    loaded_tracks
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, id)| **id == Some(t.id))
+                                        .map(|(i, _)| {
+                                            gpui::div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .w(px(13.))
+                                                .h(px(17.))
+                                                .rounded(px(2.))
+                                                .bg(theme::PANEL_RAISED)
+                                                .text_size(px(10.))
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme::deck_color(if i == 0 {
+                                                    mixless_protocol::DeckId::A
+                                                } else {
+                                                    mixless_protocol::DeckId::B
+                                                }))
+                                                .child(if i == 0 { "A" } else { "B" })
+                                        }),
+                                ),
                         )
                         .child(track_cover(t))
                         .child(
@@ -519,6 +584,9 @@ impl UiState {
                                 .overflow_hidden()
                                 .child(t.title.clone()),
                         )
+                        .child(crate::wave::preview::element(
+                            previews.get(t, &preview_core),
+                        ))
                         .child(
                             gpui::div()
                                 .flex_none()
@@ -679,7 +747,7 @@ impl UiState {
                         .text_size(px(9.))
                         .text_color(theme::MUTED)
                         .overflow_hidden()
-                        .child(self.acquire.clone()),
+                        .child(self.import_status()),
                 )
             })
             .into_any_element()
@@ -909,7 +977,7 @@ impl UiState {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .h(px(26.))
+                        .h(px(40.))
                         .px_2()
                         .rounded(px(4.))
                         .bg(theme::with_alpha(theme::ACCENT, 0.08))
@@ -927,7 +995,7 @@ impl UiState {
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .child(self.acquire.clone()),
+                                .child(self.import_status()),
                         ),
                 )
             });
@@ -1023,5 +1091,43 @@ impl UiState {
                 .bg(theme::ACCENT)
                 .when(!focused, |el| el.opacity(0.0)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn folder_labels_use_the_shortest_unique_suffix() {
+        let paths = [
+            "/Music/House",
+            "/Music/Studio/Set",
+            "/Backup/Studio/Set",
+            "/Archive/Set",
+        ];
+        let folders: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(i, path)| mixless_library::PlaylistSummary {
+                id: i as i64,
+                name: "unused".into(),
+                tracks: 0,
+                folder_path: Some((*path).into()),
+            })
+            .collect();
+        let names: Vec<_> = folders
+            .iter()
+            .map(|folder| folder_name(folder, &folders))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "House",
+                "Music/Studio/Set",
+                "Backup/Studio/Set",
+                "Archive/Set"
+            ]
+        );
+        assert!(names.iter().all(|name| !name.starts_with('/')));
     }
 }

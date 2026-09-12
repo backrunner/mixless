@@ -5,6 +5,7 @@ use super::*;
 impl DeckRt {
     pub(super) fn new(sr: f32) -> Self {
         Self {
+            presentation_step: 0.,
             cue_sample: [0.0; 2],
             cue_trim: SmoothValue::new(1.0, sr, 0.003),
             isolator_l: Isolator::new(sr),
@@ -26,6 +27,8 @@ impl DeckRt {
             eq: std::array::from_fn(|_| SmoothValue::new(1.0, sr, 0.005)),
             step: SmoothValue::new(1.0, sr, 0.002),
             step_target: 1.0,
+            brake_elapsed: None,
+            paused_seek: false,
             playing: false,
             loop_range: None,
             slip: false,
@@ -48,20 +51,43 @@ impl DeckRt {
     }
 
     pub(super) fn capture_music_tail(&mut self, buffer: &AudioBuffer) {
-        self.tail_index = self.transition_tail.len();
-        if !self.music.is_primed() || self.last_music_blend == 0.0 {
+        let has_music = self.music.is_primed() && self.last_music_blend > 0.;
+        if !has_music && !self.seek.active() {
+            self.tail_index = self.transition_tail.len();
             return;
         }
         let mut position = self.position;
-        for sample in &mut self.transition_tail {
-            let (music, step) =
-                self.music
-                    .next(buffer, &self.resampler, position, self.music_params);
+        for i in 0..self.transition_tail.len() {
+            let mut step = self.step_target as f64;
             let (left, right) = self.resampler.stereo_at(buffer, position, step);
-            *sample = [
-                left + self.last_music_blend * (music[0] - left),
-                right + self.last_music_blend * (music[1] - right),
-            ];
+            let mut sample = [left, right];
+            if has_music {
+                let (music, music_step) =
+                    self.music
+                        .next(buffer, &self.resampler, position, self.music_params);
+                step = music_step;
+                for ch in 0..2 {
+                    sample[ch] += self.last_music_blend * (music[ch] - sample[ch]);
+                }
+            }
+            if self.seek.active() {
+                let g = self.seek.next_gain();
+                let old = if self.tail_index < self.transition_tail.len() {
+                    let old = self.transition_tail[self.tail_index];
+                    self.tail_index += 1;
+                    old
+                } else {
+                    let (l, r) = self.resampler.stereo_at(buffer, self.old_ph, step);
+                    [l, r]
+                };
+                for ch in 0..2 {
+                    sample[ch] = old[ch] * (1. - g).sqrt() + sample[ch] * g.sqrt();
+                }
+                self.old_ph += step;
+            }
+            // The old tail is read ahead of the write cursor, so no second
+            // buffer or callback allocation is needed for rapid retriggers.
+            self.transition_tail[i] = sample;
             position += step;
         }
         self.tail_index = 0;
@@ -113,6 +139,21 @@ impl Shared {
             None
         };
         let active_loop = roll_range.or(rt.loop_range);
+        // Vinyl braking follows the device sample clock and bypasses key lock.
+        // The tempo and key controls retain their settings for the next start.
+        let brake_gain = if let Some(elapsed) = rt.brake_elapsed.as_mut() {
+            let progress = (*elapsed as f32 / (device_sr * 1.2)).min(1.);
+            *elapsed = elapsed.saturating_add(1);
+            step *= ((1. - progress) * (1. - progress)) as f64;
+            if progress >= 1. {
+                rt.playing = false;
+                slot.playing.store(false, Ordering::Relaxed);
+                slot.brake.store(false, Ordering::Relaxed);
+            }
+            ((1. - progress) / 0.08).clamp(0., 1.)
+        } else {
+            1.
+        };
         let level = if rt.touching {
             let target = slot.jog_target.load(Ordering::Acquire) as f64 / 65536.0;
             let desired = ((target - rt.position) / (device_sr as f64 * 0.003)).clamp(
@@ -124,7 +165,7 @@ impl Shared {
             step = rt.scratch_speed;
             (step.abs() as f32 / (src_sr / device_sr * 0.025)).min(1.0)
         } else if rt.playing {
-            1.0
+            brake_gain
         } else {
             0.0
         };
@@ -179,7 +220,7 @@ impl Shared {
             rt.old_ph += step;
         }
 
-        if rt.playing || rt.touching || amplitude > 0.0 {
+        if rt.playing || rt.touching || (amplitude > 0.0 && !rt.paused_seek) {
             ph += step;
         }
         if rt.touching && rt.playing {
@@ -194,6 +235,7 @@ impl Shared {
         } else {
             ph.clamp(0.0, buf.frames.saturating_sub(1) as f64)
         };
+        rt.presentation_step = if rt.playing || rt.touching { step } else { 0. };
 
         let eq = std::array::from_fn(|band| rt.eq[band].next());
         rt.isolator_l.gain = eq;

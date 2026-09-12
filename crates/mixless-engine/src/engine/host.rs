@@ -49,6 +49,7 @@ impl Engine {
     ) -> Result<Self, EngineError> {
         let sr = config.sample_rate;
         let shared = Arc::new(Shared {
+            presentation: presentation::PresentationClock::default(),
             audio_failed: AtomicBool::new(true),
             cue_failed: AtomicBool::new(false),
             cue_device: Mutex::new(None),
@@ -167,8 +168,13 @@ impl Engine {
 
     /// Publish predecoded audio and its cached waveform; all preparation is host-side.
     pub fn load_buffer_if(
-        &self, deck: DeckId, track_id: TrackId, buf: Arc<AudioBuffer>,
-        wave: Arc<mixless_protocol::Waveform>, title: String, artist: String,
+        &self,
+        deck: DeckId,
+        track_id: TrackId,
+        buf: Arc<AudioBuffer>,
+        wave: Arc<mixless_protocol::Waveform>,
+        title: String,
+        artist: String,
         should_commit: impl FnOnce() -> bool,
     ) -> Result<bool, EngineError> {
         if !should_commit() {
@@ -192,6 +198,12 @@ impl Engine {
         slot.playing.store(false, Ordering::Relaxed);
         slot.jog_touch.store(false, Ordering::Release);
         slot.seek_pending.store(false, Ordering::Release);
+        slot.temporary_cue.store(0, Ordering::Relaxed);
+        slot.brake.store(false, Ordering::Relaxed);
+        slot.roll.store(false, Ordering::Relaxed);
+        for kind in &slot.cue_kinds {
+            kind.store(0, Ordering::Relaxed);
+        }
         let previous = slot
             .buffer
             .lock()
@@ -223,6 +235,12 @@ impl Engine {
         slot.playing.store(false, Ordering::Relaxed);
         slot.jog_touch.store(false, Ordering::Release);
         slot.seek_pending.store(false, Ordering::Release);
+        slot.temporary_cue.store(0, Ordering::Relaxed);
+        slot.brake.store(false, Ordering::Relaxed);
+        slot.roll.store(false, Ordering::Relaxed);
+        for kind in &slot.cue_kinds {
+            kind.store(0, Ordering::Relaxed);
+        }
         slot.track_id.store(0, Ordering::Relaxed);
         slot.frames.store(0, Ordering::Relaxed);
         slot.set_playhead(0.0);
@@ -264,10 +282,19 @@ impl Engine {
     }
 
     /// Position a prepared, paused deck without overwriting a user's hot cues.
-    pub fn cue_loaded_track(&self, deck: DeckId, id: TrackId, frame: u64) -> Result<(), EngineError> {
+    pub fn cue_loaded_track(
+        &self,
+        deck: DeckId,
+        id: TrackId,
+        frame: u64,
+    ) -> Result<(), EngineError> {
         let slot = &self.shared.decks[deck.index()];
-        if slot.track_id.load(Ordering::Relaxed) != id.0 as u64 || slot.playing.load(Ordering::Relaxed) {
-            return Err(EngineError::Protocol("automatic cue requires the prepared paused deck"));
+        if slot.track_id.load(Ordering::Relaxed) != id.0 as u64
+            || slot.playing.load(Ordering::Relaxed)
+        {
+            return Err(EngineError::Protocol(
+                "automatic cue requires the prepared paused deck",
+            ));
         }
         let frame = frame.min(slot.frames.load(Ordering::Relaxed).saturating_sub(1));
         slot.automix_cue.store(frame + 1, Ordering::Relaxed);

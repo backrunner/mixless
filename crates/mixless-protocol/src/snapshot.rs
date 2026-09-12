@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{default_fx, DeckId, FxSlot, FxState, TrackId, XfCurve};
+use crate::{CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve, default_fx};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
@@ -62,6 +62,10 @@ pub struct DeckSnapshot {
     #[serde(default = "default_fx")]
     pub fx: [FxState; FxSlot::INSERTS.len()],
     pub cues: [Option<u64>; 8],
+    #[serde(default = "default_cue_kinds")]
+    pub cue_kinds: [CueKind; 8],
+    #[serde(default)]
+    pub temporary_cue_frame: Option<u64>,
     /// Post fader/gain peak level per channel (0..1+), decayed per block.
     pub level: [f32; 2],
 }
@@ -112,9 +116,15 @@ impl Default for DeckSnapshot {
             insert: [None; FxSlot::INSERTS.len()],
             fx: default_fx(),
             cues: [None; 8],
+            cue_kinds: default_cue_kinds(),
+            temporary_cue_frame: None,
             level: [0.0; 2],
         }
     }
+}
+
+fn default_cue_kinds() -> [CueKind; 8] {
+    [CueKind::Hot; 8]
 }
 
 fn default_roll_division() -> u16 {
@@ -179,6 +189,10 @@ impl EngineSnapshot {
     }
 }
 
-fn default_loop_beats() -> f32 { 4. }
+fn default_loop_beats() -> f32 {
+    4.
+}
 
-fn default_resonance_enabled() -> bool { true }
+fn default_resonance_enabled() -> bool {
+    true
+}

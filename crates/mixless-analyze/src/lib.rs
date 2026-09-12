@@ -1,6 +1,9 @@
 //! Offline analysis. Must not open audio devices.
 
+mod cues;
+pub use cues::automatic_cues;
 mod features;
+mod regions;
 mod structure;
 pub use features::ANALYSIS_VERSION;
 
@@ -116,7 +119,11 @@ impl Analyzer {
     }
 
     /// Reuse the same decoded samples for features, spectral waveform and playback.
-    pub fn analyze_buffer(&self, id: TrackId, buf: &mixless_engine::AudioBuffer) -> (TrackAnalysis, AnalysisReport) {
+    pub fn analyze_buffer(
+        &self,
+        id: TrackId,
+        buf: &mixless_engine::AudioBuffer,
+    ) -> (TrackAnalysis, AnalysisReport) {
         let start = Instant::now();
         let mut analysis = features::analyze(id, &buf.samples, buf.sample_rate);
         let feature_time = start.elapsed();
@@ -126,6 +133,7 @@ impl Analyzer {
             (analysis.sections, analysis.phrase_boundaries) =
                 structure::detect(&mut analysis.bars, &analysis.tempo.downbeats);
         }
+        analysis.mix_regions = regions::detect(&analysis);
         (
             analysis,
             AnalysisReport {
@@ -166,6 +174,7 @@ impl Analyzer {
             sections: vec![],
             bars: vec![],
             phrase_boundaries: vec![],
+            mix_regions: vec![],
             waveform_path: None,
             partial: true,
         }

@@ -8,6 +8,7 @@ impl Shared {
         rt: &mut AudioRt,
         data: &mut [f32],
         channels: usize,
+        playback: std::time::Instant,
     ) {
         const MAX: usize = 1024;
         let ch = channels.max(1);
@@ -35,6 +36,10 @@ impl Shared {
                 done += n;
             }
         }
+        let period = std::time::Duration::from_secs_f64(
+            frames as f64 / shared.sample_rate.load(Ordering::Relaxed).max(1) as f64,
+        );
+        shared.publish_presentation(rt, playback + period, period);
     }
 
     pub(super) fn process_audio_block(&self, rt: &mut AudioRt, out: &mut [f32], channels: usize) {
@@ -74,12 +79,20 @@ impl Shared {
                 deck.position = slot.playhead_frames();
                 deck.old_ph = deck.position;
                 deck.seek = SeekXf::new();
+                deck.brake_elapsed = None;
+                deck.paused_seek = false;
                 deck.touching = false;
                 deck.isolator_l = Isolator::new(sr);
                 deck.isolator_r = Isolator::new(sr);
                 deck.filter_l = ChannelFilter::new(sr);
                 deck.filter_r = ChannelFilter::new(sr);
                 deck.amplitude = SmoothValue::new(0.0, sr, 0.001);
+                let trim = db_to_lin(slot.gain_milli.load(Ordering::Relaxed) as f32 / 100. - 96.);
+                deck.gain = SmoothValue::new(
+                    trim * slot.fader.load(Ordering::Relaxed) as f32 / 1000.,
+                    sr,
+                    0.003,
+                );
                 deck.music.invalidate();
                 deck.music_mode = false;
                 deck.music_blend = SmoothValue::new(0.0, sr, 0.006);
@@ -91,6 +104,9 @@ impl Shared {
             }
             let was_playing = deck.playing;
             deck.playing = slot.playing.load(Ordering::Relaxed);
+            if deck.playing {
+                deck.paused_seek = false;
+            }
             if deck.playing && !was_playing {
                 deck.music.invalidate();
             }
@@ -106,11 +122,13 @@ impl Shared {
                 1.0
             };
             deck.step_target = source_rate / sr * rate * direction;
-            deck.step.set(if slot.brake.load(Ordering::Relaxed) {
-                0.0
+            let braking = slot.brake.load(Ordering::Relaxed) && deck.playing;
+            deck.brake_elapsed = if braking {
+                Some(deck.brake_elapsed.unwrap_or(0))
             } else {
-                deck.step_target
-            });
+                None
+            };
+            deck.step.set(deck.step_target);
             let touching = slot.jog_touch.load(Ordering::Acquire);
             if touching && !deck.touching {
                 deck.slip_position = deck.position;
@@ -157,6 +175,7 @@ impl Shared {
             };
             let keylock = slot.keylock.load(Ordering::Relaxed);
             let music_mode = deck.playing
+                && !braking
                 && !touching
                 && (pitch.abs() > 0.0001 || (keylock && (rate - 1.0).abs() > 0.0001));
             let source_step = (source_rate / sr * direction) as f64;
@@ -195,7 +214,9 @@ impl Shared {
             let amount = slot.filter_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0;
             let resonance = if slot.resonance_enabled.load(Ordering::Relaxed) {
                 slot.resonance_milli.load(Ordering::Relaxed) as f32 / 1000.0
-            } else { 0. };
+            } else {
+                0.
+            };
             deck.isolator_l.set_resonance(resonance);
             deck.isolator_r.set_resonance(resonance);
             deck.filter_l.set_amount(sr, amount);
@@ -216,9 +237,8 @@ impl Shared {
                     .min(slot.frames.load(Ordering::Relaxed).saturating_sub(1) as f64);
                 slot.jog_target
                     .store((deck.position * 65536.0) as u64, Ordering::Relaxed);
-                if deck.playing {
-                    deck.seek.start(xf_len);
-                }
+                deck.paused_seek = !deck.playing;
+                deck.seek.start(xf_len);
             }
             if let Ok(grid) = slot.beat_grid.try_lock() {
                 deck.fx_clock = grid.as_ref().map(|grid| {

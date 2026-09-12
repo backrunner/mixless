@@ -4,9 +4,12 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{
     Arc, Mutex, OnceLock,
-    mpsc::{Sender, channel},
     atomic::{AtomicU64, Ordering},
+    mpsc::{Sender, channel},
 };
+
+mod playback;
+pub use playback::load_manual;
 
 use crate::state::AppCore;
 use mixless_protocol::{DeckId, Track, TrackAnalysis, TrackId};
@@ -35,7 +38,7 @@ impl Status {
 #[derive(Clone)]
 pub struct PreparedTrack {
     pub track: Track,
-    pub analysis: TrackAnalysis,
+    pub analysis: Arc<TrackAnalysis>,
     pub wave: Arc<mixless_protocol::Waveform>,
 }
 
@@ -43,6 +46,9 @@ pub struct PreparedTrack {
 pub struct AnalysisJobs {
     states: Mutex<HashMap<TrackId, Status>>,
     locks: Mutex<HashMap<TrackId, Arc<Mutex<()>>>>,
+    audio_locks: Mutex<HashMap<TrackId, Arc<Mutex<()>>>>,
+    updates: Mutex<HashMap<TrackId, Track>>,
+    pub latest: Mutex<HashMap<TrackId, Track>>,
     sender: OnceLock<Sender<TrackId>>,
     prepared: Mutex<VecDeque<PreparedTrack>>,
     decoded: Mutex<VecDeque<(TrackId, String, Arc<mixless_engine::AudioBuffer>)>>,
@@ -53,13 +59,35 @@ pub struct AnalysisJobs {
 impl AnalysisJobs {
     pub fn summary(&self) -> String {
         let states = self.states.lock().expect("analysis states");
-        let ready = states.values().filter(|s| matches!(s, Status::Ready(_))).count();
-        let failed = states.values().filter(|s| matches!(s, Status::Failed(_))).count();
+        let ready = states
+            .values()
+            .filter(|s| matches!(s, Status::Ready(_)))
+            .count();
+        let failed = states
+            .values()
+            .filter(|s| matches!(s, Status::Failed(_)))
+            .count();
         let pending = states.len() - ready - failed;
-        let mut text = if pending > 0 { format!("Preparing {ready}/{} tracks", states.len()) }
-            else { format!("{ready} tracks ready") };
-        if failed > 0 { text.push_str(&format!(" · {failed} failed")); }
+        let mut text = if pending > 0 {
+            format!(
+                "Analyzing · {ready}/{} complete · {pending} remaining",
+                states.len()
+            )
+        } else {
+            format!("{ready} analyzed")
+        };
+        if failed > 0 {
+            text.push_str(&format!(" · {failed} failed"));
+        }
         text
+    }
+
+    pub fn take_updates(&self) -> HashMap<TrackId, Track> {
+        std::mem::take(&mut *self.updates.lock().expect("analysis updates"))
+    }
+
+    pub fn statuses(&self) -> HashMap<TrackId, Status> {
+        self.states.lock().expect("analysis states").clone()
     }
 
     pub fn status(&self, track: &Track) -> Status {
@@ -81,8 +109,13 @@ impl AnalysisJobs {
     }
 
     pub fn forget(&self, id: TrackId) {
-        self.prepared.lock().expect("prepared cache").retain(|p| p.track.id != id);
+        self.prepared
+            .lock()
+            .expect("prepared cache")
+            .retain(|p| p.track.id != id);
         self.states.lock().expect("analysis states").remove(&id);
+        self.latest.lock().expect("analysis metadata").remove(&id);
+        self.updates.lock().expect("analysis updates").remove(&id);
         self.revision.fetch_add(1, Ordering::Release);
     }
 }
@@ -108,79 +141,108 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
         let rx = Arc::new(Mutex::new(rx));
         // Keep one core available for the audio callback/UI while allowing
         // several independent tracks to decode and analyze at once.
-        let workers = std::thread::available_parallelism().map_or(2, usize::from)
-            .saturating_sub(1).clamp(1, 4);
+        let workers = std::thread::available_parallelism()
+            .map_or(2, usize::from)
+            .saturating_sub(1)
+            .clamp(1, 4);
         for _ in 0..workers {
             let rx = rx.clone();
             let core = Arc::downgrade(core);
-            std::thread::spawn(move || loop {
-                let Ok(id) = rx.lock().expect("analysis queue").recv() else { break };
-                let Some(core) = core.upgrade() else { break };
-                let _ = prepare(&core, id);
+            std::thread::spawn(move || {
+                loop {
+                    let Ok(id) = rx.lock().expect("analysis queue").recv() else {
+                        break;
+                    };
+                    let Some(core) = core.upgrade() else { break };
+                    let _ = prepare(&core, id);
+                }
             });
         }
         tx
     });
-    for id in pending { let _ = sender.send(id); }
+    for id in pending {
+        let _ = sender.send(id);
+    }
 }
 
 /// Coalesce duplicate requests per track, while independent tracks run in parallel.
 pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
-    let lock = core.analysis.locks.lock().expect("analysis locks")
-        .entry(id).or_default().clone();
+    let lock = core
+        .analysis
+        .locks
+        .lock()
+        .expect("analysis locks")
+        .entry(id)
+        .or_default()
+        .clone();
     let _track = lock.lock().map_err(|_| "Analysis worker lock poisoned")?;
     let result = prepare_inner(core, id);
     match &result {
-        Ok(prepared) => core.analysis.set(id, Status::Ready(prepared.track.content_hash.clone())),
+        Ok(prepared) => {
+            if core.analysis.status(&prepared.track)
+                != Status::Ready(prepared.track.content_hash.clone())
+            {
+                core.analysis
+                    .latest
+                    .lock()
+                    .expect("analysis metadata")
+                    .insert(id, prepared.track.clone());
+                core.analysis
+                    .updates
+                    .lock()
+                    .expect("analysis updates")
+                    .insert(id, prepared.track.clone());
+            }
+            core.analysis
+                .set(id, Status::Ready(prepared.track.content_hash.clone()));
+        }
         Err(error) => core.analysis.set(id, Status::Failed(error.clone())),
     }
     result
 }
 
 /// A small PCM cache makes recently prepared/next tracks instant without keeping a playlist in RAM.
-pub fn decode(core: &AppCore, prepared: &PreparedTrack) -> Result<Arc<mixless_engine::AudioBuffer>, String> {
-    let track = &prepared.track;
-    if let Some((_, _, buf)) = core.analysis.decoded.lock().expect("decoded cache").iter()
-        .find(|(id, hash, _)| *id == track.id && *hash == track.content_hash) {
-        return Ok(buf.clone());
-    }
-    let buf = mixless_engine::decode_file(Path::new(&track.path)).map_err(|e| e.to_string())?;
-    if core.library.verified_content_hash(Path::new(&track.path)).map_err(|e| e.to_string())? != track.content_hash {
-        return Err("File changed while loading; retry".into());
-    }
-    remember_audio(core, track, buf.clone());
-    Ok(buf)
+pub fn decode(
+    core: &AppCore,
+    prepared: &PreparedTrack,
+) -> Result<Arc<mixless_engine::AudioBuffer>, String> {
+    playback::audio(core, &prepared.track).map(|audio| audio.buf)
 }
 
 fn remember_audio(core: &AppCore, track: &Track, buf: Arc<mixless_engine::AudioBuffer>) {
     const MAX_BYTES: usize = 256 * 1024 * 1024;
     let mut cache = core.analysis.decoded.lock().expect("decoded cache");
     cache.retain(|(id, _, _)| *id != track.id);
-    if buf.samples.len() * 4 > MAX_BYTES { return; }
+    if buf.samples.len() * 4 > MAX_BYTES {
+        return;
+    }
     cache.push_back((track.id, track.content_hash.clone(), buf));
-    while cache.len() > 2 || cache.iter().map(|(_, _, b)| b.samples.len() * 4).sum::<usize>() > MAX_BYTES {
+    while cache.len() > 2
+        || cache
+            .iter()
+            .map(|(_, _, b)| b.samples.len() * 4)
+            .sum::<usize>()
+            > MAX_BYTES
+    {
         cache.pop_front();
     }
 }
 
 fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
-    let mut track = core.library.get_track(id).map_err(|e| e.to_string())?;
-    let path_string = track.path.clone();
-    let path = Path::new(&path_string);
-    let hash = core
-        .library
-        .verified_content_hash(path)
-        .map_err(|e| e.to_string())?;
-    if let Some(prepared) = core.analysis.prepared.lock().expect("prepared cache").iter()
-        .find(|p| p.track.id == id && p.track.content_hash == hash && track.analyzed) {
+    let track = playback::current_track(core, id)?;
+    let path = Path::new(&track.path);
+    let hash = track.content_hash.clone();
+    if let Some(prepared) = core
+        .analysis
+        .prepared
+        .lock()
+        .expect("prepared cache")
+        .iter()
+        .find(|p| p.track.id == id && p.track.content_hash == hash && track.analyzed)
+    {
         return Ok(prepared.clone());
     }
     core.analysis.set(id, Status::Checking);
-    if !track.analyzed || track.content_hash != hash {
-        // Fill tags/cover only after discovery has published every filename.
-        core.library.import_file(path).map_err(|e| e.to_string())?;
-        track = core.library.get_track(id).map_err(|e| e.to_string())?;
-    }
     let cached = if track.analyzed && hash == track.content_hash {
         core.library
             .load_analysis(id, mixless_analyze::ANALYSIS_VERSION)
@@ -189,43 +251,58 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
     } else {
         None
     };
+    let refresh_cues = cached.is_none();
     let cached_wave = core.library.load_waveform(id).ok().flatten();
     let (analysis, wave) = if let (Some(analysis), Some(wave)) = (&cached, &cached_wave) {
         (analysis.clone(), Arc::new(wave.clone()))
     } else {
         if cached.is_none() {
-            core.library.begin_analysis(id, &hash).map_err(|e| e.to_string())?;
+            core.library
+                .begin_analysis(id, &hash)
+                .map_err(|e| e.to_string())?;
         }
         core.analysis.set(id, Status::Analyzing);
-        let buf = mixless_engine::decode_file(path).map_err(|e| e.to_string())?;
-        let (analysis, wave) = std::thread::scope(|scope| {
-            let wave = scope.spawn(|| {
-                cached_wave.unwrap_or_else(|| {
-                    let columns = ((buf.frames / 64) as usize).clamp(4096, 524_288);
-                    mixless_engine::compute_waveform(&buf, columns)
-                })
-            });
-            let analysis = cached.unwrap_or_else(|| core.analyzer.analyze_buffer(id, &buf).0);
-            (analysis, Arc::new(wave.join().expect("waveform worker")))
-        });
-        if core.library.verified_content_hash(path).map_err(|e| e.to_string())? != hash {
+        // Publish the spectral cache before musical analysis. A manual load
+        // can now use it while this track's beat/phrase analysis is still running.
+        let audio = playback::audio(core, &track)?;
+        let analysis = cached.unwrap_or_else(|| core.analyzer.analyze_buffer(id, &audio.buf).0);
+        let wave = audio.wave;
+        if core
+            .library
+            .verified_content_hash(path)
+            .map_err(|e| e.to_string())?
+            != hash
+        {
             return Err("File changed during analysis; retry".into());
         }
-        core.library.finish_analysis(&analysis, &hash, mixless_analyze::ANALYSIS_VERSION)
+        core.library
+            .finish_analysis(&analysis, &hash, mixless_analyze::ANALYSIS_VERSION)
             .map_err(|e| e.to_string())?;
-        core.library.save_waveform(id, &hash, &wave).map_err(|e| e.to_string())?;
-        remember_audio(core, &track, buf);
+        core.library
+            .save_waveform(id, &hash, &wave)
+            .map_err(|e| e.to_string())?;
         (analysis, wave)
     };
-    track = core.library.get_track(id).map_err(|e| e.to_string())?;
+    let track = core.library.get_track(id).map_err(|e| e.to_string())?;
     if track.content_hash != hash || !track.analyzed {
         return Err("Track revision changed during analysis".into());
     }
-    let prepared = PreparedTrack { track, analysis, wave };
+    if refresh_cues {
+        core.library
+            .replace_auto_cues(id, &mixless_analyze::automatic_cues(&analysis))
+            .map_err(|e| e.to_string())?;
+    }
+    let prepared = PreparedTrack {
+        track,
+        analysis: Arc::new(analysis),
+        wave,
+    };
     let mut cache = core.analysis.prepared.lock().expect("prepared cache");
     cache.retain(|p| p.track.id != id);
     cache.push_back(prepared.clone());
-    while cache.len() > 8 { cache.pop_front(); }
+    while cache.len() > 8 {
+        cache.pop_front();
+    }
     Ok(prepared)
 }
 
@@ -246,13 +323,23 @@ pub fn load(
     }
     let buf = decode(core, &prepared)?;
     let track = &prepared.track;
-    if core.library.verified_content_hash(Path::new(&track.path)).map_err(|e| e.to_string())? != track.content_hash {
+    if core
+        .library
+        .verified_content_hash(Path::new(&track.path))
+        .map_err(|e| e.to_string())?
+        != track.content_hash
+    {
         core.analysis.forget(id);
         return Err("File changed while loading; retry".into());
     }
-    let cues = core.library.cues(id).map_err(|e| e.to_string())?;
-    let _load = core.deck_load.lock().map_err(|_| "Deck load mutex poisoned")?;
-    let _commit = core.automix_commit.lock().map_err(|_| "Automix commit lock poisoned")?;
+    let _load = core
+        .deck_load
+        .lock()
+        .map_err(|_| "Deck load mutex poisoned")?;
+    let _commit = core
+        .automix_commit
+        .lock()
+        .map_err(|_| "Automix commit lock poisoned")?;
     let committed = core
         .engine
         .load_buffer_if(
@@ -279,9 +366,86 @@ pub fn load(
     }
     core.engine
         .set_bpm(deck, prepared.analysis.tempo.global_bpm);
-    for cue in cues {
+    for cue in core.library.cues(id).map_err(|e| e.to_string())? {
         core.engine.set_cue_frame(deck, cue.index, cue.frame);
+        let _ = core.engine.dispatch(mixless_protocol::Command::SetCueKind {
+            track_id: id,
+            index: cue.index,
+            kind: if cue.user_set {
+                cue.kind
+            } else {
+                mixless_protocol::CueKind::Hot
+            },
+        });
     }
     core.analysis.loaded.lock().expect("loaded analysis")[deck.index()] = Some(prepared);
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_analysis_does_not_recreate_a_deleted_suggestion() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        let index = core.library.cues(id).unwrap()[0].index;
+        core.library.clear_cue(id, index).unwrap();
+        core.analysis.forget(id);
+        prepare(&core, id).unwrap();
+        assert!(
+            core.library
+                .cues(id)
+                .unwrap()
+                .iter()
+                .all(|c| c.index != index)
+        );
+    }
+
+    #[test]
+    fn manual_load_does_not_wait_for_the_musical_analysis_lock() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        let hash = core.library.get_track(id).unwrap().content_hash;
+        core.library.begin_analysis(id, &hash).unwrap();
+        core.analysis.forget(id);
+        let lock = core
+            .analysis
+            .locks
+            .lock()
+            .unwrap()
+            .entry(id)
+            .or_default()
+            .clone();
+        let guard = lock.lock().unwrap();
+        let (tx, rx) = channel();
+        let worker_core = core.clone();
+        let worker = std::thread::spawn(move || {
+            let _ = tx.send(load_manual(&worker_core, DeckId::A, id, || true));
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+        drop(guard);
+        worker.join().unwrap();
+        assert!(result.unwrap().unwrap().is_some());
+        assert_eq!(core.engine.snapshot().decks[0].track_id, Some(id));
+        assert!(!core.library.get_track(id).unwrap().analyzed);
+    }
+
+    #[test]
+    fn superseded_manual_load_cannot_publish_after_decode() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        load_manual(&core, DeckId::A, tracks[0], || true).unwrap();
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        assert!(
+            load_manual(&core, DeckId::A, tracks[1], || checks
+                .fetch_add(1, Ordering::Relaxed)
+                == 0)
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(core.engine.snapshot().decks[0].track_id, Some(tracks[0]));
+        load_manual(&core, DeckId::B, tracks[2], || true).unwrap();
+        assert_eq!(core.engine.snapshot().decks[1].track_id, Some(tracks[2]));
+    }
 }
