@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::{Mutex, mpsc::channel};
+use std::sync::{mpsc::channel, Mutex};
 use std::time::Instant;
 
 pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
@@ -25,6 +25,8 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
             ..Default::default()
         }),
         acquired_dir: dir.path().join("acquired"),
+        stems: None,
+        shutting_down: false.into(),
         midi: Mutex::new(None),
         deck_load: Mutex::new(()),
     });
@@ -59,6 +61,21 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
         tracks.push(id);
     }
     (dir, core, tracks)
+}
+
+#[test]
+fn cached_boundary_plans_compile_for_every_adjacent_pair() {
+    let (_dir, core, tracks) = fixture();
+    for i in 0..tracks.len() {
+        let a = crate::analysis::prepare(&core, tracks[i]).unwrap();
+        let b = crate::analysis::prepare(&core, tracks[(i + 1) % tracks.len()]).unwrap();
+        load(&core, DeckId::A, a.track.id, &|| true).unwrap();
+        load(&core, DeckId::B, b.track.id, &|| true).unwrap();
+        let p = super::preparation::pair(&core, &a, &b, 0., Default::default(), Default::default())
+            .unwrap();
+        let result = core.engine.prepare_plan_on(p.clone(), DeckId::A);
+        assert!(result.is_ok(), "pair {i}: {:?}, plan={p:?}", result.err());
+    }
 }
 
 #[test]

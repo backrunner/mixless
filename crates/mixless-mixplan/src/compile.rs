@@ -1,4 +1,4 @@
-use crate::{Candidate, grid::Grid};
+use crate::{grid::Grid, Candidate};
 use mixless_protocol::{
     AutomationLanes, EqLane, FilterLane, LoopOp, MixPlan, MixPlanSummary, PerformanceOffset,
     Polyline, ScratchOp, StrategyId as S, TrackAnalysis,
@@ -213,6 +213,7 @@ pub(crate) fn compile(
         }
     }
     MixPlan {
+        stem_mix: None,
         summary: Some(MixPlanSummary {
             pair: (a.track_id, b.track_id),
             strategy: c.strategy,

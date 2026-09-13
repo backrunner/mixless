@@ -120,11 +120,26 @@ impl PreviewStore {
     }
 }
 
-pub fn element(preview: Option<Arc<Preview>>) -> impl IntoElement {
+pub fn positions(
+    decks: &[mixless_protocol::DeckSnapshot; 2],
+    frames: [f64; 2],
+) -> [Option<f32>; 2] {
+    std::array::from_fn(|i| {
+        let d = &decks[i];
+        (d.track_id.is_some() && d.frames > 0 && frames[i].is_finite())
+            .then(|| (frames[i] / d.frames as f64).clamp(0., 1.) as f32)
+    })
+}
+
+pub fn element(
+    preview: Option<Arc<Preview>>,
+    overlay: super::mix_overlay::Overlay,
+    positions: [Option<f32>; 2],
+) -> impl IntoElement {
     div()
-        .w(px(220.))
+        .flex_1()
+        .min_w(px(280.))
         .h(px(34.))
-        .flex_none()
         .bg(theme::PANEL_INSET)
         .overflow_hidden()
         .child(
@@ -169,6 +184,43 @@ pub fn element(preview: Option<Arc<Preview>>) -> impl IntoElement {
                             )
                         }),
                     );
+                    super::mix_overlay::paint(overlay, p.duration, bounds, window);
+                    // A and B use the deck colors and separate flag tiers, so
+                    // loading the same track twice preserves both positions.
+                    let letters = [[14u8, 17, 17, 31, 17, 17, 17], [30, 17, 17, 30, 17, 17, 30]];
+                    for (i, position) in positions.iter().enumerate() {
+                        let Some(position) = position else { continue };
+                        let x = pf(bounds.origin.x)
+                            + (position * width).clamp(1., (width - 2.).max(1.));
+                        let y = pf(bounds.origin.y);
+                        let color = [theme::DECK_A, theme::DECK_B][i];
+                        quad_fill(
+                            window,
+                            x - 1.,
+                            y,
+                            4.,
+                            pf(bounds.size.height),
+                            gpui::rgb(0x08090c),
+                        );
+                        quad_fill(window, x, y, 2., pf(bounds.size.height), color);
+                        let bx = (x + 2.).min(pf(bounds.origin.x) + width - 12.);
+                        let by = y + i as f32 * 11.;
+                        quad_fill(window, bx, by, 11., 10., color);
+                        for (row, bits) in letters[i].iter().enumerate() {
+                            for col in 0..5 {
+                                if bits & (1 << (4 - col)) != 0 {
+                                    quad_fill(
+                                        window,
+                                        bx + 3. + col as f32,
+                                        by + 1. + row as f32,
+                                        1.,
+                                        1.,
+                                        gpui::rgb(0x08090c),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 },
             )
             .size_full(),
@@ -178,6 +230,22 @@ pub fn element(preview: Option<Arc<Preview>>) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn overview_positions_follow_both_decks_and_clamp_seeks() {
+        let mut decks: [mixless_protocol::DeckSnapshot; 2] = Default::default();
+        decks[0].track_id = Some(TrackId(7));
+        decks[1].track_id = Some(TrackId(7));
+        decks[0].frames = 480000;
+        decks[1].frames = 960000;
+        assert_eq!(
+            positions(&decks, [120000., 720000.]),
+            [Some(0.25), Some(0.75)]
+        );
+        assert_eq!(positions(&decks, [-4., 1920000.]), [Some(0.), Some(1.)]);
+        decks[0].track_id = None;
+        decks[1].frames = 0;
+        assert_eq!(positions(&decks, [120000., 720000.]), [None, None]);
+    }
     #[test]
     fn cached_preview_refreshes_manual_cues_without_retaining_full_waveforms() {
         let (_dir, core, tracks) = crate::automix::tests::fixture();

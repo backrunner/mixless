@@ -99,7 +99,7 @@ fn effects_have_distinct_audible_output_and_bounded_release() {
             bypass: true,
             ..EffectParams::default()
         });
-        for _ in 0..1000 {
+        for _ in 0..8000 {
             effect.process([0.1, -0.1], false);
         }
         assert_eq!(effect.process([0.1, -0.1], false), [0.1, -0.1]);
@@ -274,7 +274,7 @@ fn every_kind_extremes_bypass_send_and_type_switch_stay_bounded() {
                     );
                 }
                 e.configure(EffectParams { mix: 0.0, ..p });
-                for _ in 0..1000 {
+                for _ in 0..(sr * 0.16) as usize {
                     e.process([0.1; 2], false);
                 }
                 assert_eq!(e.process([0.1; 2], false), [0.1; 2]);
@@ -319,4 +319,57 @@ fn catalogue_callback_budget() {
         "70 kinds, worst {:?} p99 {:.4} ms / 256 frames",
         worst.1, worst.0
     );
+}
+
+#[test]
+fn reverb_and_delay_switches_fade_and_can_be_retriggered_or_opted_out() {
+    for kind in [EffectKind::Reverb, EffectKind::Delay, EffectKind::Echo] {
+        let mut effect = Effect::new(48_000.);
+        let mut params = EffectParams {
+            kind,
+            mix: 0.7,
+            bypass: false,
+            ..Default::default()
+        };
+        effect.configure(params);
+        let mut previous = [0.; 2];
+        for _ in 0..48_000 {
+            previous = effect.process([0.1; 2], true);
+        }
+        params.bypass = true;
+        effect.configure(params);
+        let first = effect.process([0.1; 2], true);
+        assert!((first[0] - previous[0]).abs() < 0.001, "{kind:?}");
+        for _ in 0..3600 {
+            previous = effect.process([0.1; 2], true);
+        }
+        assert_ne!(
+            previous, [0.; 2],
+            "fade must still be audible at 75 ms: {kind:?}"
+        );
+        params.bypass = false;
+        effect.configure(params);
+        assert!((effect.process([0.1; 2], true)[0] - previous[0]).abs() < 0.001);
+        for _ in 0..7200 {
+            effect.process([0.1; 2], true);
+        }
+        params.bypass = true;
+        effect.configure(params);
+        for _ in 0..7200 {
+            effect.process([0.1; 2], true);
+        }
+        assert_eq!(effect.process([0.1; 2], true), [0.; 2]);
+        params.auto_fade = false;
+        params.bypass = false;
+        effect.configure(params);
+        for _ in 0..480 {
+            effect.process([0.1; 2], true);
+        }
+        params.bypass = true;
+        effect.configure(params);
+        for _ in 0..240 {
+            effect.process([0.1; 2], true);
+        }
+        assert_eq!(effect.process([0.1; 2], true), [0.; 2]);
+    }
 }

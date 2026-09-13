@@ -1,4 +1,4 @@
-use crate::{Candidate, grid::Grid};
+use crate::{grid::Grid, Candidate};
 use mixless_protocol::{BarMap, Cue, CueKind, SectionLabel as S, StrategyId as Id, TrackAnalysis};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -110,6 +110,48 @@ fn compatibility(a: (i32, bool), b: (i32, bool)) -> f32 {
     } else {
         0.0
     }
+}
+
+/// Prefer tonal evidence from the audio actually overlapped. An exit anchor's
+/// previous eight bars can describe the drop, while the mix is in its break.
+pub(crate) fn overlap_key_match(
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+    range_a: (f32, f32),
+    range_b: (f32, f32),
+    pa: f32,
+    pb: f32,
+) -> Option<(f32, f32, bool)> {
+    let local = |t: &TrackAnalysis, (start, end): (f32, f32)| {
+        let mut chroma = [0.; 12];
+        for bar in &t.bars {
+            let weight = (bar.end_sec.min(end) - bar.start_sec.max(start)).max(0.) * bar.rms;
+            for i in 0..12 {
+                chroma[i] += bar.chroma[i] * weight;
+            }
+        }
+        if chroma.iter().sum::<f32>() <= 1e-8 {
+            return None;
+        }
+        let (_, key, confidence) = mixless_protocol::estimate_key(&chroma);
+        Some((key?, confidence))
+    };
+    let ((ka, ca), (kb, cb)) = (local(a, range_a)?, local(b, range_b)?);
+    let ka = shifted_camelot(&ka, pa)?;
+    let native = shifted_camelot(&kb, pb)?;
+    let reliable = ca >= 0.55 && cb >= 0.55;
+    let score = compatibility(ka, native);
+    if score > 0. {
+        return Some((score, 0., reliable));
+    }
+    for shift in [-1f32, 1., -2., 2.] {
+        if (pb + shift).abs() <= 2.
+            && shifted_camelot(&kb, pb + shift).is_some_and(|k| compatibility(ka, k) >= 0.85)
+        {
+            return Some((if shift.abs() == 1. { 0.5 } else { 0.25 }, shift, reliable));
+        }
+    }
+    Some((0., 0., reliable))
 }
 
 pub(crate) fn key_match(a: &TrackAnalysis, b: &TrackAnalysis, pa: f32, pb: f32) -> (f32, f32) {

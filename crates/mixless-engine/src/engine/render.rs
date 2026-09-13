@@ -76,6 +76,9 @@ impl Shared {
                 deck.buffer_id = buffer_id;
                 deck.fx_clock = None;
                 deck.source = bufs[index].clone();
+                deck.stems = None;
+                deck.stem_gain = std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15));
+                deck.stem_values = [1.; 3];
                 deck.position = slot.playhead_frames();
                 deck.old_ph = deck.position;
                 deck.seek = SeekXf::new();
@@ -103,6 +106,23 @@ impl Shared {
                 }
             }
             let was_playing = deck.playing;
+            if let Ok(stems) = slot.stems.try_lock() {
+                deck.stems = stems
+                    .as_ref()
+                    .filter(|s| {
+                        bufs[index]
+                            .as_ref()
+                            .is_some_and(|b| Arc::ptr_eq(b, &s.source))
+                    })
+                    .cloned();
+            }
+            for i in 0..3 {
+                deck.stem_gain[i].set(if deck.stems.is_some() {
+                    slot.stem_gain[i].load(Ordering::Relaxed) as f32 / 1000.
+                } else {
+                    1.
+                });
+            }
             deck.playing = slot.playing.load(Ordering::Relaxed);
             if deck.playing {
                 deck.paused_seek = false;
@@ -228,7 +248,9 @@ impl Shared {
             deck.filter_l.set_resonance(resonance);
             deck.filter_r.set_resonance(resonance);
             for (effect, params) in deck.inserts.iter_mut().zip(&slot.inserts) {
-                effect.configure(params.read(bpm * rate));
+                let mut p = params.read(bpm * rate);
+                p.auto_fade = self.fx_auto_fade.load(Ordering::Relaxed);
+                effect.configure(p);
             }
             rt.send_levels[index].set(slot.send_milli.load(Ordering::Relaxed) as f32 / 1000.0);
             if slot.seek_pending.swap(false, Ordering::AcqRel) {
@@ -286,20 +308,27 @@ impl Shared {
             .filter(|_| self.automation.enabled.load(Ordering::Acquire))
             .unwrap_or(tempo);
         for index in 0..2 {
-            rt.sends[index].configure(self.sends[index].read(tempo));
+            let mut p = self.sends[index].read(tempo);
+            p.auto_fade = self.fx_auto_fade.load(Ordering::Relaxed);
+            rt.sends[index].configure(p);
         }
 
         let mut last_ok = true;
         let mut peak = [[0f32; 2]; 2];
+        let mut master_peak = [0f32; 2];
+        let mut recording = self.recorder.sink.try_lock().ok();
         let pfl = std::array::from_fn::<_, 2, _>(|i| self.decks[i].pfl.load(Ordering::Relaxed));
+        let preview = std::array::from_fn::<_, 2, _>(|i| {
+            self.decks[i].preview_cue.load(Ordering::Acquire) > 0
+        });
         let cue_gain = self.cue_gain.load(Ordering::Relaxed) as f32 / 1000.0;
         for i in 0..frames {
-            let (al, ar) = self.render_deck(0, &mut rt.decks[0], sr, bufs[0].as_deref());
-            let (bl, br) = self.render_deck(1, &mut rt.decks[1], sr, bufs[1].as_deref());
+            let (mut al, mut ar) = self.render_deck(0, &mut rt.decks[0], sr, bufs[0].as_deref());
+            let (mut bl, mut br) = self.render_deck(1, &mut rt.decks[1], sr, bufs[1].as_deref());
             if let Some(cue) = &mut rt.cue_output {
                 let mut sample = [0.0; 2];
                 for (index, enabled) in pfl.iter().enumerate() {
-                    if *enabled {
+                    if *enabled || preview[index] {
                         sample[0] += rt.decks[index].cue_sample[0];
                         sample[1] += rt.decks[index].cue_sample[1];
                     }
@@ -308,6 +337,12 @@ impl Shared {
                     .cue_limiter
                     .process(sample[0] * cue_gain, sample[1] * cue_gain);
                 cue.push([left, right]);
+            }
+            if preview[0] {
+                (al, ar) = (0., 0.);
+            }
+            if preview[1] {
+                (bl, br) = (0., 0.);
             }
             peak[0][0] = peak[0][0].max(al.abs());
             peak[0][1] = peak[0][1].max(ar.abs());
@@ -338,18 +373,31 @@ impl Shared {
                 out[i * channels] = l;
                 out[i * channels + 1] = r;
             }
+            master_peak[0] = master_peak[0].max(l.abs());
+            master_peak[1] = master_peak[1].max(r.abs());
+            if let Some(sink) = recording.as_mut().and_then(|slot| slot.as_mut()) {
+                sink.push([l, r], sr as u32);
+            }
         }
         if !last_ok {
             self.xrun.fetch_add(1, Ordering::Relaxed);
         }
         // Peak-hold with per-block decay so the UI meters fall smoothly.
+        let decay = (-(frames as f32) / (sr * 0.18)).exp();
+        for ch in 0..2 {
+            let previous = f32::from_bits(self.master_level[ch].load(Ordering::Relaxed));
+            self.master_level[ch].store(
+                master_peak[ch].max(previous * decay).to_bits(),
+                Ordering::Relaxed,
+            );
+        }
         for d in 0..2 {
             if bufs[d].is_some() {
                 self.decks[d].set_playhead(rt.decks[d].position);
             }
             for ch in 0..2 {
                 let cur = f32::from_bits(self.decks[d].level[ch].load(Ordering::Relaxed));
-                let next = peak[d][ch].max(cur * 0.85);
+                let next = peak[d][ch].max(cur * decay);
                 self.decks[d].level[ch].store(next.to_bits(), Ordering::Relaxed);
             }
         }

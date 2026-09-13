@@ -53,6 +53,7 @@ impl UiState {
             }
         }
         self.library_previews.invalidate(id);
+        crate::automix::refresh_previews(&self.core);
         self.library_key = None;
     }
     pub fn clear_cue(&mut self, deck: DeckId, index: usize) {
@@ -77,6 +78,7 @@ impl UiState {
             }
         }
         self.library_previews.invalidate(id);
+        crate::automix::refresh_previews(&self.core);
         self.library_key = None;
     }
 }

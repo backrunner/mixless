@@ -16,6 +16,8 @@ crates/mixless-protocol
 crates/mixless-engine
 crates/mixless-library
 crates/mixless-analyze
+crates/mixless-stems
+crates/mixless-tools
 crates/mixless-mixplan
 crates/mixless-spotify
 crates/mixless-acquire
@@ -60,7 +62,7 @@ in the Dock, header and About window. The [branding assets](assets/branding/READ
 include the refined image master, an opaque 1024 px sRGB store PNG, rounded
 macOS assets and ICNS, and the original vector artwork. Regenerate the local icon exports with
 `swift scripts/generate-icons.swift`; after building, run
-`python3 scripts/bundle-macos.py` to assemble a local unsigned `.app`.
+`cargo run --locked -p mixless-tools -- bundle` to assemble a local unsigned `.app`.
 
 ## Preferences
 
@@ -192,7 +194,7 @@ control cancels the pending request as well.
 Master tempo changes are followed continuously, including half/double tempo
 matching. Scrubbing, reverse, or changing the follower's tempo takes manual
 control; enabling Automix gives its plan control of timing.
-Research sources, behavior and limitations are in [BEAT_SYNC.md](BEAT_SYNC.md).
+Research sources, behavior and limitations are in [BEAT_SYNC.md](.agents/reference/BEAT_SYNC.md).
 
 
 ## Automix
@@ -211,7 +213,7 @@ hard constraints, hot cues are soft anchors, and an impossible cue window is
 reported instead of bypassed.
 Analysis keeps several entry/exit regions with local key, vocal, rhythm and
 energy evidence. Pair planning compares these windows before selecting the cue
-and technique. Musical spans can include long 24/48/64-bar layered blends, with separate high/bass/mid exchanges, nonlinear Level/filter/crossfader curves and optional echo exits. The library shows full-track, fixed-width waveforms with numbered colored cue flags. While the incoming deck is paused, AUTO sets its cue, tempo,
+and technique. Musical spans can include long 24/48/64-bar layered blends, with separate high/bass/mid exchanges, nonlinear Level/filter/crossfader curves and optional echo exits. Valid structural cuts can be instantaneous. The library shows full-track waveforms with numbered cue flags and deck playheads; while AUTO is enabled, it also shows planned IN/OUT points and the actual mixing intervals. Playlist order and selection persist across restarts, and import refreshes preserve manually ordered tracks. While the incoming deck is paused, AUTO sets its cue, tempo,
 key lock, optional harmonic shift (at most two semitones), EQ and closed level.
 During the handoff the engine drives transport, filter, EQ, channel fader,
 crossfader and selected FX. The transition strip shows the selected source
@@ -225,24 +227,36 @@ cargo run -p mixless-engine --example automix -- outgoing.wav incoming.wav previ
 ```
 
 The planner uses local tempo maps, Camelot compatibility, measured phrase
-boundaries, energy/foreground/kick scoring, 8/16/32-bar overlap search, 1:1 and
+boundaries, energy/foreground/kick scoring, measured musical spans and long-overlap candidates, 1:1 and
 2:1 bar maps, and inherited performance offsets. On macOS 12+, offline analysis
 also attempts a bounded, on-device Apple Sound Analysis vocal classifier; no
 model download or Python runtime is needed. Model failures retain the DSP result.
 The original nine catalog envelopes remain available with `smooth: false`.
 Performance measurements and the model roadmap are in
-[ANALYSIS_ENHANCEMENT.md](ANALYSIS_ENHANCEMENT.md).
+[ANALYSIS_ENHANCEMENT.md](.agents/reference/ANALYSIS_ENHANCEMENT.md).
+
+[Native stem and note analysis](.agents/reference/native-inference.md) runs by
+default in the desktop preparation queue. Rust drives pinned HTDemucs and Basic
+Pitch ONNX models, caches vocals/drums/instruments and note evidence, and feeds
+AutoMix cut safety, harmonic progression and EQ decisions. No Python, PyTorch or
+external inference process is required. First use downloads verified models;
+manual playback remains available during analysis or a model failure.
+
+Prepared stems now support independent VOCAL / DRUMS / INST gain controls and
+AutoMix envelopes. The voices share one transport and time stretcher per deck;
+inference and PCM loading stay off the audio callback. All voices at unity preserve
+the original audio. See [stem playback and performance](.agents/reference/stem-playback.md).
 
 Implementation details, verification and current limitations are in
-[AUTOMIX.md](AUTOMIX.md).
+[AUTOMIX.md](.agents/reference/AUTOMIX.md).
 
 The desktop interaction and performance checks are recorded in
-[DJ_WORKSPACE_CHECKS.md](DJ_WORKSPACE_CHECKS.md). Set `MIXLESS_PROFILE_UI=1` when
+[DJ_WORKSPACE_CHECKS.md](.agents/history/DJ_WORKSPACE_CHECKS.md). Set `MIXLESS_PROFILE_UI=1` when
 launching to log CPU draw p50/p99 and observed frame intervals every 240 frames;
 these timings do not measure GPU presentation or establish listening quality.
 
 Audio DSP behavior, regression checks and remaining limitations are documented
-in [AUDIO_DSP.md](AUDIO_DSP.md).
+in [AUDIO_DSP.md](.agents/reference/AUDIO_DSP.md).
 
 ## Contributing
 
@@ -253,5 +267,5 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled code licenses.
 
 Each deck has four insert slots with 70 selectable audio FX. Use **⋯** on a slot
 for the grouped catalogue, beat timing and parameter editor. See
-[FX_CATALOGUE.md](FX_CATALOGUE.md) for the Rekordbox/djay category comparison and
-[AUDIO_DSP.md](AUDIO_DSP.md) for algorithms and validation limits.
+[FX_CATALOGUE.md](.agents/reference/FX_CATALOGUE.md) for the Rekordbox/djay category comparison and
+[AUDIO_DSP.md](.agents/reference/AUDIO_DSP.md) for algorithms and validation limits.

@@ -23,26 +23,18 @@ pub(super) fn peaks(track: &TrackAnalysis) -> Vec<(f32, f32)> {
     result
 }
 
-/// Protect the entire first available peak on this pass, then every later peak
-/// once entered. Check the *start* of an overlap, not just its final out marker.
+/// Preserve an entered peak's resolution. Starting a complementary layer
+/// during it is allowed; its audible energy is handled by the arrangement.
 pub(super) fn allows(track: &TrackAnalysis, start: f32, end: f32, entry: f32, cut: bool) -> bool {
     let peaks = peaks(track);
     let first = peaks
         .iter()
         .find(|p| p.0 + 0.1 >= entry)
         .or_else(|| peaks.iter().find(|p| p.1 > entry + 0.1));
-    if let Some(first) = first {
-        if (if cut { end } else { start }) + 0.05 < first.1 {
-            return false;
-        }
+    if first.is_some_and(|p| end + 0.05 < p.1 || (!cut && start < p.0 - 0.05)) {
+        return false;
     }
-    !peaks.iter().any(|&(a, b)| {
-        if cut {
-            end > a + 0.05 && end < b - 0.05
-        } else {
-            start < b - 0.05 && end > a + 0.05
-        }
-    })
+    !peaks.iter().any(|&(a, b)| end > a + 0.05 && end < b - 0.05)
 }
 
 pub(super) fn recovery(label: S) -> bool {

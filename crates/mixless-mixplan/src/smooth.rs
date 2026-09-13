@@ -3,7 +3,7 @@
 use crate::{
     constraints::{covers_user_range, user_range},
     grid::Grid,
-    musical::{average_rms, bass_handoff, feature, incoming_trim, percussion_only},
+    musical::{average_rms, bass_handoff, feature, percussion_only},
     phrasing::{boundary_quality, points},
     policy::{self, Evidence as FxEvidence, Technique},
     score::{section, window_key_match},
@@ -19,7 +19,7 @@ use candidate::pair;
 mod lanes;
 mod ranking;
 mod timing;
-use lanes::{ease, line, neutral};
+use lanes::{ease, neutral};
 
 const MAX_LOG_TEMPO_PER_SEC: f32 = 0.0035;
 const KILL: f32 = -96.;
@@ -51,16 +51,54 @@ pub(super) fn grid_reliable(t: &TrackAnalysis, start: f32, end: f32) -> bool {
     if first >= last {
         return false;
     }
+    let segments = &t.tempo.segments;
+    let confidence = |index: usize| {
+        t.tempo
+            .pulse_confidence
+            .get(index)
+            .copied()
+            .unwrap_or(segments[index].confidence)
+    };
     let mut errors = Vec::with_capacity(last - first);
+    let mut checked_segment = None;
     for i in first..last {
-        if !t
-            .tempo
-            .segments
+        let Some(index) = segments
             .iter()
-            .any(|s| i as f32 >= s.start_beat && (i as f32) < s.end_beat && s.confidence >= 0.65)
-        {
+            .position(|s| i as f32 >= s.start_beat && (i as f32) < s.end_beat)
+        else {
             return false;
+        };
+        if checked_segment != Some(index)
+            && confidence(index) < 0.65
+            && !(confidence(index) >= 0.35
+                && crate::rhythm::supports_grid(
+                    t,
+                    grid.sec(segments[index].start_beat),
+                    grid.sec(segments[index].end_beat),
+                ))
+        {
+            // Continue a measured clock across a sparse break only when strong
+            // anchors on BOTH sides agree. A dense off-grid passage cannot borrow
+            // confidence, and a quiet tail with no right anchor remains uncertain.
+            let left = (0..index).rev().find(|j| confidence(*j) >= 0.65);
+            let right = (index + 1..segments.len()).find(|j| confidence(*j) >= 0.65);
+            let (Some(left), Some(right)) = (left, right) else {
+                return false;
+            };
+            let lo = grid.sec(segments[left].end_beat);
+            let hi = grid.sec(segments[right].start_beat);
+            let drift = (segments[left].bpm / segments[right].bpm - 1.).abs();
+            if drift > 0.005
+                || drift * (hi - lo) > 0.02
+                || t.bars
+                    .iter()
+                    .filter(|b| b.start_sec < hi && b.end_sec > lo)
+                    .any(|b| b.kick_salience >= 0.45)
+            {
+                return false;
+            }
         }
+        checked_segment = Some(index);
         let expected = 60. / grid.bpm(i as f32);
         errors.push(((t.tempo.beats[i + 1] - t.tempo.beats[i]) / expected - 1.).abs());
     }

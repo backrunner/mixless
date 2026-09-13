@@ -1,6 +1,60 @@
 use super::*;
 
 #[test]
+fn source_normalization_reaches_both_master_and_cue_without_moving_manual_gain() {
+    let render = |amplitude: f32| {
+        let engine = test_engine(48_000);
+        let mut buffer = sine_buffer(48_000, 1000., 3.);
+        let audio = Arc::get_mut(&mut buffer).unwrap();
+        for x in &mut audio.samples {
+            *x *= amplitude;
+        }
+        audio.loudness = crate::Loudness::measure(&audio.samples, audio.sample_rate);
+        let wave = Arc::new(crate::compute_preview_waveform(&buffer, 256));
+        engine
+            .load_buffer_if(
+                DeckId::A,
+                TrackId(1),
+                buffer,
+                wave,
+                String::new(),
+                String::new(),
+                || true,
+            )
+            .unwrap();
+        engine
+            .dispatch(Command::SetCrossfader { value: -1. })
+            .unwrap();
+        engine
+            .dispatch(Command::SetPfl {
+                deck: DeckId::A,
+                on: true,
+            })
+            .unwrap();
+        engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        engine.render_offline(48_000);
+        let (producer, mut consumer) = rtrb::RingBuffer::new(4096);
+        let mut rt = engine.rt.lock().unwrap();
+        rt.cue_output = Some(device::CueWriter::new(producer, 48_000, 48_000));
+        let mut output = vec![0.; 4096 * 2];
+        engine.shared.process_block(&mut rt, &mut output, 2);
+        let cue: Vec<_> = std::iter::from_fn(|| consumer.pop().ok())
+            .flatten()
+            .collect();
+        assert_eq!(engine.snapshot().decks[0].gain_db, 0.);
+        [energy(&output[4000..]), energy(&cue[4000..])]
+    };
+    let quiet = render(0.2);
+    let loud = render(1.6);
+    for (quiet, loud) in quiet.into_iter().zip(loud) {
+        assert!(quiet > 0.0001);
+        assert!((10. * (quiet / loud).log10()).abs() < 0.1);
+    }
+}
+
+#[test]
 fn headphone_bus_is_pre_fader_and_independent_of_master() {
     let engine = test_engine(48_000);
     engine

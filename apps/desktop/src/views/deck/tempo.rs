@@ -16,10 +16,9 @@ impl UiState {
         cx: &mut gpui::Context<Self>,
         deck: DeckId,
         d: &DeckSnapshot,
-        compact_height: bool,
     ) -> gpui::AnyElement {
         let dc = theme::deck_color(deck);
-        let tempo_fader_min_height = if compact_height { 112.0 } else { 136.0 };
+        let flip = deck == DeckId::B;
         let sync_btn = {
             let el = gpui::div()
                 .id(SharedString::from(format!("sync-{:?}", deck)))
@@ -104,8 +103,8 @@ impl UiState {
                 cx.notify();
             }));
 
-        // Keep SYNC/key lock beside the key knob so the pitch lane gets
-        // most of the existing body height, including in compact windows.
+        // SHIFT owns the full-height pitch lane. SYNC/key controls and the
+        // optional stem stack occupy the adjacent column.
         let tempo_buttons = gpui::div()
             .flex()
             .flex_none()
@@ -144,19 +143,22 @@ impl UiState {
                         cx.notify();
                     }))
             });
-        let tempo_column = gpui::div()
+        let sync_column = gpui::div()
             .flex()
             .flex_none()
             .flex_col()
             .min_h_0()
-            .items_center()
-            .gap(px(4.))
+            .items_start()
+            .when(flip, |el| el.items_end())
+            .gap(px(8.))
             .w(px(86.))
             .child(
                 gpui::div()
                     .flex()
                     .flex_none()
+                    .h(px(44.))
                     .items_start()
+                    .when(flip, |el| el.flex_row_reverse())
                     .gap(px(6.))
                     .child(tempo_buttons)
                     .child(knob(
@@ -173,12 +175,30 @@ impl UiState {
                         cx,
                     )),
             )
+            .children(self.render_stems(cx, deck, d));
+        let pitch_column = gpui::div()
+            .flex()
+            .flex_none()
+            .flex_col()
+            .min_h_0()
+            .items_center()
+            .gap(px(8.))
+            .w(px(38.))
             .child(
                 gpui::div()
+                    .flex()
                     .flex_none()
-                    .text_size(px(10.))
-                    .text_color(theme::MUTED)
-                    .child(format!("{:+.1}%", (d.rate - 1.0) * 100.0)),
+                    .flex_col()
+                    .h(px(44.))
+                    .items_center()
+                    .justify_between()
+                    .child(shift_btn.flex_none())
+                    .child(
+                        gpui::div()
+                            .text_size(px(9.))
+                            .text_color(theme::MUTED)
+                            .child(format!("{:+.1}%", (d.rate - 1.0) * 100.0)),
+                    ),
             )
             .child(
                 fader_v(
@@ -187,21 +207,25 @@ impl UiState {
                         value: d.rate,
                         min: 0.88,
                         max: 1.12,
-                        width: 12.0,
+                        width: 6.0,
                         color: theme::POINTER,
                         ticks: true,
                     },
                     cx,
                 )
+                // Keep the grab area wide even though the visible rail is slim.
+                .w(px(38.))
                 .flex_1()
-                .min_h(px(tempo_fader_min_height)),
+                .min_h_0(),
             );
         gpui::div()
             .flex()
             .flex_none()
+            .min_h_0()
             .gap(px(4.))
-            .child(shift_btn.flex_none())
-            .child(tempo_column)
+            .when(flip, |el| el.flex_row_reverse())
+            .child(pitch_column)
+            .child(sync_column)
             .into_any_element()
     }
 }

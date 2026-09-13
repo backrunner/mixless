@@ -1,20 +1,33 @@
-//! Pure next-pair planning. No decoding, devices, I/O or playlist-wide search.
+//! Pure next-pair planning. No decoding, devices or I/O; optional bounded one-track lookahead.
 pub mod cue_policy;
 mod handoff;
+mod instant;
+mod progression;
+#[cfg(test)]
+mod stem_regressions;
 pub use handoff::short_handoff;
+mod arrangement;
 mod bridge;
 mod candidates;
 mod choreography;
 mod compile;
 pub mod constraints;
+mod continuity;
 mod drops;
 mod duration;
+mod filtered;
 mod grid;
+mod lookahead;
 mod musical;
 mod phrasing;
 mod policy;
+mod recovery;
+mod rhythm;
 pub mod score;
 mod smooth;
+mod spectrum;
+mod stem_mix;
+mod vocals;
 
 use constraints::{covers_user_range, user_range};
 use grid::Grid;
@@ -129,12 +142,60 @@ impl Planner {
     }
 
     pub fn plan_next(&self, ctx: &PlanContext<'_>) -> MixPlan {
+        let mut plan = self.plan_next_base(ctx);
+        stem_mix::arrange(ctx, &mut plan);
+        plan
+    }
+
+    fn plan_next_base(&self, ctx: &PlanContext<'_>) -> MixPlan {
         let fail = |message: &str| MixPlan {
             failure_reason: Some(message.into()),
             ..MixPlan::default()
         };
         let (a, b) = (ctx.outgoing, ctx.incoming);
         for track in [a, b] {
+            if track
+                .stems
+                .as_ref()
+                .is_some_and(|s| !s.valid(track.duration_sec))
+            {
+                return fail("Invalid or incomplete stem evidence");
+            }
+            if track.moments.iter().any(|m| {
+                ![
+                    m.start_sec,
+                    m.end_sec,
+                    m.rms,
+                    m.onset,
+                    m.sustain,
+                    m.attack_sec,
+                    m.low_onset,
+                ]
+                .iter()
+                .all(|v| v.is_finite())
+                    || m.start_sec < 0.
+                    || m.end_sec <= m.start_sec
+                    || m.end_sec > track.duration_sec + 0.1
+                    || m.rms < 0.
+                    || ![m.onset, m.sustain, m.low_onset]
+                        .iter()
+                        .all(|v| (0. ..=1.).contains(v))
+                    || m.band_db
+                        .iter()
+                        .chain(m.chroma.iter())
+                        .any(|v| !v.is_finite())
+                    || m.chroma.iter().any(|v| *v < 0.)
+                    || m.pitch_midi.is_some_and(|v| !v.is_finite())
+                    || m.vocal_confidence
+                        .is_some_and(|v| !v.is_finite() || !(0. ..=1.).contains(&v))
+            }) || track
+                .moments
+                .windows(2)
+                .any(|p| p[0].end_sec > p[1].start_sec + 0.001)
+            {
+                return fail("Invalid spectral observations");
+            }
+
             if track.bars.iter().any(|b| {
                 !b.start_sec.is_finite()
                     || !b.end_sec.is_finite()

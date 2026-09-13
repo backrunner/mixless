@@ -20,9 +20,12 @@ mod commands;
 mod fx;
 mod host;
 mod presentation;
+mod recording;
 mod render;
+pub use recording::RecordingStatus;
 mod runtime;
 mod state;
+mod stems;
 
 #[cfg(test)]
 mod tests;
@@ -82,6 +85,9 @@ struct DeckRt {
     position: f64,
     buffer_id: usize,
     source: Option<Arc<AudioBuffer>>,
+    stems: Option<Arc<stems::PreparedStems>>,
+    stem_gain: [SmoothValue; 3],
+    stem_values: [f32; 3],
     touching: bool,
     scratch_speed: f64,
     slip_position: f64,
@@ -135,6 +141,8 @@ struct AtomicFx {
 }
 
 struct DeckSlot {
+    stems: Mutex<Option<Arc<stems::PreparedStems>>>,
+    stem_gain: [AtomicU32; 3],
     beat_grid: Mutex<Option<sync::BeatGrid>>,
     buffer: Mutex<Option<Arc<AudioBuffer>>>,
     title: Mutex<Option<String>>,
@@ -178,6 +186,8 @@ struct DeckSlot {
     cues: [AtomicU64; 8],      // 0 = empty, else frame+1
     cue_kinds: [AtomicU32; 8], // AUTO=0, IN=1, OUT=2
     temporary_cue: AtomicU64,
+    // frame + 1 while monitor-only routing is latched; cleared by normal play/load.
+    preview_cue: AtomicU64,
     /// Post fader/gain peak level per channel (f32 bits, decayed per block).
     level: [AtomicU32; 2],
     /// Overview waveform computed at load time (host thread only).
@@ -200,8 +210,11 @@ pub struct Shared {
     xf_curve: AtomicU32,
     xf_reverse: AtomicBool,
     master: AtomicU32,
+    master_level: [AtomicU32; 2],
+    recorder: recording::Recorder,
     cue_gain: AtomicU32,
     quantize: AtomicBool,
+    fx_auto_fade: AtomicBool,
     xrun: AtomicU64,
     device_name: Mutex<String>,
     last_block: Mutex<[f32; 2]>,
@@ -216,6 +229,7 @@ pub struct Engine {
     shared: Arc<Shared>,
     rt: Mutex<AudioRt>,
     retired_buffers: Mutex<Vec<Arc<AudioBuffer>>>,
+    retired_stems: Mutex<Vec<Arc<stems::PreparedStems>>>,
 }
 
 type AudioRequest = (

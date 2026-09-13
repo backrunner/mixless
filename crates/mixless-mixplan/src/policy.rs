@@ -64,7 +64,12 @@ pub(crate) fn choose(e: Evidence) -> Decision {
         };
     }
 
-    if e.drop && e.phrase_reliable && e.incoming_kick >= 0.5 && e.incoming_vocal < 0.75 {
+    if e.drop
+        && e.grid_reliable
+        && e.phrase_reliable
+        && e.incoming_kick >= 0.5
+        && e.incoming_vocal < 0.75
+    {
         return Decision {
             technique: Technique::DropCut,
             confidence: 0.88,
@@ -80,13 +85,22 @@ pub(crate) fn choose(e: Evidence) -> Decision {
         };
     }
 
-    // Echo fills a short gap when the outgoing side is ending or a vocal is
-    // present. Filter is reserved for incompatible tonal material where an
-    // echo tail would repeat the wrong foreground.
-    if matches!(
-        e.outgoing_section,
-        SectionLabel::Outro | SectionLabel::Break
-    ) || e.outgoing_vocal >= 0.35
+    // A tempo-synced delay is only useful when its clock is trustworthy. An
+    // uncertain analysis calls for a short dry handoff, not an effect preset.
+    if !e.grid_reliable || !e.phrase_reliable {
+        return Decision {
+            technique: Technique::DryCut,
+            confidence: 0.60,
+        };
+    }
+    // Echo can carry an isolated outgoing phrase into a sparse entrance. Do
+    // not repeat it over a new vocal or add tails solely because this is Outro.
+    if e.incoming_vocal < 0.35
+        && vocal_overlap <= 0.0625
+        && (matches!(
+            e.outgoing_section,
+            SectionLabel::Outro | SectionLabel::Break
+        ) || e.outgoing_vocal >= 0.35)
     {
         Decision {
             technique: Technique::EchoOut,
@@ -149,5 +163,17 @@ mod tests {
         e.outgoing_section = SectionLabel::Outro;
         e.outgoing_vocal = 0.7;
         assert_eq!(choose(e).technique, Technique::EchoOut);
+    }
+
+    #[test]
+    fn uncertain_clock_and_new_vocal_do_not_receive_an_echo_tail() {
+        let mut e = base();
+        e.outgoing_section = SectionLabel::Outro;
+        e.outgoing_vocal = 0.7;
+        e.grid_reliable = false;
+        assert_eq!(choose(e).technique, Technique::DryCut);
+        e.grid_reliable = true;
+        e.incoming_vocal = 0.8;
+        assert_ne!(choose(e).technique, Technique::EchoOut);
     }
 }

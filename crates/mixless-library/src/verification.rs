@@ -92,6 +92,8 @@ mod tests {
             phrase_boundaries: vec![],
             mix_regions: vec![],
             bars: vec![],
+            moments: vec![],
+            stems: None,
             waveform_path: None,
             partial: false,
         };

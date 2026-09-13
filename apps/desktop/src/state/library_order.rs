@@ -20,6 +20,22 @@ impl LibraryOrder {
     pub fn is_pending(&self) -> bool {
         self.rx.is_some() || !self.pending.is_empty()
     }
+
+    fn finish(mut self, core: &AppCore) -> Result<(), String> {
+        if let Some(rx) = self.rx.take() {
+            rx.recv().map_err(|e| e.to_string())??;
+        }
+        for request in self.pending {
+            core.library
+                .reorder_tracks(
+                    request.playlist.map(PlaylistId),
+                    &request.expected,
+                    &request.ordered,
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 /// Insertion slots are measured before removing the source row.
@@ -32,6 +48,21 @@ fn destination(len: usize, from: usize, insertion: usize) -> Option<usize> {
 }
 
 impl UiState {
+    pub(super) fn flush_library_order(&mut self) {
+        let order = std::mem::take(&mut self.library_order);
+        if !order.is_pending() {
+            return;
+        }
+        let core = self.core.clone();
+        // GPUI only grants quit futures 100 ms. Finish durable writes before
+        // returning that future, or a quick Cmd-Q can discard queued row moves.
+        // This wait runs only during application shutdown, never in a frame.
+        match std::thread::spawn(move || order.finish(&core)).join() {
+            Ok(Ok(())) => {}
+            result => tracing::error!(?result, "Could not finish playlist order on exit"),
+        }
+    }
+
     pub fn reorder_track(&mut self, drag: &TrackDrag, insertion: usize) {
         if drag.playlist != self.playlist_sel
             || !drag
@@ -114,6 +145,49 @@ impl UiState {
 #[cfg(test)]
 mod tests {
     use super::destination;
+
+    #[test]
+    fn shutdown_drains_moves_after_a_slow_write_without_another_ui_poll() {
+        use super::*;
+        let (dir, core, tracks) = crate::automix::tests::fixture();
+        let playlist = core.library.replace_playlist("Set", &tracks).unwrap();
+        let first = vec![tracks[1], tracks[0], tracks[2]];
+        let final_order = vec![tracks[2], tracks[1], tracks[0]];
+        let (tx, rx) = channel();
+        let worker = core.clone();
+        let before = tracks.clone();
+        let after = first.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            tx.send(
+                worker
+                    .library
+                    .reorder_tracks(Some(playlist), &before, &after)
+                    .map_err(|e| e.to_string()),
+            )
+            .unwrap();
+        });
+        let mut order = LibraryOrder {
+            rx: Some(rx),
+            ..Default::default()
+        };
+        order.pending.push_back(OrderRequest {
+            playlist: Some(playlist.0),
+            expected: first,
+            ordered: final_order.clone(),
+        });
+        order.finish(&core).unwrap();
+        let reopened = mixless_library::Library::open(&dir.path().join("library.db")).unwrap();
+        assert_eq!(
+            reopened
+                .playlist_tracks(playlist)
+                .unwrap()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            final_order
+        );
+    }
 
     #[test]
     fn whole_row_moves_use_insertion_slots_in_both_directions() {

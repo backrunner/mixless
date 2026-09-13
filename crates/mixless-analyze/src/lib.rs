@@ -8,6 +8,7 @@ mod structure;
 pub use features::ANALYSIS_VERSION;
 
 mod sound_analysis;
+mod stems;
 
 use mixless_engine::decode_file;
 use mixless_protocol::{TempoMap, TempoSegment, TrackAnalysis, TrackId};
@@ -164,6 +165,7 @@ impl Analyzer {
             duration_sec,
             sample_rate: 22_050,
             tempo: TempoMap {
+                pulse_confidence: vec![],
                 global_bpm: q.bpm,
                 meter_num: 4,
                 meter_den: 4,
@@ -183,6 +185,8 @@ impl Analyzer {
             bars: vec![],
             phrase_boundaries: vec![],
             mix_regions: vec![],
+            moments: vec![],
+            stems: None,
             waveform_path: None,
             partial: true,
         }

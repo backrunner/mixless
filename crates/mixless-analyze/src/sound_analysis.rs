@@ -90,6 +90,13 @@ fn apply(analysis: &mut TrackAnalysis, intervals: &[Interval]) -> bool {
     {
         return false;
     }
+    for moment in &mut analysis.moments {
+        let center = (moment.start_sec + moment.end_sec) as f64 * 0.5;
+        moment.vocal_confidence = intervals
+            .iter()
+            .find(|v| center >= v.start_sec && center < v.end_sec)
+            .map(|v| v.confidence as f32);
+    }
     for bar in &mut analysis.bars {
         let mut weighted = 0.;
         let mut coverage = 0.;

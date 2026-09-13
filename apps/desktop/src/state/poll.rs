@@ -4,6 +4,16 @@ use super::*;
 impl UiState {
     pub fn poll(&mut self) -> bool {
         let mut changed = self.poll_transport_press();
+        let preview_revision = self
+            .core
+            .mix_preparation
+            .preview_revision
+            .load(Ordering::Acquire);
+        if preview_revision != self.automix_preview_revision {
+            self.automix_preview_revision = preview_revision;
+            changed |= self.automix_active;
+        }
+        changed |= self.poll_audio();
         changed |= self.poll_library_order();
         changed |= self.poll_library();
         changed |= self.poll_library_actions();
@@ -58,6 +68,12 @@ impl UiState {
             }
         }
         let snapshot = self.core.engine.snapshot();
+        if self.automix_active {
+            if let Some(deck) = super::automix::newly_playing_deck(&self.snapshot, &snapshot) {
+                self.focus = deck;
+                changed = true;
+            }
+        }
         changed |= snapshot != self.snapshot;
         self.fx = std::array::from_fn(|index| snapshot.decks[index].fx);
         self.snapshot = snapshot;
@@ -66,8 +82,13 @@ impl UiState {
         for index in 0..2 {
             if let Some(rx) = self.deck_load_rx[index].take() {
                 match rx.try_recv() {
-                    Ok(Ok(())) => changed = true,
+                    Ok(Ok(())) => {
+                        self.deck_loading[index] = None;
+                        changed = true;
+                    }
                     Ok(Err(error)) => {
+                        self.deck_loading[index] = None;
+                        self.grid_rx[index] = None;
                         self.error = error.into();
                         changed = true;
                     }
@@ -75,6 +96,8 @@ impl UiState {
                         self.deck_load_rx[index] = Some(rx)
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.deck_loading[index] = None;
+                        self.grid_rx[index] = None;
                         self.error = "Deck load worker stopped unexpectedly".into();
                         changed = true;
                     }

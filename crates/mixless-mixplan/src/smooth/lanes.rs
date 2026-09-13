@@ -153,12 +153,16 @@ pub(super) fn shape(
                 (handoff, 1200.),
             ]);
             lanes.filter_a.lp_hz.nodes.dedup_by(|a, b| a.0 == b.0);
-            lanes.fx_send_a = line(&[
-                (0., 0.),
-                ((handoff - 0.5).max(0.), 0.),
-                (handoff - 0.25, 0.18),
-                (handoff, 0.),
-            ]);
+            lanes.fx_send_a = if technique == Technique::EchoOut {
+                line(&[
+                    (0., 0.),
+                    ((handoff - 0.5).max(0.), 0.),
+                    (handoff - 0.25, 0.18),
+                    (handoff, 0.),
+                ])
+            } else {
+                Polyline::constant(0.)
+            };
             lanes.fx_send_a.nodes.dedup_by(|a, b| a.0 == b.0);
         }
         if matches!(

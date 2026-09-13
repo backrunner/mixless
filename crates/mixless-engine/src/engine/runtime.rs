@@ -19,6 +19,9 @@ impl DeckRt {
             position: 0.0,
             buffer_id: 0,
             source: None,
+            stems: None,
+            stem_gain: std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15)),
+            stem_values: [1.; 3],
             touching: false,
             scratch_speed: 0.0,
             slip_position: 0.0,
@@ -51,6 +54,11 @@ impl DeckRt {
     }
 
     pub(super) fn capture_music_tail(&mut self, buffer: &AudioBuffer) {
+        let source = crate::source::StemSource::new(
+            buffer,
+            self.stems.as_ref().map(|s| s.audio.as_ref()),
+            self.stem_values,
+        );
         let has_music = self.music.is_primed() && self.last_music_blend > 0.;
         if !has_music && !self.seek.active() {
             self.tail_index = self.transition_tail.len();
@@ -59,12 +67,16 @@ impl DeckRt {
         let mut position = self.position;
         for i in 0..self.transition_tail.len() {
             let mut step = self.step_target as f64;
-            let (left, right) = self.resampler.stereo_at(buffer, position, step);
+            let (left, right) = if has_music && self.last_music_blend == 1. {
+                (0., 0.)
+            } else {
+                self.resampler.stereo_at(&source, position, step)
+            };
             let mut sample = [left, right];
             if has_music {
                 let (music, music_step) =
                     self.music
-                        .next(buffer, &self.resampler, position, self.music_params);
+                        .next(&source, &self.resampler, position, self.music_params);
                 step = music_step;
                 for ch in 0..2 {
                     sample[ch] += self.last_music_blend * (music[ch] - sample[ch]);
@@ -77,7 +89,7 @@ impl DeckRt {
                     self.tail_index += 1;
                     old
                 } else {
-                    let (l, r) = self.resampler.stereo_at(buffer, self.old_ph, step);
+                    let (l, r) = self.resampler.stereo_at(&source, self.old_ph, step);
                     [l, r]
                 };
                 for ch in 0..2 {
@@ -125,6 +137,12 @@ impl Shared {
         let Some(buf) = buf else {
             return (0.0, 0.0);
         };
+        rt.stem_values = std::array::from_fn(|i| rt.stem_gain[i].next());
+        let source = crate::source::StemSource::new(
+            buf,
+            rt.stems.as_ref().map(|s| s.audio.as_ref()),
+            rt.stem_values,
+        );
 
         let src_sr = buf.sample_rate.max(1) as f32;
         let mut step = rt.step.next() as f64;
@@ -185,8 +203,10 @@ impl Shared {
                 }
             }
         }
-        let (mut l, mut r) = if amplitude > 0.0 {
-            rt.resampler.stereo_at(buf, ph, step)
+        let music_blend = rt.music_blend.next();
+        rt.last_music_blend = music_blend;
+        let (mut l, mut r) = if amplitude > 0.0 && music_blend < 1. {
+            rt.resampler.stereo_at(&source, ph, step)
         } else {
             (0.0, 0.0)
         };
@@ -194,10 +214,8 @@ impl Shared {
             .fx_clock
             .map(|(anchor, beat, slope)| beat + (ph - anchor) * slope);
 
-        let music_blend = rt.music_blend.next();
-        rt.last_music_blend = music_blend;
         if amplitude > 0.0 && (rt.music_mode || music_blend > 0.0) {
-            let (music, music_step) = rt.music.next(buf, &rt.resampler, ph, rt.music_params);
+            let (music, music_step) = rt.music.next(&source, &rt.resampler, ph, rt.music_params);
             l += music_blend * (music[0] - l);
             r += music_blend * (music[1] - r);
             if rt.music_mode {
@@ -214,7 +232,7 @@ impl Shared {
                 rt.tail_index += 1;
                 (sample[0], sample[1])
             } else {
-                rt.resampler.stereo_at(buf, rt.old_ph, step)
+                rt.resampler.stereo_at(&source, rt.old_ph, step)
             };
             l = ol * fade_out + l * fade_in;
             r = or_ * fade_out + r * fade_in;
@@ -248,8 +266,13 @@ impl Shared {
         rt.isolator_l.gain = eq;
         rt.isolator_r.gain = eq;
 
-        l = rt.filter_l.process(rt.isolator_l.process(l * amplitude));
-        r = rt.filter_r.process(rt.isolator_r.process(r * amplitude));
+        let normalized_amplitude = amplitude * buf.loudness.gain;
+        l = rt
+            .filter_l
+            .process(rt.isolator_l.process(l * normalized_amplitude));
+        r = rt
+            .filter_r
+            .process(rt.isolator_r.process(r * normalized_amplitude));
         let mut stereo = [l, r];
         for effect in &mut rt.inserts {
             stereo = effect.process_clocked(stereo, false, fx_beat);

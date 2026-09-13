@@ -15,7 +15,7 @@ pub(super) fn candidates(
         .floor()
         .clamp(0., 128.) as u16;
     if mode == M::PhraseBridge {
-        return [2, 4, 8, 16, 24, 1]
+        return [0, 2, 4, 8, 16, 24, 1]
             .into_iter()
             .filter(|n| *n <= max)
             .collect();
@@ -28,7 +28,17 @@ pub(super) fn candidates(
     } else {
         1.
     };
-    let mut spans = vec![8., 16., 24., 32.];
+    let mut spans = vec![4., 8., 16., 24., 32., 48., 64.];
+    let mut recovery_spans = vec![];
+    for (start, end) in crate::recovery::windows(a) {
+        if ga.sec(out) <= end + 0.05 {
+            let length = (out - ga.ceil_bar(start)) / ga.meter();
+            spans.push(length);
+            if length >= 4. && length <= max as f32 && (length - length.round()).abs() < 0.02 {
+                recovery_spans.push(length.round() as u16);
+            }
+        }
+    }
     spans.extend(
         a.phrase_boundaries
             .iter()
@@ -76,7 +86,19 @@ pub(super) fn candidates(
     spans.dedup();
     // Bound candidate work while retaining short, middle and long phrases.
     if spans.len() > 12 {
-        spans = (0..12).map(|i| spans[i * (spans.len() - 1) / 11]).collect();
+        let mut selected = recovery_spans;
+        selected.retain(|n| spans.contains(n));
+        selected.sort_unstable();
+        selected.dedup();
+        selected.truncate(8);
+        for i in 0..12 {
+            let n = spans[i * (spans.len() - 1) / 11];
+            if selected.len() < 12 && !selected.contains(&n) {
+                selected.push(n);
+            }
+        }
+        selected.sort_unstable();
+        spans = selected;
     }
     spans
 }

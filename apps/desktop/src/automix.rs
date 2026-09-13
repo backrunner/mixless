@@ -5,7 +5,7 @@ mod next;
 mod order;
 mod preparation;
 mod start;
-pub use preparation::{Preparation, prepare_playlist};
+pub use preparation::{Preparation, prepare_playlist, refresh_previews};
 
 use crate::state::AppCore;
 use mixless_protocol::{Command, DeckId, PerformanceOffset, TrackId};

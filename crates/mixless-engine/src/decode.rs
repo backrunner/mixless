@@ -31,6 +31,8 @@ impl From<SymError> for DecodeError {
 
 #[derive(Debug)]
 pub struct AudioBuffer {
+    /// Source-level normalization, measured once off the playback thread.
+    pub loudness: crate::Loudness,
     /// Interleaved stereo f32, pre-touched.
     pub samples: Vec<f32>,
     pub frames: u64,
@@ -87,8 +89,13 @@ pub fn decode_file(path: &Path) -> Result<Arc<AudioBuffer>, DecodeError> {
     let mut decoder =
         symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
 
-    let mut left = Vec::new();
-    let mut right = Vec::new();
+    let capacity = track
+        .codec_params
+        .n_frames
+        .unwrap_or(0)
+        .min(48_000 * 60 * 30) as usize
+        * 2;
+    let mut samples = Vec::with_capacity(capacity);
 
     loop {
         let packet = match format.next_packet() {
@@ -117,8 +124,8 @@ pub fn decode_file(path: &Path) -> Result<Arc<AudioBuffer>, DecodeError> {
                     if !l.is_finite() || !r.is_finite() {
                         return Err(DecodeError::Sym("non-finite audio samples".into()));
                     }
-                    left.push(l);
-                    right.push(r);
+                    samples.push(l);
+                    samples.push(r);
                 }
             }
             Err(SymError::DecodeError(_)) => continue,
@@ -126,20 +133,9 @@ pub fn decode_file(path: &Path) -> Result<Arc<AudioBuffer>, DecodeError> {
         }
     }
 
-    let frames = left.len().max(right.len());
+    let frames = samples.len() / 2;
     if frames == 0 {
         return Err(DecodeError::Empty);
-    }
-    if right.len() < frames {
-        right.resize(frames, 0.0);
-    }
-    if left.len() < frames {
-        left.resize(frames, 0.0);
-    }
-    let mut samples = Vec::with_capacity(frames * 2);
-    for i in 0..frames {
-        samples.push(left[i]);
-        samples.push(right[i]);
     }
     // Pre-touch so the audio thread does not page-fault.
     let mut acc = 0.0f32;
@@ -149,6 +145,7 @@ pub fn decode_file(path: &Path) -> Result<Arc<AudioBuffer>, DecodeError> {
     std::hint::black_box(acc);
 
     Ok(Arc::new(AudioBuffer {
+        loudness: crate::Loudness::measure(&samples, sr.ok_or(DecodeError::Empty)?),
         samples,
         frames: frames as u64,
         sample_rate: sr.ok_or(DecodeError::Empty)?,

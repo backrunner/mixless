@@ -39,6 +39,9 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         .find(|s| s.label != SectionLabel::Silence)
         .map_or(a.duration_sec, |s| s.end_sec);
     let out = explicit_out.map_or(audible_end, |(_, end)| end);
+    if !crate::vocals::safe_exit(a, out) || !crate::vocals::safe_entry(b, input) {
+        return fail();
+    }
     let seconds = ((out - earliest.max(0.)) / ctx.offset_a.rate)
         .min((b.duration_sec - input) / ctx.offset_b.rate * 0.5)
         .min(4.);
@@ -118,7 +121,12 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         },
         ..Default::default()
     };
-    if explicit_out.is_none() && !crate::drops::allows(a, start, out, 0., false) {
+    if crate::vocals::last_end(a, start, out).is_some()
+        || (explicit_out.is_none()
+            && crate::drops::peaks(a)
+                .iter()
+                .any(|&(lo, hi)| start < hi - 0.05 && out > lo + 0.05))
+    {
         if !crate::drops::allows(a, out, out, 0., true) {
             return fail();
         }
@@ -137,7 +145,7 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         plan.lanes.gain_a = line(&[(0., 0.), (1. - fade, 0.), (1., -96.)]);
         plan.lanes.filter_a.lp_hz = Polyline::constant(20000.);
         plan.summary.as_mut().unwrap().strategy = StrategyId::DryCut;
-        plan.stages[0].label = "Complete drop · native handoff".into();
+        plan.stages[0].label = "Complete phrase · native handoff".into();
     }
     plan
 }

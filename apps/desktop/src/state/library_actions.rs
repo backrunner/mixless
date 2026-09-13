@@ -33,6 +33,7 @@ impl UiState {
             match rx.try_recv() {
                 Ok(Ok(track)) => {
                     self.library_previews.invalidate(track);
+                    crate::automix::refresh_previews(&self.core);
                     for i in 0..2 {
                         if self.snapshot.decks[i].track_id == Some(track) {
                             self.wave_tempo[i] = None;

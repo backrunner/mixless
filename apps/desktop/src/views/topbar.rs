@@ -2,7 +2,7 @@
 //! grouped header with vertical dividers between control groups.
 
 use gpui::prelude::*;
-use gpui::{IntoElement, Rgba, SharedString, Styled, px};
+use gpui::{IntoElement, Rgba, Styled, px};
 
 use crate::controls::{KnobSpec, knob};
 use crate::state::{KnobCtl, UiState, WaveLayout};
@@ -55,9 +55,7 @@ fn led_chip(label: &str, on: bool, color: Rgba) -> gpui::Div {
 }
 
 impl UiState {
-    pub fn render_topbar(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
-        let xrun_hot = self.snapshot.xrun_count > 0;
-
+    pub fn render_topbar(&self, width: f32, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
         let wave_top = {
             let on = self.wave_layout == WaveLayout::Top;
             let el = gpui::div()
@@ -252,6 +250,7 @@ impl UiState {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .id("brand-window-drag")
                     .child(gpui::img(crate::branding::mark()).flex_none().size(px(30.)))
                     .child(
                         gpui::div()
@@ -259,28 +258,59 @@ impl UiState {
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::TEXT)
                             .child("MIXLESS"),
-                    ),
+                    )
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                        crate::branding::drag_main_window();
+                    }),
             )
             .child(divider())
             .child(
                 gpui::div()
+                    .id("device-window-drag")
                     .flex()
                     .items_center()
-                    .gap_3()
-                    .text_size(px(11.))
+                    .gap_2()
+                    .max_w(px(if width < 1400. { 120. } else { 260. }))
+                    .overflow_hidden()
+                    .text_size(px(10.))
                     .text_color(theme::MUTED)
                     .child(self.snapshot.device_name.clone())
-                    .child(format!(
-                        "{} Hz / {}",
-                        self.snapshot.sample_rate, self.snapshot.block_frames
-                    )),
+                    .when(width >= 1500., |el| {
+                        el.child(format!(
+                            "{} Hz / {}",
+                            self.snapshot.sample_rate, self.snapshot.block_frames
+                        ))
+                    })
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                        crate::branding::drag_main_window();
+                    }),
             )
-            .child(gpui::div().id("title-drag-space").flex_1().h_full()
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                    cx.stop_propagation();
-                    crate::branding::drag_main_window();
-                }))
-            .child(led_chip("Q", self.snapshot.quantize, theme::LED_GREEN))
+            .child(
+                gpui::div()
+                    .id("title-drag-space")
+                    .flex_1()
+                    .h_full()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                        crate::branding::drag_main_window();
+                    }),
+            )
+            .child(
+                led_chip("QUANTIZE", self.snapshot.quantize, theme::LED_GREEN)
+                    .id("quantize-toggle")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|s, _, _, cx| {
+                        let on = !s.snapshot.quantize;
+                        if let Err(error) = s.core.settings.update(|p| p.quantize = on) {
+                            s.error = error.into();
+                        } else {
+                            s.dispatch(mixless_protocol::Command::SetQuantize { on });
+                        }
+                        cx.notify();
+                    })),
+            )
             .child(
                 led_chip("AUTO", self.automix_active, theme::LED_GREEN)
                     .id("automix-toggle")
@@ -291,13 +321,26 @@ impl UiState {
                     })),
             )
             .child(
-                led_chip(if self.automix_shuffle.load(std::sync::atomic::Ordering::Relaxed) { "SHUFFLE ∞" } else { "ORDER ∞" },
-                    self.automix_shuffle.load(std::sync::atomic::Ordering::Relaxed), theme::ACCENT)
-                .id("automix-order").cursor_pointer()
+                led_chip(
+                    if self
+                        .automix_shuffle
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        "SHUFFLE ∞"
+                    } else {
+                        "ORDER ∞"
+                    },
+                    self.automix_shuffle
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    theme::ACCENT,
+                )
+                .id("automix-order")
+                .cursor_pointer()
                 .on_click(cx.listener(|s, _, _, cx| {
-                    s.automix_shuffle.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                    s.automix_shuffle
+                        .fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
                     cx.notify();
-                }))
+                })),
             )
             .when(self.automix_active, |row| {
                 row.child(
@@ -336,51 +379,27 @@ impl UiState {
                             cx.notify();
                         })),
                 )
-                .child(
-                    gpui::div()
-                        .max_w(px(180.))
-                        .overflow_hidden()
-                        .text_size(px(10.))
-                        .text_color(theme::MUTED)
-                        .child(format!(
-                            "{} · {:.0}%",
-                            self.automix_status,
-                            self.snapshot.automix_progress * 100.
-                        )),
-                )
+                .when(width >= 1700., |row| {
+                    row.child(
+                        gpui::div()
+                            .max_w(px(180.))
+                            .overflow_hidden()
+                            .text_size(px(10.))
+                            .text_color(theme::MUTED)
+                            .child(format!(
+                                "{} · {:.0}%",
+                                self.automix_status,
+                                self.snapshot.automix_progress * 100.
+                            )),
+                    )
+                })
             })
             .child(divider())
             .child(layout_group)
             .child(fx_btn)
             .child(divider())
-            .child(
-                gpui::div()
-                    .flex_none()
-                    .min_w(px(46.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .h(px(24.))
-                    .rounded(px(5.))
-                    .border_1()
-                    .border_color(if xrun_hot {
-                        theme::with_alpha(theme::LED_RED, 0.4)
-                    } else {
-                        theme::with_alpha(theme::LED_GREEN, 0.25)
-                    })
-                    .bg(if xrun_hot {
-                        gpui::rgb(0x4a1515)
-                    } else {
-                        gpui::rgb(0x0d1a12)
-                    })
-                    .text_size(px(10.))
-                    .text_color(if xrun_hot {
-                        theme::LED_RED
-                    } else {
-                        theme::LED_GREEN
-                    })
-                    .child(SharedString::from(format!("{}", self.snapshot.xrun_count))),
-            )
+            .child(self.render_record_button(cx))
+            .child(self.render_master_meter(cx))
             .child(master)
             .into_any_element()
     }

@@ -43,7 +43,7 @@ fn long_blend_holds_the_mixer_and_exchanges_high_bass_mid_in_separate_phases() {
     assert!(lanes.eq_a.high.sample(23.) < -80. && lanes.eq_a.low.sample(25.) < -80.);
     assert!(lanes.gain_b.sample(0.) <= -90. && lanes.gain_b.sample(4.) > -0.01);
     assert!(lanes.gain_a.sample(48.) <= -90.);
-    assert!(lanes.filter_a.lp_hz.sample(47.) < 5000.);
+    assert_eq!(lanes.filter_a.lp_hz.sample(47.), 20000.);
     // A clean instrumental blend has no gratuitous echo.
     assert!(lanes.fx_send_a.nodes.iter().all(|(_, v)| *v == 0.));
     // Equal-power targets include physical levels and crossfader attenuation.
@@ -67,7 +67,7 @@ fn long_blend_holds_the_mixer_and_exchanges_high_bass_mid_in_separate_phases() {
     assert!(middle > early * 3.);
 }
 #[test]
-fn long_blend_can_combine_eq_filter_level_and_a_short_echo_exit() {
+fn clean_long_blend_does_not_insert_effects_just_because_the_track_is_an_outro() {
     let mut a = track(1, 120., "8A", S::Outro, 128, 0.9, 0.2);
     let b = track(2, 120., "8A", S::Intro, 128, 0.9, 0.2);
     for bar in &mut a.bars {
@@ -75,17 +75,16 @@ fn long_blend_can_combine_eq_filter_level_and_a_short_echo_exit() {
     }
     let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
     assert!(p.summary.as_ref().unwrap().length_bars >= 24);
-    assert!(p.lanes.fx_send_a.nodes.iter().any(|(_, v)| *v > 0.1));
+    assert!(p.lanes.fx_send_a.nodes.iter().all(|(_, v)| *v == 0.));
     let n = p.summary.as_ref().unwrap().length_bars as f32;
     assert_eq!(p.lanes.fx_send_a.sample(n), 0.);
-    assert!(
-        p.lanes
-            .fx_send_a
-            .nodes
-            .iter()
-            .filter(|(u, _)| *u < n - 0.5)
-            .all(|(_, v)| *v == 0.)
-    );
+    assert!(p
+        .lanes
+        .fx_send_a
+        .nodes
+        .iter()
+        .filter(|(u, _)| *u < n - 0.5)
+        .all(|(_, v)| *v == 0.));
 }
 
 #[test]

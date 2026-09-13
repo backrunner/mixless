@@ -49,8 +49,8 @@ stay private; prefer `pub(super)` for interfaces used only inside a feature.
 
 When adding an FX kind, append its stable ID and update parsing, metadata,
 capabilities, defaults, DSP dispatch and the relevant editor parameters together.
-Keep the dispatch exhaustive. Update [FX_CATALOGUE.md](FX_CATALOGUE.md) and
-[AUDIO_DSP.md](AUDIO_DSP.md) with the behavior and validation boundaries.
+Keep the dispatch exhaustive. Update [FX_CATALOGUE.md](.agents/reference/FX_CATALOGUE.md) and
+[AUDIO_DSP.md](.agents/reference/AUDIO_DSP.md) with the behavior and validation boundaries.
 Construct DSP buffers before playback; changing parameters or processing audio
 must not allocate, perform I/O or acquire blocking locks. Module extraction must
 preserve this property and must not introduce trait-object dispatch in the hot path.

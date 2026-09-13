@@ -104,11 +104,21 @@ pub(super) fn prepare(
     }
     // Keep the plan alive for one incoming beat after the cut. This lets the
     // engine launch B exactly at n even when A finishes at the file boundary.
-    let bridge_tail = 60. / incoming_bpm;
+    let correction =
+        ga.bpm(start_beat + n * ga.meter()) * ctx.offset_a.rate * factor / incoming_bpm;
+    let bridge_rate = if (correction - 1.).abs() <= 0.08
+        && grid_reliable(a, start, end)
+        && grid_reliable(b, bin, (bin + 4. * 60. / incoming_bpm).min(b.duration_sec))
+    {
+        ctx.offset_b.rate * correction
+    } else {
+        ctx.offset_b.rate
+    };
+    let bridge_tail = 60. / incoming_bpm * ctx.offset_b.rate / bridge_rate;
     let mut b_end = if blend {
         gb.sec(input + n * ga.meter() * factor)
     } else {
-        bin + bridge_tail * ctx.offset_b.rate
+        bin + bridge_tail * bridge_rate
     };
     if b_end > b.duration_sec + 0.001 || !covers_user_range(bin, b_end, ctx.cues_in, b.sample_rate)
     {
@@ -123,7 +133,7 @@ pub(super) fn prepare(
         }
     }
     if !blend {
-        lanes.rate_b = Polyline::constant(ctx.offset_b.rate);
+        lanes.rate_b = Polyline::constant(bridge_rate);
         source_b = Polyline::default();
         clock.nodes.push((n + 0.25, wall as f32 + bridge_tail));
     }
@@ -142,9 +152,38 @@ pub(super) fn prepare(
         {
             return None;
         }
-        let bars = if factor == 1. { 1 } else { 2 };
+        if n < 8. {
+            return None;
+        }
+        let bars = [4u16, 2, 1].into_iter().find(|bars| {
+            let end = gb.sec(input + *bars as f32 * gb.meter());
+            end <= b.duration_sec
+                && b.bars
+                    .iter()
+                    .filter(|bar| bar.start_sec < end && bar.end_sec > bin)
+                    .all(|bar| {
+                        bar.rms > 0.001
+                            && bar.kick_salience >= 0.45
+                            && bar.vocal_presence < 0.35
+                            && bar.vocal_confidence.is_none_or(|v| v < 0.35)
+                    })
+                && (harmonic || percussion_only(b, bin, end))
+        })?;
         let loop_length = gb.sec(input + bars as f32 * gb.meter()) - bin;
-        let off_bar = (n * 0.625).max(4.0).min(n - 1.0);
+        // Release only after a whole number of source loops and on an outgoing
+        // four-bar boundary. Fractional releases reorder the incoming phrase.
+        let off_bar = (1..n as usize)
+            .map(|i| i as f32)
+            .filter(|u| {
+                *u >= n * 0.25
+                    && *u <= n * 0.75
+                    && *u % 4. == 0.
+                    && (*u * ga.meter() * factor / (bars as f32 * gb.meter()))
+                        .fract()
+                        .abs()
+                        < 0.001
+            })
+            .min_by(|a, b| (a - n * 0.5).abs().total_cmp(&(b - n * 0.5).abs()))?;
         lanes.loop_b = Some(mixless_protocol::LoopOp {
             start_src_frame: (bin * b.sample_rate as f32).round() as u64,
             length_bars: bars,
@@ -152,49 +191,33 @@ pub(super) fn prepare(
             off_bar,
             length_src_frames: (loop_length * b.sample_rate as f32).round() as u64,
         });
-        let exit_beat =
-            input + (off_bar * ga.meter() * factor).rem_euclid(bars as f32 * gb.meter());
+        // Exit continues beyond the end of the final complete loop. It must
+        // not restart the first loop bar once more at the release boundary.
+        let exit_beat = input + bars as f32 * gb.meter();
         b_end = gb.sec(exit_beat + (n - off_bar) * ga.meter() * factor);
-        lanes.filter_a.lp_hz = line(&[
-            (0., 20000.),
-            ((off_bar - 2.).max(0.), 20000.),
-            ((off_bar - 1.).max(0.), 1200.),
-            (off_bar, 500.),
-        ]);
-        lanes.fx_send_a = line(&[
-            (0., 0.),
-            ((off_bar - 1.).max(0.), 0.),
-            ((off_bar - 0.5).max(0.), 0.22),
-            (off_bar, 0.),
-        ]);
-        lanes.gain_a = line(&[
-            (0., 0.),
-            ((off_bar - 0.5).max(0.), 0.),
-            (off_bar, KILL),
-            (n, KILL),
-        ]);
-        lanes.xfader.nodes = (0..=n as usize * 64)
-            .map(|j| {
-                let u = j as f32 / 64.;
-                (u, -1. + 2. * ease(u / off_bar))
-            })
-            .collect();
-        lanes.eq_b.low = line(&[(0., KILL), ((off_bar - 0.25).max(0.), KILL), (off_bar, 0.)]);
-        lanes.eq_a.low = line(&[(0., 0.), ((off_bar - 0.25).max(0.), 0.), (off_bar, KILL)]);
-        lanes.gain_b = Polyline::constant(0.);
         lanes.rate_b.nodes.clear();
         clock.nodes.retain(|(u, _)| *u <= n);
         for j in 0..=n as usize * 64 {
             let u = j as f32 / 64.;
-            // The source map is unwrapped; the engine applies the loop window.
-            let beat = input + u * ga.meter() * factor;
+            // Unwrapped source seconds stay monotonic for the engine clock,
+            // while rates follow the bars actually heard inside/after the loop.
+            let elapsed_beats = u * ga.meter() * factor;
+            let loop_beats = bars as f32 * gb.meter();
+            let repeated = if u < off_bar {
+                (elapsed_beats / loop_beats).floor()
+            } else {
+                (off_bar * ga.meter() * factor / loop_beats).round() - 1.
+            };
+            let beat = input + elapsed_beats - repeated * loop_beats;
             let rate =
                 ga.bpm(start_beat + u * ga.meter()) * ctx.offset_a.rate * factor / gb.bpm(beat);
             if !(0.88..=1.12).contains(&(rate / ctx.offset_b.rate)) {
                 return None;
             }
             lanes.rate_b.nodes.push((u, rate));
-            source_b.nodes.push((u, gb.sec(beat)));
+            source_b
+                .nodes
+                .push((u, repeated * loop_length + gb.sec(beat)));
         }
         if b_end > b.duration_sec + 0.001
             || !covers_user_range(bin, b_end, ctx.cues_in, b.sample_rate)

@@ -34,7 +34,11 @@ pub const HELP: &[(&str, &str)] = &[
     ("1–8", "Jump to selected deck cue; set if empty"),
     ("Q W E R / U I O P", "Deck A / B cues 1–4; set if empty"),
     ("Shift + cue key", "Choose cue use: AUTO / IN / OUT"),
-    ("Hold CUE / Play", "Clear temporary cue / vinyl brake stop"),
+    (
+        "Hold CUE / pad",
+        "Preview on monitor; release to return to cue",
+    ),
+    ("Hold Play", "Vinyl brake stop"),
     ("Right-click pad", "Delete saved cue"),
     ("S", "Sync selected deck"),
     ("L", "Toggle loop on selected deck"),

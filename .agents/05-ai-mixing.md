@@ -8,7 +8,7 @@
 
 不满足长混条件时使用 `PhraseBridge`：出碟末段滤波／轻 Echo，在其乐句结束重拍启动原速、原调的入碟。出碟干声在重拍前约 40 ms 内淡出，入碟第一拍直接接管；不把两条不兼容的鼓点或主旋律长时间叠加。用户 In/Out、前景 Verse → Chorus 禁区和音频边界约束同样适用。已测出的静音不能成为接入点。
 
-目前支持十一种策略；其中十种目录表及归一化评分保留在 `smooth=false` 路径，金样继续验证，DryCut 仅作为平滑路径的安全策略。平滑路径使用 DryCut、BassSwap、PhraseBlend、EnergyHold、EchoOut 和受结构约束的 DropCut；ScratchCut 只有完整 cue 证据才会进入。`who_stretches`、literal 和其他显式目录选择属于目录路径。完整现状、试用和验收限制见根目录 `AUTOMIX.md`；主设计 §7 同步记录本补充。
+目前支持十一种策略；其中十种目录表及归一化评分保留在 `smooth=false` 路径，金样继续验证，DryCut 仅作为平滑路径的安全策略。平滑路径使用 DryCut、BassSwap、PhraseBlend、EnergyHold、EchoOut 和受结构约束的 DropCut；ScratchCut 只有完整 cue 证据才会进入。`who_stretches`、literal 和其他显式目录选择属于目录路径。完整现状、试用和验收限制见[当前 AutoMix 参考](reference/AUTOMIX.md)；主设计 §7 同步记录本补充。
 
 2026-09-09 修订：低频交接搜索共同 downbeat，优先共同乐句，不再固定中点；有底鼓时一拍交接，两侧底鼓都弱时渐进叠混。入碟高频轻度渐入，局部 RMS 按真实窗口时长加权，正增益检查入点后完整峰值覆盖。具备整段保守打击乐证据时允许跨调 layering；缺失证据不授权。连续超过一拍的双前景不能被长窗口平均值掩盖。实现、八项新增回归、教学来源和真实样本渲染边界见 `AUTOMIX.md`。
 

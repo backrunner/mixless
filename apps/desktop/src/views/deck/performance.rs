@@ -13,6 +13,7 @@ use gpui::{MouseButton, MouseDownEvent};
 
 const LOOP_SIZES: [f32; 11] = [0.0625, 0.125, 0.25, 0.5, 1., 2., 4., 8., 16., 32., 64.];
 const PERFORM_HEIGHT: f32 = 64.0;
+const TRANSPORT_ICON: f32 = 21.0 * 0.85 * 0.85;
 
 impl UiState {
     pub(super) fn render_deck_performance(
@@ -44,16 +45,9 @@ impl UiState {
                 } else {
                     theme::PANEL_INSET.into()
                 })
-                .text_size(px(21.))
                 .text_color(if d.playing { theme::LED_GREEN } else { dc })
                 .hover(|s| s.bg(theme::PANEL_RAISED))
-                .child(if d.brake {
-                    "↘"
-                } else if d.playing {
-                    "■"
-                } else {
-                    "▶"
-                });
+                .child(transport_icon(d.playing, d.brake, dc));
             let state = cx.entity();
             el.on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {
@@ -78,15 +72,21 @@ impl UiState {
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(theme::DANGER)
                 .hover(|s| s.bg(theme::PANEL_RAISED))
-                .child(if d.temporary_cue_frame.is_some() {
+                .child(if d.cue_previewing {
+                    "PREVIEW"
+                } else if d.temporary_cue_frame.is_some() {
                     "CUE ●"
                 } else {
                     "CUE"
                 });
             let state = cx.entity();
-            el.on_mouse_down(MouseButton::Left, move |_, _window, cx| {
+            el.on_mouse_down(MouseButton::Left, move |ev, _window, cx| {
                 state.update(cx, |s, cx| {
-                    s.begin_transport_press(deck, TransportButton::Cue);
+                    if ev.modifiers.shift {
+                        s.temporary_cue(deck, true);
+                    } else {
+                        s.begin_transport_press(deck, TransportButton::Cue);
+                    }
                     cx.notify();
                 });
             })
@@ -211,7 +211,7 @@ impl UiState {
                     MouseButton::Left,
                     move |ev: &MouseDownEvent, _window, cx| {
                         state.update(cx, |s, cx| {
-                            s.trigger_cue(deck, i, ev.modifiers.shift);
+                            s.begin_pad_press(deck, i, ev.modifiers.shift);
                             cx.notify();
                         });
                     },
@@ -282,19 +282,19 @@ impl UiState {
                 .rounded(px(3.))
                 .border_1()
                 .border_color(if d.loop_on {
-                    theme::with_alpha(theme::ACCENT, 0.55)
+                    theme::with_alpha(theme::LED_RED, 0.65)
                 } else {
                     theme::LINE.into()
                 })
                 .bg(if d.loop_on {
-                    theme::with_alpha(theme::ACCENT, 0.16)
+                    theme::with_alpha(theme::LED_RED, 0.20)
                 } else {
                     theme::PANEL_INSET.into()
                 })
                 .text_size(px(12.))
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(if d.loop_on {
-                    theme::ACCENT
+                    theme::LED_RED
                 } else {
                     theme::TEXT
                 })
@@ -338,4 +338,43 @@ impl UiState {
             .child(loop_col)
             .into_any_element()
     }
+}
+
+// Draw both states in an identical box, independent of font glyph metrics.
+fn transport_icon(playing: bool, brake: bool, dc: gpui::Rgba) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let x = f32::from(bounds.origin.x);
+            let y = f32::from(bounds.origin.y);
+            let size = TRANSPORT_ICON;
+            let color = if playing { theme::LED_GREEN } else { dc };
+            if playing && !brake {
+                crate::controls::quad_fill(window, x, y, size, size, color);
+            } else {
+                let mut path = gpui::PathBuilder::fill();
+                for (i, (dx, dy)) in (if brake {
+                    [(0., 0.), (size, size), (0., size)]
+                } else {
+                    [(0., 0.), (size, size * 0.5), (0., size)]
+                })
+                .into_iter()
+                .enumerate()
+                {
+                    let p = gpui::point(px(x + dx), px(y + dy));
+                    if i == 0 {
+                        path.move_to(p);
+                    } else {
+                        path.line_to(p);
+                    }
+                }
+                path.close();
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, color);
+                }
+            }
+        },
+    )
+    .flex_none()
+    .size(px(TRANSPORT_ICON))
 }

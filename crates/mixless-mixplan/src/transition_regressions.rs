@@ -47,40 +47,22 @@ fn first_drop_exit_is_preferred_but_a_late_pass_still_has_a_transition() {
 }
 
 #[test]
-fn filter_and_echo_bridges_have_an_audible_overlap_and_bounded_control_motion() {
+fn incompatible_drums_use_a_true_cut_instead_of_a_one_bar_filter_or_echo_blend() {
     for label in [S::Drop, S::Outro] {
-        let mut a = track(1, 128., "8A", label, 64, 0.8, 0.2);
+        let a = track(1, 128., "8A", label, 64, 0.8, 0.2);
         let b = track(2, 105., "3B", S::Intro, 64, 0.8, 0.2);
-        // Isolate transition behavior from the first-drop exit preference.
-        a.sections[0].label = label;
         let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
         let summary = p.summary.as_ref().unwrap();
-        assert_eq!(
-            summary.strategy,
-            if label == S::Outro {
-                StrategyId::EchoOut
-            } else {
-                StrategyId::FilterSweep
-            }
-        );
+        assert_eq!(summary.strategy, StrategyId::DryCut);
         let n = summary.length_bars as f32;
-        close(p.incoming_start_bar, 0.);
-        assert!(p.duration_sec() >= 3.);
-        let mut overlap = 0.;
-        let mut prev = -1.;
-        for i in 0..=1000 {
-            let u = n * i as f32 / 1000.;
-            let x = p.lanes.xfader.sample(u);
-            assert!(x >= prev - 0.0001 && x - prev < 0.006);
-            prev = x;
-            if x.abs() < 0.8 && p.lanes.gain_a.sample(u) > -12. && p.lanes.gain_b.sample(u) > -12. {
-                overlap += p.duration_sec() / 1000.;
-            }
-        }
-        assert!(overlap > p.duration_sec() * 0.35, "overlap {overlap}");
-        close(p.lanes.filter_b.hp_hz.sample(n), 20.);
-        close(p.lanes.eq_b.mid.sample(n), 0.);
-        close(p.lanes.gain_b.sample(n), 0.);
+        close(p.incoming_start_bar, n);
+        close(n, 0.);
+        close(p.t_in_a, p.t_out_a);
+        close(p.lanes.xfader.sample(n), 1.);
+        close(p.lanes.fx_send_a.sample(n), 0.);
+        close(p.lanes.filter_a.lp_hz.sample(n), 20000.);
+        close(p.lanes.rate_b.sample(n), 1.);
+        assert!(p.duration_sec() < 1.); // transport settling, no musical pre-roll
     }
 }
 
@@ -138,7 +120,8 @@ fn structured(
 }
 
 #[test]
-fn recovery_overlap_preserves_both_halves_of_drop_and_adapts_to_8_16_24_bars() {
+fn recovery_overlap_preserves_both_halves_of_drop_and_adapts_to_available_phrases() {
+    let mut lengths = std::collections::BTreeSet::new();
     for bars in [8, 16, 24] {
         let (a, b) = structured(bars);
         let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
@@ -149,19 +132,26 @@ fn recovery_overlap_preserves_both_halves_of_drop_and_adapts_to_8_16_24_bars() {
             p.t_in_a
         );
         assert!(p.t_out_a <= a.sections[3].end_sec + 0.01);
-        assert_eq!(summary.length_bars, bars as u16, "{summary:?}");
+        // Finishing on a matching incoming phrase may use part of the break.
+        // Require a real overlap, bounded by the available recovery interval.
+        assert!(
+            (4..=bars as u16).contains(&summary.length_bars),
+            "{summary:?}"
+        );
+        lengths.insert(summary.length_bars);
         assert_eq!(p.incoming_start_bar, 0.);
-        let n = bars as f32;
+        let n = summary.length_bars as f32;
         assert!(p.lanes.xfader.sample(n * 0.5).abs() < 0.9);
         assert!(p.lanes.gain_a.sample(n * 0.5) > -12. && p.lanes.gain_b.sample(n * 0.5) > -12.);
     }
+    assert!(lengths.len() >= 2, "every recovery used {lengths:?}");
 }
 
 #[test]
 fn later_or_partially_entered_drop_cannot_be_faded_halfway_through() {
     let (a, _) = structured(16);
     assert!(!crate::drops::allows(&a, 24., 42., 0., false));
-    assert!(!crate::drops::allows(
+    assert!(crate::drops::allows(
         &a,
         48. * 240. / 174. - 8.,
         48. * 240. / 174.,

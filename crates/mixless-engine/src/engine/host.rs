@@ -64,8 +64,11 @@ impl Engine {
             xf_curve: AtomicU32::new(1),
             xf_reverse: AtomicBool::new(false),
             master: AtomicU32::new(800),
+            master_level: std::array::from_fn(|_| AtomicU32::new(0)),
+            recorder: recording::Recorder::default(),
             cue_gain: AtomicU32::new(800),
             quantize: AtomicBool::new(true),
+            fx_auto_fade: AtomicBool::new(true),
             xrun: AtomicU64::new(0),
             device_name: Mutex::new("Offline".into()),
             last_block: Mutex::new([0.0; 2]),
@@ -85,6 +88,22 @@ impl Engine {
             }),
         });
 
+        // On macOS std::Mutex lazily allocates its pthread storage, even for
+        // try_lock. Initialize callback-visible locks before opening streams.
+        for slot in &shared.decks {
+            drop(slot.buffer.lock().expect("buffer initialization"));
+            drop(slot.stems.lock().expect("stem initialization"));
+            drop(slot.beat_grid.lock().expect("grid initialization"));
+        }
+        drop(
+            shared
+                .recorder
+                .sink
+                .lock()
+                .expect("recorder initialization"),
+        );
+        drop(shared.last_block.lock().expect("meter initialization"));
+        shared.automation.initialize_callback_lock();
         let actual_sr = shared.sample_rate.load(Ordering::Relaxed) as f32;
         let engine = Self {
             audio_tx: if config.offline {
@@ -97,6 +116,7 @@ impl Engine {
             shared,
             rt: Mutex::new(AudioRt::new(actual_sr)),
             retired_buffers: Mutex::new(Vec::new()),
+            retired_stems: Mutex::new(Vec::new()),
         };
         if !config.offline {
             if let Err(error) = engine.configure_audio(audio) {
@@ -124,6 +144,11 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("offline engine has no audio devices"))?;
         let _apply = self.audio_apply.lock().expect("audio apply");
+        if self.recording_status().active {
+            return Err(EngineError::Protocol(
+                "Stop recording before changing audio devices",
+            ));
+        }
         let (reply, result) = std::sync::mpsc::channel();
         tx.send((config.clone(), reply))
             .map_err(|_| EngineError::Protocol("audio thread stopped"))?;
@@ -182,6 +207,7 @@ impl Engine {
         }
         self.automation_command(&Command::StopAutomix);
         self.shared.clear_sync();
+        self.clear_stems(deck);
         let slot = &self.shared.decks[deck.index()];
         *slot
             .beat_grid
@@ -196,9 +222,13 @@ impl Engine {
         slot.src_sr.store(buf.sample_rate, Ordering::Relaxed);
         slot.set_playhead(0.0);
         slot.playing.store(false, Ordering::Relaxed);
+        // A new source starts at unity trim, including decks previously faded
+        // to silence by an older automation plan. Channel faders retain position.
+        slot.gain_milli.store(9600, Ordering::Relaxed);
         slot.jog_touch.store(false, Ordering::Release);
         slot.seek_pending.store(false, Ordering::Release);
         slot.temporary_cue.store(0, Ordering::Relaxed);
+        slot.preview_cue.store(0, Ordering::Relaxed);
         slot.brake.store(false, Ordering::Relaxed);
         slot.roll.store(false, Ordering::Relaxed);
         for kind in &slot.cue_kinds {
@@ -226,6 +256,7 @@ impl Engine {
     }
 
     pub fn eject(&self, deck: DeckId) {
+        self.clear_stems(deck);
         self.automation_command(&Command::StopAutomix);
         self.shared.clear_sync();
         let slot = &self.shared.decks[deck.index()];
@@ -236,6 +267,7 @@ impl Engine {
         slot.jog_touch.store(false, Ordering::Release);
         slot.seek_pending.store(false, Ordering::Release);
         slot.temporary_cue.store(0, Ordering::Relaxed);
+        slot.preview_cue.store(0, Ordering::Relaxed);
         slot.brake.store(false, Ordering::Relaxed);
         slot.roll.store(false, Ordering::Relaxed);
         for kind in &slot.cue_kinds {
@@ -321,6 +353,22 @@ impl Engine {
             .lock()
             .ok()
             .and_then(|w| w.clone())
+    }
+
+    /// Replace a temporary envelope after background analysis, without reloading audio.
+    /// Host callers serialize this with deck loads and cancellation checks.
+    pub fn set_waveform(
+        &self,
+        deck: DeckId,
+        track: TrackId,
+        wave: Arc<mixless_protocol::Waveform>,
+    ) {
+        let slot = &self.shared.decks[deck.index()];
+        if let Ok(mut current) = slot.waveform.lock() {
+            if slot.track_id.load(Ordering::Acquire) == track.0 as u64 {
+                *current = Some(wave);
+            }
+        }
     }
 
     pub fn subscribe(&self) -> EventRx {

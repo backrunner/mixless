@@ -74,6 +74,7 @@ impl AtomicFx {
             beats: f32::from_bits(self.beats.load(Ordering::Relaxed)),
             rate_hz: f32::from_bits(self.rate.load(Ordering::Relaxed)),
             bpm,
+            auto_fade: true,
             depth: f32::from_bits(self.depth.load(Ordering::Relaxed)),
             drive: f32::from_bits(self.drive.load(Ordering::Relaxed)),
             decay_seconds: f32::from_bits(self.decay.load(Ordering::Relaxed)),

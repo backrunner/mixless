@@ -1,3 +1,5 @@
+> 当前 AutoMix 调整与验证见 [2026-09-13 记录](../history/2026-09-13-automix.md)。下方带日期的测量保留作历史背景。
+
 # Audio DSP status and verification
 
 The audio graph lives in `crates/mixless-engine`. UI gestures send controls;
@@ -202,3 +204,17 @@ and OS scheduling. Its acceptance bounds are
 - Hardware loopback latency, real-device xrun rates, headphones/PFL routing and
   subjective listening with representative tracks still require validation.
   Offline callback timing cannot certify audible quality or 60 fps UI rendering.
+
+
+## FX wet/dry transitions (2026-09-13)
+
+FX fade in / out is enabled by default in Playback preferences and persisted.
+Tail-bearing effects (including reverb, echo and delay) move their wet/dry mix
+through a 150 ms sample-clocked smoothstep envelope; other inserts use 35 ms.
+Disabling the preference retains the 5 ms click-prevention envelope. Retriggering
+starts from the current wet level. Block parameter refreshes do not restart a
+fade; existing delay/reverb state keeps decaying through release. Both deck
+inserts and master sends use the same policy, without callback allocation, I/O
+or locks. Effect-type changes fade the previous type out before its DSP reset.
+
+Validation and musical-analysis limits are recorded in [AutoMix continuity](../history/2026-09-13-automix.md).

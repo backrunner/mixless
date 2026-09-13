@@ -1,5 +1,5 @@
 //! Mixless visual language: Pioneer DJ inspired matte black + amber.
-//! No blue anywhere in the accent system.
+//! Semantic waveform/key colors are independent of the amber controls.
 
 use gpui::{Hsla, Rgba};
 
@@ -73,4 +73,27 @@ pub fn with_alpha(c: impl Into<Hsla>, a: f32) -> Hsla {
 
 pub fn cue_color(i: usize) -> Rgba {
     CUE_COLORS[i % CUE_COLORS.len()]
+}
+
+/// Camelot neighbors share nearby hues; mode changes lightness/saturation.
+/// Unknown keys stay neutral. Text labels always accompany color.
+pub fn key_color(key: &str) -> Rgba {
+    let Some(number) = key
+        .get(..key.len().saturating_sub(1))
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (1..=12).contains(n))
+    else {
+        return MUTED;
+    };
+    let major = key.ends_with('B');
+    if !major && !key.ends_with('A') {
+        return MUTED;
+    }
+    gpui::hsla(
+        (number as f32 - 1.) / 12.,
+        if major { 0.8 } else { 0.65 },
+        if major { 0.72 } else { 0.61 },
+        1.,
+    )
+    .into()
 }

@@ -3,6 +3,7 @@
 
 mod capture;
 mod delay;
+mod fade;
 mod pitch;
 mod process;
 mod spectral;
@@ -14,6 +15,7 @@ mod tests;
 use crate::dsp::{SmoothValue, StateFilter};
 use capture::Capture;
 use delay::{DelayLine, Reverb};
+use fade::WetFade;
 pub(crate) use mixless_protocol::FxKind as EffectKind;
 use pitch::PitchShift;
 use spectral::Spectral;
@@ -24,6 +26,7 @@ pub(crate) struct EffectParams {
     pub kind: EffectKind,
     pub mix: f32,
     pub bypass: bool,
+    pub auto_fade: bool,
     pub feedback: f32,
     pub beats: f32,
     pub rate_hz: f32,
@@ -41,6 +44,7 @@ impl Default for EffectParams {
             kind: EffectKind::Echo,
             mix: 0.5,
             bypass: true,
+            auto_fade: true,
             feedback: 0.35,
             beats: 0.5,
             rate_hz: 0.0,
@@ -58,7 +62,7 @@ pub(crate) struct Effect {
     sample_rate: f32,
     params: EffectParams,
     kind: EffectKind,
-    mix: SmoothValue,
+    mix: WetFade,
     feed: SmoothValue,
     feedback: SmoothValue,
     depth: SmoothValue,
@@ -108,7 +112,7 @@ impl Effect {
             sample_rate: sr,
             params: EffectParams::default(),
             kind: EffectKind::Echo,
-            mix: SmoothValue::new(0.0, sr, 0.005),
+            mix: WetFade::new(sr),
             feed: SmoothValue::new(0.0, sr, 0.005),
             feedback: SmoothValue::new(0.35, sr, 0.01),
             depth: SmoothValue::new(0.5, sr, 0.01),
@@ -167,7 +171,18 @@ impl Effect {
         }
         self.armed = enabled;
         self.params = p;
-        self.mix.set(if enabled { p.mix } else { 0.0 });
+        self.mix.set(
+            if enabled { p.mix } else { 0.0 },
+            if p.auto_fade {
+                if p.kind.has_tail() {
+                    0.15
+                } else {
+                    0.035
+                }
+            } else {
+                0.005
+            },
+        );
         self.feed.set(if enabled { 1.0 } else { 0.0 });
         self.feedback.set(p.feedback.clamp(0.0, 0.88));
         self.depth.set(p.depth);

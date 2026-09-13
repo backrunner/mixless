@@ -105,6 +105,19 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             ),
         );
     }
+    let mut window_points = vec![];
+    if out {
+        for (start, end) in crate::recovery::windows(t) {
+            let mut beat = g.ceil_bar(start);
+            while g.sec(beat) <= end + 0.05 {
+                if g.sec(beat) >= earliest {
+                    window_points.push(beat);
+                }
+                beat += g.meter();
+            }
+        }
+        result.extend(&window_points);
+    }
     let manual = crate::cue_policy::auto_anchors(t, cues, out);
     result.extend(&manual);
     result.retain(|b| {
@@ -114,8 +127,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             && sec >= 0.
             && sec <= audible_end + 0.001
             && if out {
-                sec + 0.001 >= earliest + g.meter() * 60. / g.bpm(*b)
-                    && (is_manual || sec >= (t.duration_sec * 0.12).min(24.))
+                sec + 0.001 >= earliest && (is_manual || sec >= (t.duration_sec * 0.12).min(24.))
             } else {
                 is_manual || sec < t.duration_sec * 0.5
             }
@@ -194,7 +206,31 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             })
         })
         .collect();
+    // Keep quiet instrumental entry phrases; loud drop anchors must not crowd
+    // every usable intro out of the bounded search.
+    let rhythm_entries: Vec<_> = if out {
+        vec![]
+    } else {
+        unique
+            .iter()
+            .copied()
+            .filter(|beat| {
+                let sec = g.sec(*beat);
+                crate::vocals::safe_entry(t, sec)
+                    && t.bars
+                        .iter()
+                        .filter(|b| b.start_sec < sec + 8. * 60. / g.bpm(*beat) && b.end_sec > sec)
+                        .all(|b| crate::vocals::risk(b) < 0.45)
+            })
+            .take(16)
+            .collect()
+    };
     unique.truncate(8);
+    for beat in window_points.into_iter().chain(rhythm_entries) {
+        if !unique.contains(&beat) {
+            unique.push(beat);
+        }
+    }
     for beat in peak_entries {
         if !unique.contains(&beat) {
             unique.push(beat);

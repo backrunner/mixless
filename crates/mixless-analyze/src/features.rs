@@ -1,4 +1,6 @@
+mod moments;
 mod tempo;
+mod tonal;
 use tempo::tempo;
 
 use mixless_protocol::{
@@ -10,7 +12,7 @@ const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 9;
+pub const ANALYSIS_VERSION: u32 = 14;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -22,6 +24,7 @@ struct Frame {
     onset: f32,
     low_onset: f32,
     tonal_risk: f32,
+    pitch_midi: Option<f32>,
 }
 
 pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
@@ -60,7 +63,6 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     let mut previous = vec![0.; FFT / 2];
     let mut previous_low = 0.;
     let mut frames = Vec::new();
-    let mut global = [0f32; 12];
     let bins: Vec<_> = (2..FFT / 2 - 1)
         .map(|k| {
             let hz = k as f32 * SR / FFT as f32;
@@ -93,6 +95,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         frame.rms = (frame.rms / FFT as f32).sqrt();
         fft.process_with_scratch(&mut complex, &mut scratch);
         let mut harmonic = 0.;
+        let mut ridge_power = 0.;
         let mut total = 0.;
         for &(k, hz, band, pc) in &bins {
             let power = complex[k].norm_sqr();
@@ -106,7 +109,15 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
                 && power > complex[k + 1].norm_sqr() * 1.5
             {
                 frame.chroma[pc] += power;
-                global[pc] += power;
+                if hz >= 180. && hz <= 2500. && power > ridge_power {
+                    ridge_power = power;
+                    let l = complex[k - 1].norm().max(1e-12).ln();
+                    let c = mag.max(1e-12).ln();
+                    let r = complex[k + 1].norm().max(1e-12).ln();
+                    let delta = (0.5 * (l - r) / (l - 2. * c + r).min(-1e-6)).clamp(-0.5, 0.5);
+                    frame.pitch_midi =
+                        Some(69. + 12. * (((k as f32 + delta) * SR / FFT as f32) / 440.).log2());
+                }
                 if hz > 180. && hz < 3000. {
                     harmonic += power;
                 }
@@ -126,7 +137,8 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         frames.push(frame);
     }
     let (bpm, phase, confidence) = tempo(&frames, duration);
-    let (key, camelot, key_confidence) = key(&global);
+    let tonal = tonal::analyze(&mono);
+    let (key, camelot, key_confidence) = tonal.key.clone();
     // Estimate tempo independently for each phrase. A single global BPM is
     // retained as a fallback, while the beat timestamps follow the local
     // periods so accelerando/section changes do not accumulate phase error.
@@ -213,31 +225,23 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     // locally so a constant grid fitted to a tempo-changing song is never
     // advertised as reliable throughout that song.
     let mut segments = Vec::new();
+    let mut pulse_confidence = Vec::new();
     for first in (0..beats.len()).step_by(phrase_beats) {
         let last = (first + phrase_beats).min(beats.len());
         let local_bpm = local_bpms[(first / phrase_beats).min(local_bpms.len() - 1)];
-        let local_period = 60.0 / local_bpm;
         let local_phase = beats[first];
         let start = frames.partition_point(|f| f.time < beats[first]);
         let end_time = beats.get(last).copied().unwrap_or(duration);
         let end = frames.partition_point(|f| f.time < end_time);
         let local = &frames[start..end];
-        let total: f32 = local.iter().map(|f| f.onset).sum();
-        let aligned: f32 = local
-            .iter()
-            .filter(|f| {
-                let p = (f.time - local_phase).rem_euclid(local_period);
-                p.min(local_period - p) < 0.035
-            })
-            .map(|f| f.onset)
-            .sum();
+        pulse_confidence.push(tempo::pulse_confidence(local, local_bpm, local_phase));
         segments.push(TempoSegment {
             start_beat: first as f32,
             end_beat: last as f32,
             bpm: local_bpm,
             confidence: confidence
                 .min(accent_confidence)
-                .min((aligned / total.max(1e-6) * 1.5).clamp(0., 1.)),
+                .min(tempo::alignment_confidence(local, local_bpm, local_phase)),
         });
     }
     if segments.is_empty() {
@@ -276,13 +280,10 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         let rms = (selected.iter().map(|f| f.rms * f.rms).sum::<f32>() / count).sqrt();
         let peak = selected.iter().map(|f| f.peak).fold(0., f32::max);
         let mut band = [0.; 3];
-        let mut chroma = [0.; 12];
+        let chroma = tonal.chroma(p[0], p[1]);
         for f in selected {
             for i in 0..3 {
                 band[i] += f.band[i];
-            }
-            for i in 0..12 {
-                chroma[i] += f.chroma[i] / count;
             }
         }
         let total = band.iter().sum::<f32>().max(1e-12);
@@ -327,6 +328,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             meter_num: 4,
             meter_den: 4,
             segments,
+            pulse_confidence,
             // A fallback BPM is useful to the conservative mix planner, but
             // silence/aperiodic audio must not advertise an invented beat grid
             // to the waveform or Beat Sync. Bar-one confidence is independent.
@@ -340,64 +342,14 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         bars,
         phrase_boundaries,
         mix_regions: vec![],
+        moments: moments::extract(&frames, duration),
+        stems: None,
         waveform_path: None,
         partial: true,
     }
 }
 
-pub(crate) fn key(chroma: &[f32; 12]) -> (Option<String>, Option<String>, f32) {
-    let sum = chroma.iter().sum::<f32>();
-    if sum < 1e-8 {
-        return (None, None, 0.);
-    }
-    let major = [
-        6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
-    ];
-    let minor = [
-        6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
-    ];
-    let names = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    let cams = [
-        [
-            "8B", "3B", "10B", "5B", "12B", "7B", "2B", "9B", "4B", "11B", "6B", "1B",
-        ],
-        [
-            "5A", "12A", "7A", "2A", "9A", "4A", "11A", "6A", "1A", "8A", "3A", "10A",
-        ],
-    ];
-    let mut scores = Vec::new();
-    let mean = sum / 12.;
-    for (mode, template) in [major, minor].iter().enumerate() {
-        let tm = template.iter().sum::<f32>() / 12.;
-        for root in 0..12 {
-            let mut dot = 0.;
-            let mut aa = 0.;
-            let mut bb = 0.;
-            for i in 0..12 {
-                let a = chroma[i] - mean;
-                let b = template[(i + 12 - root) % 12] - tm;
-                dot += a * b;
-                aa += a * a;
-                bb += b * b;
-            }
-            scores.push((dot / (aa * bb).sqrt().max(1e-8), mode, root));
-        }
-    }
-    scores.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let (score, mode, root) = scores[0];
-    let confidence = (score.max(0.) * ((score - scores[1].0).max(0.) * 6.).min(1.)).clamp(0., 1.);
-    (
-        Some(format!(
-            "{} {}",
-            names[root],
-            if mode == 0 { "major" } else { "minor" }
-        )),
-        Some(cams[mode][root].into()),
-        confidence,
-    )
-}
+pub(crate) use mixless_protocol::estimate_key as key;
 
 #[cfg(test)]
 mod tests;

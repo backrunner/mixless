@@ -15,6 +15,7 @@ impl UiState {
                 Command::PlayPause { .. }
                     | Command::JumpCue { .. }
                     | Command::TriggerTemporaryCue { .. }
+                    | Command::BeginCuePreview { .. }
                     | Command::SetBrake { on: true, .. }
             )
         {

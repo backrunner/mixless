@@ -2,6 +2,47 @@
 use crate::{decode::AudioBuffer, dsp::Biquad};
 use mixless_protocol::Waveform;
 
+/// Fast, unsmoothed amplitude-only placeholder. Never persisted as spectral
+/// analysis: the host replaces it with `compute_waveform` when ready.
+pub fn compute_preview_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
+    let frames = buf.frames as usize;
+    let columns = columns.clamp(1, frames.max(1));
+    let mut peak = Vec::with_capacity(columns);
+    for c in 0..columns {
+        let start = c * frames / columns * 2;
+        let end = (c + 1) * frames / columns * 2;
+        peak.push(
+            buf.samples[start..end]
+                .iter()
+                .map(|x| x.abs())
+                .fold(0., f32::max),
+        );
+    }
+    let maximum = peak.iter().copied().fold(1e-6, f32::max);
+    let detail: Vec<_> = peak
+        .iter()
+        .map(|x| (x / maximum * 65535.).round() as u16)
+        .collect();
+    Waveform {
+        columns: columns as u32,
+        duration_sec: frames as f32 / buf.sample_rate.max(1) as f32,
+        peak: peak
+            .iter()
+            .map(|x| (x / maximum * 255.).round() as u8)
+            .collect(),
+        peak_pos: vec![],
+        peak_neg: vec![],
+        rms: vec![],
+        low: vec![0; columns],
+        low_mid: vec![0; columns],
+        mid: vec![255; columns],
+        high: vec![0; columns],
+        detail_pos: detail.clone(),
+        detail_neg: detail,
+        detail_rms: vec![],
+    }
+}
+
 /// Independent band filters avoid the phase cancellation of `x - low - high`.
 /// Only spectral color is smoothed; attack locations retain sample-bin accuracy.
 pub fn compute_waveform(buf: &AudioBuffer, columns: usize) -> Waveform {
@@ -109,6 +150,7 @@ mod tests {
             samples.push(s);
         }
         Arc::new(AudioBuffer {
+            loudness: Default::default(),
             samples,
             frames: frames as u64,
             sample_rate: sr,
@@ -122,6 +164,7 @@ mod tests {
         assert!(lm.low_mid[150] > lm.low[150] && lm.low_mid[150] > lm.mid[150]);
         assert!(hm.mid[150] > hm.low_mid[150] && hm.mid[150] > hm.high[150]);
         let buf = AudioBuffer {
+            loudness: Default::default(),
             samples: (0..1024).flat_map(|i| [i as f32 / 2048.; 2]).collect(),
             frames: 1024,
             sample_rate: 48000,
@@ -134,6 +177,7 @@ mod tests {
     #[test]
     fn short_audio_has_no_empty_columns_before_its_first_sample() {
         let buf = AudioBuffer {
+            loudness: Default::default(),
             samples: vec![0.25; 16],
             frames: 8,
             sample_rate: 48_000,
@@ -147,6 +191,7 @@ mod tests {
     fn antiphase_stereo_is_not_silence() {
         let original = tone(48_000, 80.0, 0.5);
         let mut inverted = AudioBuffer {
+            loudness: Default::default(),
             samples: original.samples.clone(),
             frames: original.frames,
             sample_rate: original.sample_rate,
@@ -196,6 +241,7 @@ mod tests {
     fn silence_is_zero_peak() {
         let frames = 24_000usize;
         let buf = AudioBuffer {
+            loudness: Default::default(),
             samples: vec![0.0; frames * 2],
             frames: frames as u64,
             sample_rate: 48_000,
@@ -211,6 +257,7 @@ mod tests {
     fn positive_signal_keeps_asymmetric_peaks() {
         let frames = 4_800usize;
         let buf = AudioBuffer {
+            loudness: Default::default(),
             samples: vec![0.25; frames * 2],
             frames: frames as u64,
             sample_rate: 48_000,

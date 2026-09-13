@@ -6,7 +6,7 @@ Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只�
 
 ## 如何阅读
 
-按角色选入口。本文档与主设计文档（Draft **0.3.1**）必须保持一致。
+按角色选入口。下表保留 Draft 0.3.1 设计背景；最新实现记录见下方。
 
 | 顺序 | 文件 | 读什么 |
 |------|------|--------|
@@ -23,46 +23,19 @@ Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只�
 | 11 | [08-roadmap.md](./08-roadmap.md) | 里程碑、PR、人力 |
 | — | [design.md](./design.md) | 完整主设计（含 Key Decisions / PR Plan） |
 
-## 已锁定、全文通用的决策
+## 当前实现记录
 
-- 实时图 100% Rust + `cpal`。Web Audio 不是播放引擎。
-- **v1 只验收 macOS**（CoreAudio）。Windows 不做。
-- 主仓库 **Apache-2.0**。Spotify CDN 获取若实现，放闭源插件，不进开源树。
-- Spotify = 歌单目录。音频通过获取层落到磁盘。默认渠道：本地匹配 → YouTube Music（spotDL/yt-dlp 路线）→ YouTube 回退。
-- 官方 DJ Partner **不申请**。开源树不依赖 librespot / zotify。
-- Time-stretch 默认 Signalsmith（音乐档 20–40 ms）；scratch 走 0–2 ms 重采样。
-- v1 只有 2 个 deck。Master = 系统默认输出。**PFL 进 v1**（第二 CoreAudio）。无第二设备只禁 PFL，**Hot Cue 跳转永远可用**。
-- Mixer / FX 按 [10-mixer-fx.md](./10-mixer-fx.md) 齐备；全开时 callback p99 < 50% block。
-- 播放真相在 Rust；GPUI `UiState` 只镜像 `EngineSnapshot`。早期设计中 Tauri/Svelte 的描述已被原生 GPUI 实现取代。
-- v1 jog SLA：**p99 < 30 ms** @ 128 frames / scratch 路径。
-- 只有 `kind=in|out` 硬约束 Automix；hot cue 是软锚。
-- `mixplan` **不**依赖 `analyze`；`TrackAnalysis` 在 `protocol`。
-- Watch-folder = P1；v1 仅显式导入 + 获取落盘。
-- 图跑设备原生 SR，预分配按 `actual_sr`，上限 96 kHz。
-- Loop 在 stretch 之前；callback 禁止 `read_at` / mmap。
-- 2× 匹配 = 2:1 bar map、rate≈1；两个快 bar = 一个慢 bar。
-- Mix 时钟 = 出碟；`PerformanceOffset` 带入下一对；打分用 sounding BPM/key。
-- v1 有 SYNC。
+上表是早期设计资料，不能作为已实现功能或当前验收结果。原先的许可证、固定混音长度和设备默认值描述存在过时内容；当前代码、根目录 README 与 LICENSE 优先。
 
-## 仓库目标布局
+- [AutoMix 使用和工程参考](reference/AUTOMIX.md)
+- [最新过渡改动与验证](history/2026-09-13-automix.md)
+- [DJ 教学、分轨与音符模型调研](reference/automix-research.md)
+- [Rust 分轨、音符与正式 AutoMix 接入](reference/native-inference.md)
+- [独立声部实时播放与性能](reference/stem-playback.md)
+- [DSP 与实时性能](reference/AUDIO_DSP.md)
+- [FX 目录](reference/FX_CATALOGUE.md)
+- [对拍参考](reference/BEAT_SYNC.md)
+- [SoundAnalysis 部署边界](reference/ANALYSIS_ENHANCEMENT.md)
+- [历史 UI 验收](history/DJ_WORKSPACE_CHECKS.md)
 
-```
-apps/desktop/                 # GPUI / Rust（macOS）
-crates/mixless-engine
-crates/mixless-analyze
-crates/mixless-mixplan
-crates/mixless-library
-crates/mixless-spotify        # 浏览 only
-crates/mixless-acquire        # Resolver
-crates/mixless-acquire-yt     # yt-dlp sidecar
-crates/mixless-protocol
-models/
-third_party/                  # Signalsmith、yt-dlp binary
-private/                      # 闭源 CDN 插件，不随开源发布
-```
-
-## 状态
-
-- 日期：2026-09-05
-- 仓库：已实现原生桌面、导入与 Automix；当前行为见根 README / AUTOMIX / AUDIO_DSP
-- 设计状态：Draft 0.3.1
+根目录仅保留用户入口、贡献规范与许可证声明。AI 工作资料放在这里；已经被后续改动替代的重复逐轮报告已合并删除。历史结果按日期理解，不能当作当前版本重新验证过的结论。

@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, IntoElement, Render, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, div, prelude::*, px, size,
+    div, prelude::*, px, size, App, Bounds, Context, FocusHandle, IntoElement, Render,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use mixless_engine::{AudioConfig, AudioDevice};
 use mixless_midi::{MidiBinding, MidiConfig, MidiMessage, MidiPort, MidiSourceKind, MidiTarget};
@@ -92,20 +92,18 @@ impl Preferences {
         };
         state.refresh();
         cx.on_release(|state, _| state.cancel_learn()).detach();
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                if this
-                    .update(cx, |state, cx| {
-                        state.poll();
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            if this
+                .update(cx, |state, cx| {
+                    state.poll();
+                    cx.notify();
+                })
+                .is_err()
+            {
+                break;
             }
         })
         .detach();
@@ -186,7 +184,26 @@ impl Preferences {
         let result = self.core.settings.update(change);
         if result.is_ok() {
             let after = self.core.settings.get();
+            if before.deep_analysis != after.deep_analysis {
+                // Retry basic-only rows when enabled; disabling stops queued
+                // model work at the next chunk without interrupting playback.
+                let core = self.core.clone();
+                std::thread::spawn(move || {
+                    if let Ok(tracks) = core.library.list_tracks() {
+                        for track in &tracks {
+                            core.analysis.forget(track.id);
+                        }
+                        crate::analysis::schedule(&core, &tracks);
+                        crate::automix::refresh_previews(&core);
+                    }
+                });
+            }
             let engine = &self.core.engine;
+            if before.fx_auto_fade != after.fx_auto_fade {
+                let _ = engine.dispatch(Command::SetFxAutoFade {
+                    on: after.fx_auto_fade,
+                });
+            }
             if before.quantize != after.quantize {
                 let _ = engine.dispatch(Command::SetQuantize { on: after.quantize });
             }
@@ -490,6 +507,7 @@ impl Preferences {
             .child(section("Playback"));
         for (id, label, on, field) in [
             ("quantize", "Quantize", settings.quantize, 0),
+            ("fx-auto-fade", "FX fade in / out", settings.fx_auto_fade, 6),
             ("keylock", "Key lock", settings.keylock, 1),
             ("vinyl", "Vinyl mode", settings.vinyl, 2),
             ("slip", "Slip mode", settings.slip, 3),
@@ -513,6 +531,7 @@ impl Preferences {
                             2 => p.vinyl = !p.vinyl,
                             3 => p.slip = !p.slip,
                             5 => p.filter_resonance = !p.filter_resonance,
+                            6 => p.fx_auto_fade = !p.fx_auto_fade,
                             _ => p.xf_reverse = !p.xf_reverse,
                         })
                     },
@@ -550,6 +569,20 @@ impl Preferences {
                 .into_any_element(),
         ))
         .child(section("Library"))
+        .child(row(
+            "Stem and note analysis for AutoMix",
+            self.toggle(
+                "deep-analysis",
+                settings.deep_analysis,
+                |s| s.save_general(|p| p.deep_analysis = !p.deep_analysis),
+                cx,
+            ),
+        ))
+        .child(info(
+            "Analysis",
+            "Runs locally in the background. First use downloads models; playback stays available."
+                .into(),
+        ))
         .child(row(
             "Library and preferences",
             self.button(

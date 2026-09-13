@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+#[ignore = "serial release budget with active stereo recording"]
+fn recording_callback_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    for frames in [128, 512] {
+        let engine = test_engine(48_000);
+        for deck in [DeckId::A, DeckId::B] {
+            engine.dispatch(Command::PlayPause { deck }).unwrap();
+            engine
+                .dispatch(Command::SetLoop {
+                    deck,
+                    bars: 1,
+                    on: true,
+                })
+                .unwrap();
+            engine
+                .dispatch(Command::SetRate { deck, rate: 1.04 })
+                .unwrap();
+        }
+        engine.render_offline(4096);
+        engine
+            .start_recording(&directory.path().join(format!("{frames}.wav")))
+            .unwrap();
+        let mut output = vec![0.; frames * 2];
+        let mut timings = Vec::with_capacity(2000);
+        let mut rt = engine.rt.lock().unwrap();
+        for _ in 0..2000 {
+            let started = std::time::Instant::now();
+            engine.shared.process_block(&mut rt, &mut output, 2);
+            timings.push(started.elapsed().as_secs_f64());
+        }
+        drop(rt);
+        let status = engine.stop_recording().unwrap();
+        assert_eq!(status.dropped_frames, 0);
+        assert!((status.seconds - (frames * 2000) as f64 / 48000.).abs() < 1e-8);
+        timings.sort_by(f64::total_cmp);
+        let p99 = timings[timings.len() * 99 / 100];
+        let budget = frames as f64 / 48000.;
+        eprintln!(
+            "recording frames={frames} p99={:.3}ms budget={:.3}ms",
+            p99 * 1000.,
+            budget * 1000.
+        );
+        assert!(p99 < budget * 0.5);
+    }
+}
+
+#[test]
 #[ignore = "release-only 60-second realtime workload benchmark"]
 fn audio_callback_budget() {
     for (block_frames, scratch, brake) in

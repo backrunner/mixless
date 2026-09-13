@@ -1,3 +1,5 @@
+> 当前 AutoMix 调整与验证见 [2026-09-13 记录](../history/2026-09-13-automix.md)。下方带日期的测量保留作历史背景。
+
 # DJ FX catalogue — 2026-09-06
 
 Mixless now exposes 70 audio effect types across ten groups, through all four
@@ -52,7 +54,7 @@ capture playback, and Spiral/Pitch Delay use pitch-shifted feedback.
 
 The catalogue/state (`mixless-protocol/src/fx/`), DSP cores
 (`mixless-engine/src/effects/`) and controls/editor (`apps/desktop/src/fx/`)
-have separate module boundaries. See [CONTRIBUTING.md](CONTRIBUTING.md#module-boundaries)
+have separate module boundaries. See [CONTRIBUTING.md](../../CONTRIBUTING.md#module-boundaries)
 for the extension points and required checks when adding another effect.
 
 The actual algorithms, routing, latency and capture/rearm behavior are recorded
@@ -73,3 +75,17 @@ measured the slowest of 70 individual inserts at **0.0653 ms p99 per 256 frames 
 measurements, not device latency or listening
 acceptance. Synthetic tests do not certify perceptual equivalence to commercial
 FX, and arbitrary music still needs listening validation.
+
+
+## FX wet/dry transitions (2026-09-13)
+
+FX fade in / out is enabled by default in Playback preferences and persisted.
+Tail-bearing effects (including reverb, echo and delay) move their wet/dry mix
+through a 150 ms sample-clocked smoothstep envelope; other inserts use 35 ms.
+Disabling the preference retains the 5 ms click-prevention envelope. Retriggering
+starts from the current wet level. Block parameter refreshes do not restart a
+fade; existing delay/reverb state keeps decaying through release. Both deck
+inserts and master sends use the same policy, without callback allocation, I/O
+or locks. Effect-type changes fade the previous type out before its DSP reset.
+
+Validation and musical-analysis limits are recorded in [AutoMix continuity](../history/2026-09-13-automix.md).

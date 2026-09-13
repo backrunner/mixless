@@ -8,10 +8,14 @@ use std::sync::{
     mpsc::{Sender, channel},
 };
 
+mod deep;
 mod playback;
 mod reanalysis;
+mod stems;
+pub use deep::schedule as schedule_deep;
 pub use playback::load_manual;
 pub use reanalysis::reanalyze;
+pub use stems::attach_stems;
 
 use crate::state::AppCore;
 use mixless_protocol::{DeckId, Track, TrackAnalysis, TrackId};
@@ -21,7 +25,9 @@ pub enum Status {
     Queued,
     Checking,
     Analyzing,
+    Enhancing(String),
     Ready(String),
+    Basic(String, String),
     Failed(String),
 }
 
@@ -30,6 +36,7 @@ pub struct PreparedTrack {
     pub track: Track,
     pub analysis: Arc<TrackAnalysis>,
     pub wave: Arc<mixless_protocol::Waveform>,
+    pub warning: Option<String>,
 }
 
 #[derive(Default)]
@@ -37,6 +44,8 @@ pub struct AnalysisJobs {
     states: Mutex<HashMap<TrackId, Status>>,
     locks: Mutex<HashMap<TrackId, Arc<Mutex<()>>>>,
     audio_locks: Mutex<HashMap<TrackId, Arc<Mutex<()>>>>,
+    epochs: Mutex<HashMap<TrackId, Arc<AtomicU64>>>,
+    deep_jobs: deep::Jobs,
     updates: Mutex<HashMap<TrackId, Track>>,
     pub latest: Mutex<HashMap<TrackId, Track>>,
     sender: OnceLock<Sender<TrackId>>,
@@ -45,6 +54,7 @@ pub struct AnalysisJobs {
     pub revision: AtomicU64,
     pub content_revision: AtomicU64,
     pub loaded: Mutex<[Option<PreparedTrack>; 2]>,
+    playback_revision: Mutex<[Option<(std::sync::Weak<mixless_engine::AudioBuffer>, String)>; 2]>,
 }
 
 impl AnalysisJobs {
@@ -52,7 +62,12 @@ impl AnalysisJobs {
         let states = self.states.lock().expect("analysis states");
         let ready = states
             .values()
-            .filter(|s| matches!(s, Status::Ready(_)))
+            .filter(|s| {
+                matches!(
+                    s,
+                    Status::Ready(_) | Status::Basic(_, _) | Status::Enhancing(_)
+                )
+            })
             .count();
         let failed = states
             .values()
@@ -70,6 +85,17 @@ impl AnalysisJobs {
         if failed > 0 {
             text.push_str(&format!(" · {failed} failed"));
         }
+        let basic = states
+            .values()
+            .filter(|s| matches!(s, Status::Basic(_, _)))
+            .count();
+        if basic > 0 {
+            text.push_str(&format!(" · {basic} using basic analysis"));
+        }
+        let deep = self.deep_jobs.pending.lock().expect("deep jobs").len();
+        if deep > 0 {
+            text.push_str(&format!(" · {deep} stem analyses queued / running"));
+        }
         text
     }
 
@@ -83,7 +109,9 @@ impl AnalysisJobs {
 
     pub fn status(&self, track: &Track) -> Status {
         match self.states.lock().expect("analysis states").get(&track.id) {
-            Some(Status::Ready(hash)) if !track.analyzed || *hash != track.content_hash => {
+            Some(Status::Ready(hash) | Status::Basic(hash, _))
+                if !track.analyzed || *hash != track.content_hash =>
+            {
                 Status::Checking
             }
             Some(status) => status.clone(),
@@ -100,6 +128,7 @@ impl AnalysisJobs {
     }
 
     pub fn forget(&self, id: TrackId) {
+        self.epoch(id).fetch_add(1, Ordering::AcqRel);
         self.prepared
             .lock()
             .expect("prepared cache")
@@ -109,6 +138,15 @@ impl AnalysisJobs {
         self.updates.lock().expect("analysis updates").remove(&id);
         self.revision.fetch_add(1, Ordering::Release);
     }
+
+    fn epoch(&self, id: TrackId) -> Arc<AtomicU64> {
+        self.epochs
+            .lock()
+            .expect("analysis epochs")
+            .entry(id)
+            .or_default()
+            .clone()
+    }
 }
 
 /// Queue each visible track once; refreshes must not overwrite worker states.
@@ -116,7 +154,7 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
     let mut states = core.analysis.states.lock().expect("analysis states");
     let mut pending = Vec::new();
     for track in tracks {
-        let stale = matches!(states.get(&track.id), Some(Status::Ready(hash))
+        let stale = matches!(states.get(&track.id), Some(Status::Ready(hash) | Status::Basic(hash, _))
             if !track.analyzed || hash != &track.content_hash);
         if !states.contains_key(&track.id) || stale {
             states.insert(track.id, Status::Queued);
@@ -145,7 +183,9 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
                         break;
                     };
                     let Some(core) = core.upgrade() else { break };
-                    let _ = prepare(&core, id);
+                    if prepare(&core, id).is_ok() {
+                        deep::schedule(&core, id);
+                    }
                 }
             });
         }
@@ -184,8 +224,16 @@ pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
                     .expect("analysis updates")
                     .insert(id, prepared.track.clone());
             }
-            core.analysis
-                .set(id, Status::Ready(prepared.track.content_hash.clone()));
+            if !core
+                .analysis
+                .deep_jobs
+                .pending
+                .lock()
+                .expect("deep jobs")
+                .contains(&id)
+            {
+                core.analysis.set(id, deep::ready_status(prepared));
+            }
         }
         Err(error) => core.analysis.set(id, Status::Failed(error.clone())),
     }
@@ -292,6 +340,7 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         track,
         analysis: Arc::new(analysis),
         wave,
+        warning: None,
     };
     let mut cache = core.analysis.prepared.lock().expect("prepared cache");
     cache.retain(|p| p.track.id != id);
@@ -336,6 +385,7 @@ pub fn load(
         .automix_commit
         .lock()
         .map_err(|_| "Automix commit lock poisoned")?;
+    let source = Arc::downgrade(&buf);
     let committed = core
         .engine
         .load_buffer_if(
@@ -355,6 +405,10 @@ pub fn load(
         }
         return Ok(false);
     }
+    core.analysis
+        .playback_revision
+        .lock()
+        .expect("source revision")[deck.index()] = Some((source, track.content_hash.clone()));
     if prepared.analysis.tempo.beats.len() >= 2 {
         core.engine
             .set_beat_grid(deck, id, prepared.analysis.tempo.clone())
@@ -374,7 +428,11 @@ pub fn load(
             },
         });
     }
+    let hash = prepared.track.content_hash.clone();
     core.analysis.loaded.lock().expect("loaded analysis")[deck.index()] = Some(prepared);
+    drop(_commit);
+    drop(_load);
+    attach_stems(core, deck, id, &hash);
     Ok(true)
 }
 

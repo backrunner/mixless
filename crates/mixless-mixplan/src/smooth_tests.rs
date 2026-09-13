@@ -21,7 +21,7 @@ fn smooth_policy_transfers_tempo_and_keeps_low_end_coherent() {
 }
 
 #[test]
-fn smooth_policy_uses_short_phrase_bridge_for_unreliable_grid_or_harmonic_conflict() {
+fn uncertain_grid_uses_a_structural_cut_without_an_unsynced_overlap() {
     let (mut a, mut b) = pair();
     a.tempo.beats.clear();
     a.tempo.downbeats.clear();
@@ -114,7 +114,7 @@ fn smooth_tempo_slope_phase_and_bass_power_are_bounded_in_both_directions() {
 }
 
 #[test]
-fn incompatible_bridge_overlaps_on_phrase_boundary_at_native_tempo_and_key() {
+fn incompatible_tempos_cut_on_a_phrase_at_native_tempo_and_key() {
     let a = track(1, 128., "8A", S::Outro, 64, 0.9, 0.2);
     let b = track(2, 105., "3B", S::Intro, 64, 0.8, 0.2);
     let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
@@ -123,13 +123,13 @@ fn incompatible_bridge_overlaps_on_phrase_boundary_at_native_tempo_and_key() {
         Some(mixless_protocol::TransitionMode::PhraseBridge)
     );
     let n = p.summary.as_ref().unwrap().length_bars as f32;
-    close(p.incoming_start_bar, 0.);
+    close(p.incoming_start_bar, n);
     close(p.clock.sample(n), p.t_out_a - p.t_in_a);
-    close(p.duration_sec(), p.clock.sample(n));
-    close(p.t_end_b - p.t_in_b, p.duration_sec());
-    assert!(p.duration_sec() >= 3.);
-    assert!(p.lanes.xfader.sample(n * 0.25) > -0.95);
-    assert!(p.lanes.xfader.sample(n * 0.75) < 0.95);
+    assert!(p.duration_sec() > p.clock.sample(n));
+    assert_eq!(p.summary.as_ref().unwrap().strategy, StrategyId::DryCut);
+    assert_eq!(n, 0.);
+    assert_eq!(p.t_in_a, p.t_out_a);
+    assert_eq!(p.lanes.fx_send_a.sample(n * 0.9), 0.);
     close(p.lanes.xfader.sample(n), 1.);
     close(p.lanes.gain_a.sample(n), -96.);
     close(p.lanes.rate_a.sample(n), 1.);

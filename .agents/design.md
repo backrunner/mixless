@@ -641,7 +641,7 @@ fn covers_user_range(
 
 ### 7. AI Mixing
 
-**2026-09 实现补充**：默认 `PlannerOptions.smooth=true`，逐对迁移 BPM／调性，不锁全歌单。可靠网格、兼容 sounding key、低前景冲突时，`BeatBlend` 以五次平滑共同 BPM 曲线迁移（最大对数斜率约 0.35%/s），重拍附近一个拍内等功率交接低频；80/160 使用 2:1 拍映射。其他情况走 `PhraseBridge`，出碟滤波／轻 Echo 后，在乐句结束重拍启动入碟原速原调，最后约 40 ms 淡出出碟干声。用户 cue、前景 Verse → Chorus 和音频边界约束仍有效，已测静音不作入点。`energy_hold` 保留 sounding offset 给下一对。下述九种目录节点与归一化评分仍由 `smooth=false` 路径实现并测试；平滑路径当前使用 BassSwap、EnergyHold 和 EchoOut。实现与试听方式见根目录 `AUTOMIX.md`，与 `.agents/05-ai-mixing.md` 一致。
+**2026-09 实现补充**：默认 `PlannerOptions.smooth=true`，逐对迁移 BPM／调性，不锁全歌单。可靠网格、兼容 sounding key、低前景冲突时，`BeatBlend` 以五次平滑共同 BPM 曲线迁移（最大对数斜率约 0.35%/s），重拍附近一个拍内等功率交接低频；80/160 使用 2:1 拍映射。其他情况走 `PhraseBridge`，出碟滤波／轻 Echo 后，在乐句结束重拍启动入碟原速原调，最后约 40 ms 淡出出碟干声。用户 cue、前景 Verse → Chorus 和音频边界约束仍有效，已测静音不作入点。`energy_hold` 保留 sounding offset 给下一对。下述九种目录节点与归一化评分仍由 `smooth=false` 路径实现并测试；平滑路径当前使用 BassSwap、EnergyHold 和 EchoOut。实现与试听方式见[当前 AutoMix 参考](reference/AUTOMIX.md)，与 `.agents/05-ai-mixing.md` 一致。
 
 ```mermaid
 sequenceDiagram

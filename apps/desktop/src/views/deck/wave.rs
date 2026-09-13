@@ -111,7 +111,12 @@ impl UiState {
                     .child(
                         gpui::div()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme::ACCENT)
+                            .text_color(
+                                track
+                                    .and_then(|t| t.camelot.as_deref().or(t.key.as_deref()))
+                                    .map(theme::key_color)
+                                    .unwrap_or(theme::MUTED),
+                            )
                             .child(
                                 track
                                     .and_then(|t| t.camelot.clone().or_else(|| t.key.clone()))

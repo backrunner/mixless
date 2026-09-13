@@ -3,6 +3,10 @@ use super::*;
 mod catalog_tests;
 #[path = "choreography_regressions.rs"]
 mod choreography_regressions;
+#[path = "continuity_regressions.rs"]
+mod continuity_regressions;
+#[path = "recovery_regressions.rs"]
+mod recovery_regressions;
 #[path = "smooth_regressions.rs"]
 mod smooth_regressions;
 #[path = "smooth_tests.rs"]
@@ -12,13 +16,22 @@ mod transition_regressions;
 #[path = "window_regressions.rs"]
 mod window_regressions;
 use mixless_protocol::{BarFeature, CueKind, Section, SectionLabel as S, TempoMap, TempoSegment};
-fn track(id: i64, bpm: f32, cam: &str, label: S, bars: u32, kick: f32, rms: f32) -> TrackAnalysis {
+pub(crate) fn track(
+    id: i64,
+    bpm: f32,
+    cam: &str,
+    label: S,
+    bars: u32,
+    kick: f32,
+    rms: f32,
+) -> TrackAnalysis {
     let seconds = bars as f32 * 240.0 / bpm;
     TrackAnalysis {
         track_id: mixless_protocol::TrackId(id),
         duration_sec: seconds,
         sample_rate: 48000,
         tempo: TempoMap {
+            pulse_confidence: vec![],
             global_bpm: bpm,
             meter_num: 4,
             meter_den: 4,
@@ -63,6 +76,8 @@ fn track(id: i64, bpm: f32, cam: &str, label: S, bars: u32, kick: f32, rms: f32)
             .collect(),
         phrase_boundaries: vec![],
         mix_regions: vec![],
+        moments: vec![],
+        stems: None,
         waveform_path: None,
         partial: false,
     }
@@ -108,7 +123,8 @@ fn measured_phrases_select_an_eight_bar_overlap_when_a_long_blend_cuts_the_hook(
     let mut b = track(2, 128., "9A", S::Intro, 64, 0.8, 0.2);
     measured_phrases(&mut a, &[40, 48, 56, 64]);
     measured_phrases(&mut b, &[0, 8, 23, 39, 55]);
-    for bar in &mut a.bars {
+    // The outgoing phrase completes before the final eight-bar window.
+    for bar in &mut a.bars[..56] {
         bar.vocal_presence = 0.8;
     }
     for bar in &mut b.bars[8..] {
@@ -156,7 +172,13 @@ fn measured_phrase_boundaries_override_array_bar_numbers_and_preserve_future_can
 #[test]
 fn a_completed_build_can_cut_to_a_drop_without_an_echo_tail() {
     let mut a = track(1, 128., "8A", S::BuildUp, 64, 0.8, 0.2);
-    let mut b = track(2, 105., "3B", S::Drop, 64, 0.9, 0.2);
+    let mut b = track(2, 126., "3B", S::Drop, 64, 0.9, 0.2);
+    // Explicitly measured ramp, not a flat phrase carrying a BuildUp label.
+    for (i, bar) in a.bars.iter_mut().enumerate() {
+        bar.rms = 0.05 + i as f32 * 0.004;
+        bar.onset_density = 2. + i as f32;
+        bar.high_db = -30. + i as f32 * 0.2;
+    }
     measured_phrases(&mut a, &[48, 56, 64]);
     measured_phrases(&mut b, &[0, 8, 16, 24, 32, 40, 48, 56]);
     let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());

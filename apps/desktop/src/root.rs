@@ -91,7 +91,7 @@ impl Render for UiState {
         let library_height = 160.0;
         let main_min_height = if compact_height { 300.0 } else { 340.0 };
 
-        let topbar = self.render_topbar(cx);
+        let topbar = self.render_topbar(window.viewport_size().width.into(), cx);
 
         let deck_a = self.render_deck(cx, DeckId::A, deck_min_width, compact_height);
         let vwave_a = center.then(|| self.render_vertical_wave(cx, DeckId::A));
@@ -122,7 +122,23 @@ impl Render for UiState {
             self.track_sel,
             self.focus,
             self.snapshot.decks.each_ref().map(|d| d.track_id),
-            self.analysis_revision,
+            // Overview markers only invalidate the cached table after moving a
+            // pixel. Deck waveforms still animate at display refresh rate.
+            crate::wave::preview::positions(&self.snapshot.decks, self.presentation_frames)
+                .map(|p| p.map(|p| (p * viewport_width.max(1.)).round() as u32)),
+            (
+                self.analysis_revision,
+                self.automix_active,
+                self.automix_shuffle
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                self.core
+                    .mix_preparation
+                    .preview_revision
+                    .load(std::sync::atomic::Ordering::Acquire),
+                self.automix_plan
+                    .as_ref()
+                    .map_or(0, |(_, p)| std::sync::Arc::as_ptr(p) as usize),
+            ),
             self.busy,
             self.picker_open,
             self.import_status(),
@@ -146,6 +162,7 @@ impl Render for UiState {
         let fx_editor = self
             .fx_editor
             .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
+        let audio_menu = self.render_audio_menu(cx);
         let track_menu = self.render_track_menu(window, cx);
         let error = self.error.clone();
 
@@ -163,6 +180,14 @@ impl Render for UiState {
             .text_color(theme::TEXT)
             .on_key_down(cx.listener(|s, ev: &gpui::KeyDownEvent, window, cx| {
                 if ev.keystroke.key == "escape" && cx.stop_active_drag(window) {
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.audio.open {
+                    if ev.keystroke.key == "escape" {
+                        s.audio.open = false;
+                        cx.notify();
+                    }
                     cx.stop_propagation();
                     return;
                 }
@@ -233,6 +258,7 @@ impl Render for UiState {
                         .child(error),
                 )
             })
+            .when_some(audio_menu, |el, menu| el.child(menu))
             .when_some(track_menu, |el, menu| el.child(menu))
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))

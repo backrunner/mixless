@@ -344,6 +344,7 @@ mod tests {
                 }
             }
             *slot.buffer.lock().unwrap() = Some(Arc::new(AudioBuffer {
+                loudness: Default::default(),
                 samples,
                 frames: frames as u64,
                 sample_rate: rates[i],
@@ -383,6 +384,7 @@ mod tests {
         }
         beats.push(t);
         let tempo = TempoMap {
+            pulse_confidence: vec![],
             global_bpm: 120.0,
             meter_num: 4,
             meter_den: 4,

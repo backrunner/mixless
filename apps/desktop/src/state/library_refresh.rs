@@ -74,8 +74,16 @@ impl UiState {
                 self.playlists = Arc::new(rows.playlists);
                 if self.library_refresh.initial {
                     self.library_refresh.initial = false;
-                    if let Some(id) = self.playlists.first().map(|pl| pl.id) {
-                        self.select_playlist(Some(id));
+                    let saved = self.core.settings.get();
+                    if !saved.library_selection_saved {
+                        if let Some(id) = self.playlists.first().map(|pl| pl.id) {
+                            self.select_playlist(Some(id));
+                        }
+                    } else if saved
+                        .last_playlist
+                        .is_some_and(|id| !self.playlists.iter().any(|pl| pl.id == id))
+                    {
+                        self.select_playlist(None);
                     }
                 }
                 if rows.selection == self.playlist_sel

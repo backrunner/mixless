@@ -195,6 +195,9 @@ pub struct MixStage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MixPlan {
+    /// Optional voice/drum/instrument envelopes; host uses these only with aligned PCM.
+    #[serde(default)]
+    pub stem_mix: Option<StemMix>,
     /// Human-readable stages corresponding to the actual control envelopes.
     #[serde(default)]
     pub stages: Vec<MixStage>,
@@ -240,6 +243,12 @@ pub struct MixPlan {
     /// An impossible user range yields an explicit failure, never an unsafe fallback.
     #[serde(default)]
     pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StemMix {
+    pub outgoing: [Polyline; 3],
+    pub incoming: [Polyline; 3],
 }
 
 impl MixPlan {

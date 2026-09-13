@@ -3,6 +3,7 @@
 
 mod header;
 mod performance;
+mod stems;
 mod tempo;
 mod wave;
 
@@ -46,7 +47,7 @@ impl UiState {
         let inner_gap = if compact_height { 4.0 } else { 8.0 };
         let panel_padding = if compact_height { 8.0 } else { 12.0 };
         let header = self.render_deck_header(cx, deck, &d);
-        let tempo_stack = self.render_deck_tempo(cx, deck, &d, compact_height);
+        let tempo_stack = self.render_deck_tempo(cx, deck, &d);
 
         /* center: the jog fills all remaining deck space ----------------------- */
 
@@ -83,7 +84,6 @@ impl UiState {
             },
             cx,
         ));
-
         let body = gpui::div()
             .flex()
             .flex_1()

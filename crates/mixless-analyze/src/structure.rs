@@ -163,18 +163,11 @@ pub(crate) fn detect(
         });
         let earlier_drop = driving[..p[0]].iter().any(|v| *v);
         let later_drop = driving[p[1]..].iter().any(|v| *v);
-        let bass = quantile(selected.iter().map(|b| b.low_db), 0.5);
-        let next_bass = cuts.get(j + 2).map_or(bass, |end| {
-            quantile(bars[p[1]..*end].iter().map(|b| b.low_db), 0.5)
-        });
+        let build =
+            mixless_protocol::has_buildup(bars, selected[0].start_sec, selected[n - 1].end_sec);
         let label = if silent[p[0]..p[1]].iter().all(|s| *s) {
             S::Silence
-        } else if !driven
-            && next_driven
-            && (rising
-                || build_edges.contains(&p[0])
-                || (j > first_sound && n <= 8 && next_louder && next_bass > bass + 3.))
-        {
+        } else if !driven && next_driven && build {
             S::BuildUp
         } else if !driven && earlier_drop && later_drop {
             if kick < 0.4 {
@@ -184,7 +177,7 @@ pub(crate) fn detect(
             }
         } else if !driven && earlier_drop && !later_drop {
             S::Outro
-        } else if rising && next_louder {
+        } else if rising && next_louder && build {
             S::BuildUp
         } else if j == first_sound
             && j < last_sound

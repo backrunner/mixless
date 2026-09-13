@@ -14,13 +14,17 @@ pub(super) fn current_track(core: &AppCore, id: TrackId) -> Result<Track, String
         .verified_content_hash(path)
         .map_err(|e| e.to_string())?;
     if track.content_hash != hash {
+        core.analysis.forget(id);
         core.library.import_file(path).map_err(|e| e.to_string())?;
         track = core.library.get_track(id).map_err(|e| e.to_string())?;
     }
     Ok(track)
 }
 
-pub(super) fn audio(core: &AppCore, track: &Track) -> Result<Playback, String> {
+pub(super) fn pcm(
+    core: &AppCore,
+    track: &Track,
+) -> Result<Arc<mixless_engine::AudioBuffer>, String> {
     let lock = core
         .analysis
         .audio_locks
@@ -50,6 +54,14 @@ pub(super) fn audio(core: &AppCore, track: &Track) -> Result<Playback, String> {
     {
         return Err("File changed while loading; retry".into());
     }
+    remember_audio(core, track, buf.clone());
+    Ok(buf)
+}
+
+pub(super) fn audio(core: &AppCore, track: &Track) -> Result<Playback, String> {
+    // Release the decode lock before expensive spectrum filtering and SQL.
+    // A manual load can share this PCM while waveform/analysis is in flight.
+    let buf = pcm(core, track)?;
     let prepared_wave = core
         .analysis
         .prepared
@@ -81,7 +93,7 @@ pub(super) fn audio(core: &AppCore, track: &Track) -> Result<Playback, String> {
     Ok(Playback { buf, wave })
 }
 
-/// Publish audio as soon as decode/waveform finish. Full analysis is attached by
+/// Publish audio with a cheap envelope as soon as decode finishes. Full analysis is attached by
 /// a separate worker, guarded by the same load generation and track identity.
 pub fn load_manual(
     core: &AppCore,
@@ -93,27 +105,37 @@ pub fn load_manual(
         return Ok(None);
     }
     let track = current_track(core, id)?;
-    let audio = audio(core, &track)?;
+    let buf = pcm(core, &track)?;
+    if !active() {
+        return Ok(None);
+    }
+    let prepared_wave = core
+        .analysis
+        .prepared
+        .lock()
+        .expect("prepared cache")
+        .iter()
+        .find(|p| p.track.id == id && p.track.content_hash == track.content_hash)
+        .map(|p| p.wave.clone());
+    let wave = prepared_wave
+        .unwrap_or_else(|| Arc::new(mixless_engine::compute_preview_waveform(&buf, 4096)));
     let _commit = core
         .automix_commit
         .lock()
         .map_err(|_| "Deck load lock poisoned")?;
+    let source = Arc::downgrade(&buf);
     if !core
         .engine
-        .load_buffer_if(
-            deck,
-            id,
-            audio.buf,
-            audio.wave,
-            track.title,
-            track.artist,
-            &active,
-        )
+        .load_buffer_if(deck, id, buf, wave, track.title, track.artist, &active)
         .map_err(|e| e.to_string())?
     {
         return Ok(None);
     }
     core.analysis.loaded.lock().expect("loaded analysis")[deck.index()] = None;
+    core.analysis
+        .playback_revision
+        .lock()
+        .expect("source revision")[deck.index()] = Some((source, track.content_hash.clone()));
     for cue in core.library.cues(id).map_err(|e| e.to_string())? {
         core.engine.set_cue_frame(deck, cue.index, cue.frame);
         let _ = core.engine.dispatch(mixless_protocol::Command::SetCueKind {

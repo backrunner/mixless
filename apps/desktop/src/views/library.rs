@@ -23,6 +23,7 @@ fn fmt_duration(ms: u64) -> String {
 // Header and rows use this exact width set, including flex-none on every
 // fixed column. This prevents content-dependent shrinking in narrow windows.
 const COL_COVER: f32 = 26.;
+const COL_TITLE: f32 = 200.;
 const COL_ARTIST: f32 = 136.;
 const COL_ALBUM: f32 = 120.;
 const COL_BPM: f32 = 56.;
@@ -259,7 +260,8 @@ pub type LibraryKey = (
     Option<i64>,
     mixless_protocol::DeckId,
     [Option<TrackId>; 2],
-    u64,
+    [Option<u32>; 2],
+    (u64, bool, bool, u64, usize),
     bool,
     bool,
     SharedString,
@@ -269,15 +271,21 @@ pub struct LibraryView {
     pub owner: gpui::WeakEntity<UiState>,
 }
 impl gpui::Render for LibraryView {
-    fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let compact = f32::from(window.viewport_size().width) < 1360.;
         self.owner
-            .update(cx, |state, cx| state.render_library(cx, 160.))
+            .update(cx, |state, cx| state.render_library(cx, 160., compact))
             .unwrap_or_else(|_| gpui::div().into_any_element())
     }
 }
 
 impl UiState {
-    pub fn render_library(&self, cx: &mut gpui::Context<Self>, height: f32) -> gpui::AnyElement {
+    pub fn render_library(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        height: f32,
+        compact: bool,
+    ) -> gpui::AnyElement {
         let state = cx.entity();
 
         let all_selected = self.playlist_sel.is_none();
@@ -476,11 +484,27 @@ impl UiState {
         let shown = self.tracks.clone();
         let analysis_statuses = self.core.analysis.statuses();
         let loaded_tracks = self.snapshot.decks.each_ref().map(|d| d.track_id);
+        let playheads =
+            crate::wave::preview::positions(&self.snapshot.decks, self.presentation_frames);
         let track_sel = self.track_sel;
         let focus_deck = self.focus;
         let menu_playlist = self.playlist_sel;
         let track_state = cx.entity();
         let previews = self.library_previews.clone();
+        let prepared = if self
+            .automix_shuffle
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            vec![]
+        } else {
+            self.core.mix_preparation.previews()
+        };
+        let mix_overlays = crate::wave::mix_overlay::rows(
+            self.automix_active,
+            &shown,
+            &prepared,
+            self.automix_plan.as_ref().map(|(_, p)| p.as_ref()),
+        );
         let preview_core = self.core.clone();
         let reorder_end_state = track_state.clone();
         let track_count = shown.len();
@@ -497,10 +521,17 @@ impl UiState {
             .bg(gpui::rgb(0x17171a))
             .child(gpui::div().flex_none().w(px(28.)))
             .child(gpui::div().flex_none().w(px(COL_COVER)))
-            .child(gpui::div().flex_1().min_w_0().child("TITLE"))
-            .child(gpui::div().flex_none().w(px(220.)).child("WAVEFORM · CUES"))
+            .child(gpui::div().flex_none().w(px(COL_TITLE)).child("TITLE"))
+            .child(
+                gpui::div()
+                    .flex_1()
+                    .min_w(px(280.))
+                    .child("WAVEFORM · CUES"),
+            )
             .child(gpui::div().flex_none().w(px(COL_ARTIST)).child("ARTIST"))
-            .child(gpui::div().flex_none().w(px(COL_ALBUM)).child("ALBUM"))
+            .when(!compact, |el| {
+                el.child(gpui::div().flex_none().w(px(COL_ALBUM)).child("ALBUM"))
+            })
             .child(
                 gpui::div()
                     .flex_none()
@@ -544,6 +575,7 @@ impl UiState {
                     let t = &shown[ix];
                     let selected = track_sel == Some(t.id.0);
                     let key = t.camelot.clone().or_else(|| t.key.clone());
+                    let key_color = key.as_deref().map(theme::key_color).unwrap_or(theme::MUTED);
                     let bpm = t
                         .bpm
                         .map(|b| format!("{b:.1}"))
@@ -603,14 +635,20 @@ impl UiState {
                         .child(track_cover(t))
                         .child(
                             gpui::div()
-                                .flex_1()
-                                .min_w_0()
+                                .flex_none()
+                                .w(px(COL_TITLE))
                                 .text_color(theme::TEXT)
-                                .overflow_hidden()
+                                .truncate()
                                 .child(t.title.clone()),
                         )
                         .child(crate::wave::preview::element(
                             previews.get(t, &preview_core),
+                            mix_overlays.get(ix).copied().unwrap_or_default(),
+                            std::array::from_fn(|i| {
+                                (loaded_tracks[i] == Some(t.id))
+                                    .then_some(playheads[i])
+                                    .flatten()
+                            }),
                         ))
                         .child(
                             gpui::div()
@@ -621,15 +659,17 @@ impl UiState {
                                 .text_color(theme::TEXT)
                                 .child(t.artist.clone()),
                         )
-                        .child(
-                            gpui::div()
-                                .flex_none()
-                                .w(px(COL_ALBUM))
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_color(theme::MUTED)
-                                .child(t.album.clone().unwrap_or_else(|| "—".into())),
-                        )
+                        .when(!compact, |el| {
+                            el.child(
+                                gpui::div()
+                                    .flex_none()
+                                    .w(px(COL_ALBUM))
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_color(theme::MUTED)
+                                    .child(t.album.clone().unwrap_or_else(|| "—".into())),
+                            )
+                        })
                         .child(
                             gpui::div()
                                 .flex()
@@ -651,15 +691,12 @@ impl UiState {
                                         .when(key.is_some(), |el| {
                                             el.px_2()
                                                 .rounded(px(9.))
-                                                .bg(theme::with_alpha(theme::ACCENT, 0.12))
+                                                .bg(theme::with_alpha(key_color, 0.12))
                                                 .border_1()
-                                                .border_color(theme::with_alpha(
-                                                    theme::ACCENT,
-                                                    0.35,
-                                                ))
+                                                .border_color(theme::with_alpha(key_color, 0.35))
                                                 .text_size(px(10.))
                                                 .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(theme::ACCENT)
+                                                .text_color(key_color)
                                         })
                                         .child(key.unwrap_or_else(|| "—".into())),
                                 ),
@@ -928,7 +965,14 @@ impl UiState {
             .bg(theme::PANEL)
             .border_1()
             .border_color(theme::LINE)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|s, _, window, cx| {
+                    s.keyboard_focus.focus(window);
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
             .on_click(|_ev, _window, cx| cx.stop_propagation())
             .child(
                 gpui::div()
@@ -1029,74 +1073,6 @@ impl UiState {
                 })
                 .child(panel)
                 .into_any_element(),
-        )
-    }
-
-    fn render_url_input(
-        &self,
-        window: &Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let text = self.url.clone();
-        let focus_handle = self.url_focus.clone();
-        let focused = focus_handle.is_focused(window);
-
-        let el = gpui::div()
-            .id("import-url-input")
-            .track_focus(&focus_handle)
-            .flex()
-            .flex_1()
-            .min_w_0()
-            .items_center()
-            .gap_1()
-            .h(px(26.))
-            .px_2()
-            .rounded(px(4.))
-            .bg(gpui::rgb(0x0b0b0d))
-            .border_1()
-            .border_color(if focused {
-                theme::with_alpha(theme::ACCENT, 0.5)
-            } else {
-                theme::LINE.into()
-            })
-            .on_mouse_down(MouseButton::Left, {
-                let fh = focus_handle.clone();
-                move |_ev, window, _cx| fh.focus(window)
-            })
-            .on_key_down(
-                cx.listener(|s: &mut UiState, ev: &gpui::KeyDownEvent, window, cx| {
-                    s.handle_url_input_key(&ev.keystroke, window, cx);
-                    cx.stop_propagation();
-                }),
-            );
-
-        let content = if text.is_empty() {
-            gpui::div()
-                .flex_1()
-                .min_w_0()
-                .text_size(px(11.))
-                .text_color(gpui::rgb(0x5a5a60))
-                .overflow_hidden()
-                .child("https://open.spotify.com/playlist/…")
-                .into_any_element()
-        } else {
-            gpui::div()
-                .flex_1()
-                .min_w_0()
-                .text_size(px(11.))
-                .text_color(theme::TEXT)
-                .overflow_hidden()
-                .child(text)
-                .into_any_element()
-        };
-
-        el.child(content).child(
-            gpui::div()
-                .flex_none()
-                .w(px(1.))
-                .h(px(13.))
-                .bg(theme::ACCENT)
-                .when(!focused, |el| el.opacity(0.0)),
         )
     }
 }

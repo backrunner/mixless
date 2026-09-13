@@ -4,6 +4,7 @@ use super::*;
 impl UiState {
     pub fn reset_knob(&mut self, ctl: KnobCtl) {
         let value = match ctl {
+            KnobCtl::Stem(_, _) => 1.,
             KnobCtl::Master => 0.8,
             KnobCtl::Key(_) => 0.0,
             KnobCtl::Gain(_) => 0.0,
@@ -40,7 +41,8 @@ impl UiState {
     /* ---- drag dispatch --------------------------------------------------- */
 
     pub fn begin_knob(&mut self, ctl: KnobCtl, y: f32) {
-        let val = self.knob_value(ctl);
+        let (min, max, _) = ctl.range();
+        let val = self.knob_value(ctl).clamp(min, max);
         self.drag = Some(DragCtl::Knob {
             ctl,
             start_y: y,
@@ -265,6 +267,7 @@ impl UiState {
 
     pub fn knob_value(&self, ctl: KnobCtl) -> f32 {
         match ctl {
+            KnobCtl::Stem(d, stem) => self.deck(d).stem_gain[stem.index()],
             KnobCtl::Master => self.snapshot.master,
             KnobCtl::Key(d) => self.deck(d).pitch_semitones,
             KnobCtl::Gain(d) => self.deck(d).gain_db,
@@ -278,6 +281,11 @@ impl UiState {
 
     pub(super) fn set_knob_value(&mut self, ctl: KnobCtl, v: f32) {
         match ctl {
+            KnobCtl::Stem(deck, stem) => self.dispatch(Command::SetStemGain {
+                deck,
+                stem,
+                value: v,
+            }),
             KnobCtl::Master => self.dispatch(Command::SetMaster { value: v }),
             KnobCtl::Key(d) => self.dispatch(Command::SetPitchSemitones {
                 deck: d,

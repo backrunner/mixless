@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use mixless_engine::AudioConfig;
 use mixless_midi::MidiConfig;
@@ -16,6 +16,10 @@ pub struct Settings {
     pub midi: MidiConfig,
     pub wave_layout: WaveLayout,
     pub show_fx: bool,
+    pub last_playlist: Option<i64>,
+    pub library_selection_saved: bool,
+    pub fx_auto_fade: bool,
+    pub deep_analysis: bool,
     pub quantize: bool,
     pub filter_resonance: bool,
     pub xf_curve: XfCurve,
@@ -33,6 +37,10 @@ impl Default for Settings {
             midi: MidiConfig::default(),
             wave_layout: WaveLayout::Top,
             show_fx: true,
+            last_playlist: None,
+            library_selection_saved: false,
+            fx_auto_fade: true,
+            deep_analysis: true,
             quantize: true,
             filter_resonance: true,
             xf_curve: XfCurve::EqualPower,
@@ -70,6 +78,9 @@ impl Settings {
     pub fn apply_playback(&self, engine: &mixless_engine::Engine) {
         for command in [
             Command::SetQuantize { on: self.quantize },
+            Command::SetFxAutoFade {
+                on: self.fx_auto_fade,
+            },
             Command::SetXfCurve {
                 curve: self.xf_curve,
             },
@@ -83,7 +94,10 @@ impl Settings {
             let _ = engine.dispatch(command);
         }
         for deck in [DeckId::A, DeckId::B] {
-            let _ = engine.dispatch(Command::SetFilterResonanceEnabled { deck, on: self.filter_resonance });
+            let _ = engine.dispatch(Command::SetFilterResonanceEnabled {
+                deck,
+                on: self.filter_resonance,
+            });
             let _ = engine.dispatch(Command::SetKeyLock {
                 deck,
                 on: self.keylock,
@@ -166,16 +180,15 @@ mod tests {
             serde_json::from_str(r#"{"show_fx":false,"audio":{"master_device":"USB"}}"#).unwrap();
         assert!(!settings.show_fx);
         assert!(settings.quantize);
+        assert!(settings.fx_auto_fade);
         assert!(settings.midi.enabled);
         assert_eq!(settings.audio.master_device.as_deref(), Some("USB"));
-        assert!(
-            Settings {
-                cue_gain: f32::NAN,
-                ..Settings::default()
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(Settings {
+            cue_gain: f32::NAN,
+            ..Settings::default()
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]
@@ -187,10 +200,13 @@ mod tests {
         store
             .update(|s| {
                 s.show_fx = false;
+                s.fx_auto_fade = false;
                 s.midi.enabled = false;
             })
             .unwrap();
-        assert!(!SettingsStore::load(path).get().midi.enabled);
+        let saved = SettingsStore::load(path).get();
+        assert!(!saved.midi.enabled);
+        assert!(!saved.fx_auto_fade);
         let invalid = SettingsStore::load(dir.join("missing/settings.json"));
         assert!(invalid.update(|s| s.show_fx = false).is_err());
         assert!(invalid.get().show_fx);

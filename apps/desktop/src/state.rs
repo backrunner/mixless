@@ -2,6 +2,7 @@
 //! background threads can import and load tracks without blocking the UI.
 
 mod artwork;
+mod audio;
 mod automix;
 mod controls;
 mod cues;
@@ -10,6 +11,7 @@ mod loading;
 mod playback;
 mod poll;
 mod transport;
+mod url_input;
 pub use transport::TransportButton;
 mod library_actions;
 mod library_order;
@@ -41,6 +43,8 @@ pub struct AppCore {
     pub engine: mixless_engine::Engine,
     pub library: mixless_library::Library,
     pub analyzer: mixless_analyze::Analyzer,
+    pub stems: Option<mixless_stems::Processor>,
+    pub shutting_down: std::sync::atomic::AtomicBool,
     pub acquired_dir: PathBuf,
     pub midi: Mutex<Option<Arc<mixless_midi::MidiHub>>>,
     /// Serializes background loads so a cancelled worker cannot overwrite a manual load.
@@ -103,6 +107,14 @@ pub fn app_core() -> Arc<AppCore> {
         engine,
         library,
         analyzer: mixless_analyze::Analyzer::new(),
+        stems: Some(mixless_stems::Processor::new(
+            std::env::var_os("MIXLESS_MODEL_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| data_dir.join("models")),
+            data_dir.join("stem-cache"),
+            std::env::var_os("MIXLESS_MODELS_OFFLINE").is_none(),
+        )),
+        shutting_down: false.into(),
         acquired_dir,
         settings,
         midi_error: Mutex::new(midi_error),
@@ -166,6 +178,7 @@ pub enum DragCtl {
 
 #[derive(Clone, Copy, Debug)]
 pub enum KnobCtl {
+    Stem(DeckId, mixless_protocol::StemKind),
     Master,
     Key(DeckId),
     Gain(DeckId),
@@ -185,6 +198,7 @@ pub enum FaderCtl {
 impl KnobCtl {
     pub fn range(self) -> (f32, f32, f32) {
         match self {
+            KnobCtl::Stem(_, _) => (0., 1., 0.01),
             KnobCtl::Master => (0.0, 1.0, 0.01),
             KnobCtl::Key(_) => (-6.0, 6.0, 0.1),
             KnobCtl::Gain(_) => (-12.0, 12.0, 0.1),
@@ -230,8 +244,10 @@ pub struct UiState {
     pub track_sel: Option<i64>,
     pub track_menu: Option<crate::views::library::TrackMenu>,
     library_actions: Vec<Receiver<Result<TrackId, String>>>,
+    pub audio: audio::AudioUi,
     pub focus: DeckId,
     pub url: String,
+    pub url_selection: url_input::UrlSelection,
     pub url_focus: FocusHandle,
     pub keyboard_focus: FocusHandle,
     pub show_shortcuts: bool,
@@ -255,6 +271,7 @@ pub struct UiState {
     pub wave_tempo: [Option<Arc<TempoMap>>; 2],
     grid_rx: [Option<Receiver<Result<TempoMap, String>>>; 2],
     deck_load_rx: [Option<Receiver<Result<(), String>>>; 2],
+    pub deck_loading: [Option<String>; 2],
     deck_load_epoch: Arc<[AtomicU64; 2]>,
     sync_request: Option<crate::beat_sync::SyncRequest>,
     pub cue_shift: [bool; 2],
@@ -272,6 +289,7 @@ pub struct UiState {
     pub automix_active: bool,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
+    automix_preview_revision: u64,
     pub automix_plan: Option<(DeckId, Arc<mixless_protocol::MixPlan>)>,
     automix_epoch: Arc<AtomicU64>,
     automix_rx: Option<Receiver<crate::automix::AutomixMsg>>,
@@ -280,6 +298,12 @@ pub struct UiState {
 
 impl UiState {
     pub fn new(core: Arc<AppCore>, cx: &mut Context<Self>) -> Self {
+        cx.on_app_quit(|state, _| {
+            state.core.shutting_down.store(true, Ordering::Release);
+            state.flush_library_order();
+            async {}
+        })
+        .detach();
         let (artwork_tx, artwork_rx) = channel();
         let artwork_core = core.clone();
         std::thread::spawn(move || {
@@ -305,12 +329,14 @@ impl UiState {
             snapshot: core.engine.snapshot(),
             tracks: Arc::new(Vec::new()),
             playlists: Arc::new(Vec::new()),
-            playlist_sel: None,
+            playlist_sel: core.settings.get().last_playlist,
             track_sel: None,
             track_menu: None,
             library_actions: Vec::new(),
+            audio: Default::default(),
             focus: DeckId::A,
             url: String::new(),
+            url_selection: Default::default(),
             url_focus: cx.focus_handle(),
             keyboard_focus: cx.focus_handle(),
             show_shortcuts: false,
@@ -337,6 +363,7 @@ impl UiState {
             wave_tempo: [None, None],
             grid_rx: [None, None],
             deck_load_rx: [None, None],
+            deck_loading: [None, None],
             deck_load_epoch: Arc::new(std::array::from_fn(|_| AtomicU64::new(0))),
             sync_request: None,
             cue_shift: [false; 2],
@@ -351,6 +378,7 @@ impl UiState {
             automix_active: false,
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
+            automix_preview_revision: 0,
             automix_plan: None,
             automix_epoch: Arc::new(AtomicU64::new(0)),
             automix_rx: None,

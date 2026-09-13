@@ -5,6 +5,8 @@ use super::*;
 impl DeckSlot {
     pub(super) fn new() -> Self {
         Self {
+            stems: Mutex::new(None),
+            stem_gain: std::array::from_fn(|_| AtomicU32::new(1000)),
             beat_grid: Mutex::new(None),
             buffer: Mutex::new(None),
             title: Mutex::new(None),
@@ -60,6 +62,7 @@ impl DeckSlot {
             cues: std::array::from_fn(|_| AtomicU64::new(0)),
             cue_kinds: std::array::from_fn(|_| AtomicU32::new(0)),
             temporary_cue: AtomicU64::new(0),
+            preview_cue: AtomicU64::new(0),
             level: [AtomicU32::new(0), AtomicU32::new(0)],
             waveform: Mutex::new(None),
         }
@@ -108,6 +111,9 @@ impl Shared {
             },
             xf_reverse: self.xf_reverse.load(Ordering::Relaxed),
             master: self.master.load(Ordering::Relaxed) as f32 / 1000.0,
+            master_level: std::array::from_fn(|i| {
+                f32::from_bits(self.master_level[i].load(Ordering::Relaxed))
+            }),
             cue_gain: self.cue_gain.load(Ordering::Relaxed) as f32 / 1000.0,
             cue_device,
             pfl_available,
@@ -136,6 +142,10 @@ impl Shared {
             let (beat, bar, bpm, grid_ready) = self.grid_snapshot(i);
             let follower = self.sync_follower.load(Ordering::Acquire);
             snap.decks[i] = DeckSnapshot {
+                stems_ready: s.stems_ready(),
+                stem_gain: std::array::from_fn(|j| {
+                    s.stem_gain[j].load(Ordering::Relaxed) as f32 / 1000.
+                }),
                 track_id: if id == 0 {
                     None
                 } else {
@@ -155,7 +165,11 @@ impl Shared {
                 sounding_bpm: {
                     let bpm = bpm.unwrap_or(s.bpm_milli.load(Ordering::Relaxed) as f32 / 100.0);
                     let rate = s.rate_micro.load(Ordering::Relaxed) as f32 / 1_000_000.0;
-                    if bpm <= 0.0 { 0.0 } else { bpm * rate }
+                    if bpm <= 0.0 {
+                        0.0
+                    } else {
+                        bpm * rate
+                    }
                 },
                 eq_db: [
                     s.eq_db[0].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
@@ -213,6 +227,8 @@ impl Shared {
                     _ => CueKind::Hot,
                 }),
                 temporary_cue_frame: s.temporary_cue.load(Ordering::Relaxed).checked_sub(1),
+                cue_previewing: s.preview_cue.load(Ordering::Relaxed) > 0
+                    && s.playing.load(Ordering::Relaxed),
                 level: [
                     f32::from_bits(s.level[0].load(Ordering::Relaxed)),
                     f32::from_bits(s.level[1].load(Ordering::Relaxed)),

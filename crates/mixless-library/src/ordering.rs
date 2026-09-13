@@ -63,6 +63,34 @@ impl Library {
     }
 }
 
+/// Import refreshes change membership, never the relative order of songs the
+/// listener has already arranged. Counts preserve repeated playlist entries.
+pub(super) fn refreshed_order(
+    tx: &rusqlite::Transaction<'_>,
+    playlist: PlaylistId,
+    incoming: &[TrackId],
+) -> Result<Vec<TrackId>, LibraryError> {
+    let mut query =
+        tx.prepare("SELECT track_id FROM playlist_items WHERE playlist_id=?1 ORDER BY position")?;
+    let old = query
+        .query_map([playlist.0], |r| Ok(TrackId(r.get(0)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut remaining = std::collections::HashMap::<TrackId, usize>::new();
+    for id in incoming {
+        *remaining.entry(*id).or_default() += 1;
+    }
+    let mut ordered = Vec::with_capacity(incoming.len());
+    for id in old.iter().chain(incoming) {
+        if let Some(count) = remaining.get_mut(id) {
+            if *count > 0 {
+                ordered.push(*id);
+                *count -= 1;
+            }
+        }
+    }
+    Ok(ordered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +108,44 @@ mod tests {
 
     fn ids(tracks: Vec<Track>) -> Vec<TrackId> {
         tracks.into_iter().map(|track| track.id).collect()
+    }
+
+    #[test]
+    fn refreshed_import_keeps_manual_order_duplicates_and_appends_new_tracks() {
+        let (dir, lib, t) = fixture();
+        let playlist = lib
+            .replace_playlist("Set", &[t[0], t[1], t[0], t[2]])
+            .unwrap();
+        let manual = [t[2], t[0], t[0], t[1]];
+        lib.reorder_tracks(Some(playlist), &[t[0], t[1], t[0], t[2]], &manual)
+            .unwrap();
+        let ready = [t[0], t[1], t[2], t[3], t[0]];
+        let items: Vec<_> = ready
+            .iter()
+            .enumerate()
+            .map(|(position, id)| crate::ImportItem {
+                position,
+                external_id: format!("song-{}", id.0),
+                title: "song".into(),
+                artist: "artist".into(),
+                duration_ms: 1000,
+                status: "local".into(),
+                track_id: Some(*id),
+                error: None,
+            })
+            .collect();
+        lib.save_import_items(playlist, &items).unwrap();
+        assert_eq!(
+            ids(lib.playlist_tracks(playlist).unwrap()),
+            [t[2], t[0], t[0], t[1], t[3]]
+        );
+        lib.replace_playlist("Set", &[t[0], t[1], t[3]]).unwrap();
+        drop(lib);
+        let reopened = Library::open(&dir.path().join("library.db")).unwrap();
+        assert_eq!(
+            ids(reopened.playlist_tracks(playlist).unwrap()),
+            [t[0], t[1], t[3]]
+        );
     }
 
     #[test]

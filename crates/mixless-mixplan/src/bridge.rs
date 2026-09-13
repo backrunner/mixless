@@ -56,7 +56,7 @@ pub(super) fn expand(
         );
     // Without trustworthy beat alignment use a restrained phrase overlap;
     // never let two unsynchronized drum patterns run together for half a minute.
-    if !locked && n > 4. {
+    if !locked && n > 1. {
         return None;
     }
     let b_end = if locked {
@@ -102,10 +102,18 @@ pub(super) fn expand(
             plan.t_in_b + plan.clock.sample(u) * ctx.offset_b.rate
         };
         let va = feature(a, ta).map_or(1., |f| {
-            f.vocal_confidence.unwrap_or(0.).max(f.vocal_presence)
+            if harmonic {
+                crate::vocals::risk(f)
+            } else {
+                f.vocal_presence
+            }
         });
         let vb = feature(b, tb).map_or(1., |f| {
-            f.vocal_confidence.unwrap_or(0.).max(f.vocal_presence)
+            if harmonic {
+                crate::vocals::risk(f)
+            } else {
+                f.vocal_presence
+            }
         });
         voice[0] = voice[0].max(va);
         voice[1] = voice[1].max(vb);
@@ -139,7 +147,7 @@ pub(super) fn expand(
     plan.t_end_b = b_end;
     plan.handoff_bar = Some(n * 0.55);
     let echo = technique == Technique::EchoOut;
-    let filter = technique == Technique::FilterBridge || echo;
+    let filter = technique == Technique::FilterBridge;
     // Different foregrounds enter in stages; no filter reset while audible.
     for i in 0..=n as usize * 64 {
         let u = i as f32 / 64.;
@@ -238,7 +246,12 @@ pub(super) fn expand(
         MixStage {
             start_bar: 0.,
             end_bar: n * 0.30,
-            label: "Introduce filtered rhythm".into(),
+            label: if filter {
+                "Introduce filtered rhythm"
+            } else {
+                "Introduce rhythm"
+            }
+            .into(),
         },
         MixStage {
             start_bar: n * 0.30,
@@ -250,8 +263,10 @@ pub(super) fn expand(
             end_bar: n * 0.88,
             label: if echo {
                 "Bass exchange · echo tail".into()
-            } else {
+            } else if filter {
                 "Bass exchange · filter release".into()
+            } else {
+                "Bass exchange".into()
             },
         },
         MixStage {

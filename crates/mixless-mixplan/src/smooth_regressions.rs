@@ -54,14 +54,14 @@ fn bass_swap_does_not_reveal_an_empty_low_end() {
 }
 
 #[test]
-fn late_drop_and_missing_peak_coverage_never_authorize_an_intro_boost() {
+fn quiet_intro_never_adds_pair_gain_over_source_normalization() {
+    let a = track(1, 120., "8A", S::Outro, 64, 0.8, 0.2);
     let mut b = track(2, 120., "9A", S::Intro, 64, 0.8, 0.05);
-    assert!(musical::incoming_trim(&b, 0., Some(0.2), Some(0.05)) > 5.9);
     b.bars[48].rms = 0.48;
-    close(musical::incoming_trim(&b, 0., Some(0.2), Some(0.05)), 0.);
-    b.bars[48].rms = 0.05;
-    b.bars.remove(40);
-    close(musical::incoming_trim(&b, 0., Some(0.2), Some(0.05)), 0.);
+    let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(p.failure_reason.is_none(), "{:?}", p.failure_reason);
+    assert!(p.lanes.gain_b.nodes.iter().all(|(_, gain)| *gain <= 0.));
+    close(p.lanes.gain_b.nodes.last().unwrap().1, 0.);
 }
 
 #[test]
@@ -190,14 +190,67 @@ fn explicit_loop_construct_uses_a_quantized_roll_and_release_plan() {
     );
     close(p.incoming_start_bar, 0.);
     let op = p.lanes.loop_b.as_ref().expect("loop roll");
-    assert!(p.lanes.xfader.sample(op.off_bar * 0.5).abs() < 0.01);
+    assert!(p.lanes.xfader.sample(op.off_bar).abs() < 0.01);
     assert!(!p.incoming_source.nodes.is_empty());
     assert!((p.lanes.rate_b.sample(0.) - 128. / 126.).abs() < 0.001);
-    assert!(op.length_bars == 1 || op.length_bars == 2);
+    assert!([1, 2, 4].contains(&op.length_bars));
+    close(op.off_bar % 4., 0.);
+    close((op.off_bar / op.length_bars as f32).fract(), 0.);
     assert!(op.on_bar < op.off_bar && op.off_bar < p.summary.as_ref().unwrap().length_bars as f32);
-    assert!(p.lanes.filter_a.lp_hz.sample(op.off_bar - 0.25) < 20000.);
-    assert!(p.lanes.filter_a.lp_hz.sample(op.off_bar) <= 500.);
+    assert_eq!(p.lanes.filter_a.lp_hz.sample(op.off_bar - 0.25), 20000.);
+    assert_eq!(p.lanes.filter_a.lp_hz.sample(op.off_bar), 20000.);
     assert_eq!(p.lanes.fx_send_a.sample(op.off_bar), 0.);
+}
+
+#[test]
+fn drop_cut_requires_a_measured_build_and_compatible_beat_timing() {
+    let mut a = track(1, 128., "8A", S::BuildUp, 32, 0.8, 0.2);
+    let mut b = track(2, 126., "3B", S::Drop, 32, 0.9, 0.2);
+    let planner = Planner::with_options(PlannerOptions {
+        strategy: Some(StrategyId::DropCut),
+        ..Default::default()
+    });
+    let plan =
+        |a: &_, b: &_| planner.plan_pair(a, b, &[], &[], Default::default(), Default::default());
+    assert!(
+        plan(&a, &b).failure_reason.is_some(),
+        "A flat mislabeled build must not cut"
+    );
+    for (i, bar) in a.bars.iter_mut().enumerate() {
+        bar.rms = 0.05 + i as f32 * 0.01;
+    }
+    let p = plan(&a, &b);
+    assert_eq!(p.summary.as_ref().unwrap().strategy, StrategyId::DropCut);
+    close(p.incoming_offset_end.rate, 128. / 126.);
+    assert!(p.lanes.fx_send_a.nodes.iter().all(|(_, send)| *send == 0.));
+    b.tempo.segments[0].confidence = 0.3;
+    assert!(plan(&a, &b).failure_reason.is_some());
+    b = track(2, 105., "3B", S::Drop, 32, 0.9, 0.2);
+    assert!(
+        plan(&a, &b).failure_reason.is_some(),
+        "Avoid an abrupt tempo jump on the drop"
+    );
+    b = track(2, 126., "3B", S::Chorus, 32, 0.9, 0.2);
+    assert!(
+        plan(&a, &b).failure_reason.is_some(),
+        "A chorus label does not establish a drop"
+    );
+}
+
+#[test]
+fn loop_checks_the_entire_repeated_phrase_for_vocals() {
+    let a = track(1, 128., "8A", S::Outro, 64, 0.8, 0.2);
+    let mut b = track(2, 126., "8A", S::Intro, 64, 0.8, 0.2);
+    // Every proposed loop, including a one-bar loop, contains an exposed voice.
+    for bar in &mut b.bars {
+        bar.vocal_confidence = Some(0.9);
+    }
+    let p = Planner::with_options(PlannerOptions {
+        strategy: Some(StrategyId::LoopConstruct),
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(p.failure_reason.is_some());
 }
 
 #[test]

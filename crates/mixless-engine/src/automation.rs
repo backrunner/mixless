@@ -6,9 +6,9 @@ use mixless_protocol::{LaneId, MixPlan, MixPlanSummary, Polyline};
 const STEP: usize = 32;
 const XF: u32 = 1;
 fn bit(index: usize, lane: usize) -> u32 {
-    1 << (1 + index * 7 + lane)
+    1 << (1 + index * 10 + lane)
 }
-// per physical deck: gain, EQ, filter, send, rate, pitch, loop.
+// per physical deck: gain, EQ, filter, send, rate, pitch, loop, three stems.
 
 #[derive(Default)]
 pub(super) struct AutomationShared {
@@ -19,6 +19,11 @@ pub(super) struct AutomationShared {
     pub(super) progress: AtomicU32,
     cancelled: AtomicU32,
     skip: AtomicBool,
+}
+impl AutomationShared {
+    pub(super) fn initialize_callback_lock(&self) {
+        drop(self.published.lock().expect("plan initialization"));
+    }
 }
 #[derive(Default)]
 pub(super) struct AutomationRt {
@@ -33,6 +38,7 @@ pub(super) struct AutomationRt {
 }
 #[derive(Clone, Copy)]
 struct DeckPoint {
+    stems: Option<[u32; 3]>,
     gain: u32,
     fader: u32,
     eq: [u32; 3],
@@ -107,8 +113,15 @@ impl DensePlan {
     fn compile(plan: MixPlan, outgoing: usize, shared: &Shared) -> Result<Self, EngineError> {
         let invalid = || EngineError::Protocol("invalid automix envelope or timing");
         let summary = plan.summary.as_ref().ok_or_else(invalid)?;
+        let boundary_cut = summary.length_bars == 0
+            && matches!(
+                summary.strategy,
+                mixless_protocol::StrategyId::DryCut | mixless_protocol::StrategyId::DropCut
+            )
+            && plan.t_in_a == plan.t_out_a
+            && plan.incoming_start_bar == 0.;
         if plan.failure_reason.is_some()
-            || summary.length_bars == 0
+            || (summary.length_bars == 0 && !boundary_cut)
             || !summary.score.is_finite()
             || !(0.0..=1.0).contains(&summary.score)
             || !valid_line(&plan.clock, 0.0, 1800.0)
@@ -118,7 +131,7 @@ impl DensePlan {
             || ![plan.t_in_a, plan.t_out_a, plan.t_in_b, plan.t_end_b]
                 .iter()
                 .all(|s| s.is_finite() && *s >= 0.0)
-            || plan.t_out_a <= plan.t_in_a
+            || (plan.t_out_a <= plan.t_in_a && !boundary_cut)
             || plan.t_end_b <= plan.t_in_b
         {
             return Err(invalid());
@@ -169,6 +182,16 @@ impl DensePlan {
             return Err(invalid());
         }
         let lanes = &plan.lanes;
+        if let Some(stems) = &plan.stem_mix {
+            if stems
+                .outgoing
+                .iter()
+                .chain(&stems.incoming)
+                .any(|l| !valid_line(l, 0., 1.))
+            {
+                return Err(invalid());
+            }
+        }
         if !valid_line(&lanes.xfader, -1.0, 1.0) {
             return Err(invalid());
         }
@@ -282,6 +305,7 @@ impl DensePlan {
         let fader_b = b.fader.load(Ordering::Relaxed) as f32 / 1000.;
         let fader_match = 20. * (fader_a.max(0.001) / fader_b.max(0.001)).log10();
         let mut points = Vec::with_capacity(total_frames.div_ceil(STEP) + 1);
+        let stem_ready = [a.stems_ready(), b.stems_ready()];
         for j in 0..=total_frames.div_ceil(STEP) {
             let u = bar_at(&plan.clock, (j * STEP).min(total_frames) as f32 / sr as f32);
             let mut decks = std::array::from_fn(|index| {
@@ -331,6 +355,14 @@ impl DensePlan {
                 let attenuation = if modern { (level - trim).min(0.) } else { 0. };
                 let base_fader = if index == 0 { fader_a } else { fader_b };
                 DeckPoint {
+                    stems: plan
+                        .stem_mix
+                        .as_ref()
+                        .filter(|_| stem_ready.iter().all(|r| *r))
+                        .map(|s| {
+                            let lines = if index == 0 { &s.outgoing } else { &s.incoming };
+                            std::array::from_fn(|i| (lines[i].sample(u) * 1000.).round() as u32)
+                        }),
                     gain: db(level - attenuation),
                     fader: (base_fader * db_to_lin(attenuation) * 1000.).round() as u32,
                     eq: [
@@ -342,9 +374,14 @@ impl DensePlan {
                     send: (send.sample(u) * 1000.0).round() as u32,
                     rate: (rate.sample(u) * 1_000_000.0).round() as u32,
                     pitch: ((pitch.sample(u) + 24.0) * 100.0).round() as u32,
-                    loop_on: loop_op
-                        .as_ref()
-                        .is_some_and(|op| u >= op.on_bar && u < op.off_bar),
+                    loop_on: loop_op.as_ref().is_some_and(|op| {
+                        // Release in the control block containing the final
+                        // loop edge. Releasing a block late wraps an unwanted
+                        // extra cycle; slightly early still plays to the edge
+                        // and then continues naturally into the next bar.
+                        let off = (plan.clock.sample(op.off_bar) * sr as f32).round() as usize;
+                        u >= op.on_bar && j * STEP < off / STEP * STEP
+                    }),
                     scratch_touch: {
                         let op = if index == 0 {
                             &lanes.scratch_a
@@ -377,7 +414,10 @@ impl DensePlan {
             });
             let overlap = plan.clock.sample(summary.length_bars as f32) as f64;
             let sec = (j * STEP).min(total_frames) as f64 / sr as f64;
-            if sec < overlap && !plan.incoming_source.nodes.is_empty() {
+            if sec >= plan.clock.sample(plan.incoming_start_bar) as f64
+                && sec < overlap
+                && !plan.incoming_source.nodes.is_empty()
+            {
                 let next_sec = ((j * STEP + STEP) as f64 / sr as f64).min(overlap);
                 let rate = (source_at_seconds(&plan, &plan.incoming_source, next_sec)
                     - source_at_seconds(&plan, &plan.incoming_source, sec))
@@ -488,6 +528,9 @@ impl Engine {
         for band in 0..3 {
             b.eq_db[band].store(staged.eq[band], Ordering::Relaxed);
             b.eq_kill[band].store(false, Ordering::Relaxed);
+            if let Some(stems) = staged.stems {
+                b.stem_gain[band].store(stems[band], Ordering::Relaxed);
+            }
         }
         let shared = &self.shared.automation;
         let mut published = shared
@@ -552,6 +595,7 @@ impl Engine {
             Command::SetChannelGain { deck, .. } | Command::SetChannelFader { deck, .. } => {
                 bit(deck.index(), 0)
             }
+            Command::SetStemGain { deck, stem, .. } => bit(deck.index(), 7 + stem.index()),
             Command::SetEq { deck, .. } | Command::SetEqKill { deck, .. } => bit(deck.index(), 1),
             Command::SetFilter { deck, .. } | Command::SetChannelFilter { deck, .. } => {
                 bit(deck.index(), 2)
@@ -582,6 +626,7 @@ impl Engine {
             | Command::PlayPause { .. }
             | Command::JumpCue { .. }
             | Command::TriggerTemporaryCue { .. }
+            | Command::BeginCuePreview { .. }
             | Command::SetBrake { on: true, .. } => {
                 auto.enabled.store(false, Ordering::Release);
                 auto.paused.store(false, Ordering::Release);
@@ -660,10 +705,12 @@ impl Shared {
         }
         let skip = auto.skip.swap(false, Ordering::AcqRel);
         if !rt.started {
-            if !a.playing.load(Ordering::Relaxed) {
+            let natural_end = a.playhead_frames() + 1. >= a.frames.load(Ordering::Relaxed) as f64
+                && plan.start_frame <= a.frames.load(Ordering::Relaxed) as f64 + 1.;
+            if !a.playing.load(Ordering::Relaxed) && !natural_end {
                 return false;
             }
-            if !skip && a.playhead_frames() + 0.5 < plan.start_frame {
+            if !skip && !natural_end && a.playhead_frames() + 0.5 < plan.start_frame {
                 return false;
             }
             rt.started = true;
@@ -711,6 +758,7 @@ impl Shared {
             b.seek_to
                 .store(plan.incoming_frame * 65536, Ordering::Relaxed);
             b.seek_pending.store(true, Ordering::Release);
+            b.preview_cue.store(0, Ordering::Release);
             b.playing.store(true, Ordering::Relaxed);
             rt.incoming_started = true;
         }
@@ -738,6 +786,13 @@ impl Shared {
                 1 - plan.outgoing
             };
             let s = &self.decks[index];
+            if let Some(stems) = p.stems {
+                for i in 0..3 {
+                    if cancelled & bit(index, 7 + i) == 0 {
+                        s.stem_gain[i].store(stems[i], Ordering::Relaxed);
+                    }
+                }
+            }
             if cancelled & bit(index, 0) == 0 {
                 s.gain_milli.store(p.gain, Ordering::Relaxed);
                 s.fader.store(p.fader, Ordering::Relaxed);
@@ -846,6 +901,7 @@ mod tests {
             duration_sec: seconds,
             sample_rate: sr,
             tempo: TempoMap {
+                pulse_confidence: vec![],
                 global_bpm: 120.,
                 meter_num: 1,
                 meter_den: 4,
@@ -865,6 +921,8 @@ mod tests {
             bars: vec![],
             phrase_boundaries: vec![],
             mix_regions: vec![],
+            moments: vec![],
+            stems: None,
             waveform_path: None,
             partial: true,
         }
@@ -1025,6 +1083,53 @@ mod tests {
         assert!(!snapshot.automix_on);
     }
     #[test]
+    fn stem_automation_requires_pcm_and_manual_takeover_is_per_voice() {
+        use mixless_protocol::{StemKind, StemMix};
+        for ready in [false, true] {
+            let (engine, mut plan) = setup(DeckId::A);
+            if ready {
+                for deck in [DeckId::A, DeckId::B] {
+                    let id = engine.snapshot().deck(deck).track_id.unwrap();
+                    let source = engine.stem_source(deck, id).unwrap();
+                    let audio = crate::StemBuffer::new(
+                        source.sample_rate,
+                        source.samples.iter().map(|s| s * 0.4).collect(),
+                        source.samples.iter().map(|s| s * 0.2).collect(),
+                    )
+                    .unwrap();
+                    assert!(engine
+                        .attach_stems(deck, id, &source, Arc::new(audio))
+                        .unwrap());
+                }
+            }
+            plan.stem_mix = Some(StemMix {
+                outgoing: [
+                    Polyline::constant(0.4),
+                    Polyline::constant(0.6),
+                    Polyline::constant(1.),
+                ],
+                incoming: std::array::from_fn(|_| Polyline::constant(1.)),
+            });
+            engine.load_plan(plan).unwrap();
+            engine.render_offline(30000);
+            assert_eq!(
+                engine.snapshot().decks[0].stem_gain,
+                if ready { [0.4, 0.6, 1.] } else { [1.; 3] }
+            );
+            engine
+                .dispatch(Command::SetStemGain {
+                    deck: DeckId::A,
+                    stem: StemKind::Vocals,
+                    value: 0.7,
+                })
+                .unwrap();
+            assert!(engine.snapshot().automix_on);
+            engine.render_offline(48000);
+            assert_eq!(engine.snapshot().decks[0].stem_gain[0], 0.7);
+            assert_eq!(engine.snapshot().decks[1].stem_gain, [1.; 3]);
+        }
+    }
+    #[test]
     fn automix_skip_stop_invalid_and_stale_plan() {
         let (engine, plan) = setup(DeckId::A);
         let mut broken = plan.clone();
@@ -1060,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn smooth_bridge_renders_both_decks_during_overlap_in_both_directions() {
+    fn emergency_short_clip_handoff_renders_both_decks_in_both_directions() {
         for outgoing in [DeckId::A, DeckId::B] {
             let (engine, _) = setup(outgoing);
             let mut a = analysis(1, 48000, 1.);
@@ -1089,13 +1194,16 @@ mod tests {
                     section: mixless_protocol::SectionLabel::Unknown,
                 }];
             }
-            let plan = mixless_mixplan::Planner::new().plan_pair(
-                &a,
-                &b,
-                &[],
-                &[],
-                Default::default(),
-                Default::default(),
+            let plan = mixless_mixplan::short_handoff(
+                &mixless_mixplan::PlanContext {
+                    outgoing: &a,
+                    incoming: &b,
+                    cues_out: &[],
+                    cues_in: &[],
+                    offset_a: Default::default(),
+                    offset_b: Default::default(),
+                },
+                0.,
             );
             let boundary = ((plan.t_in_a + plan.clock.sample(plan.incoming_start_bar)) * 48000.)
                 .round() as usize;
@@ -1117,7 +1225,16 @@ mod tests {
 
     #[test]
     fn smooth_render_preserves_beat_phase_across_source_rates_and_deck_directions() {
-        use mixless_protocol::{BarFeature, Section, SectionLabel, TransitionMode};
+        render_layered_transition(false);
+    }
+
+    #[test]
+    fn loop_mix_renders_both_decks_and_releases_at_the_planned_source_frame() {
+        render_layered_transition(true);
+    }
+
+    fn render_layered_transition(loop_mix: bool) {
+        use mixless_protocol::{BarFeature, Section, SectionLabel, StrategyId, TransitionMode};
         for outgoing in [DeckId::A, DeckId::B] {
             let engine = super::super::tests::test_engine(48000);
             let mut analyses = Vec::new();
@@ -1144,6 +1261,7 @@ mod tests {
                 slot.src_sr.store(sr, Ordering::Relaxed);
                 slot.frames.store(frames as u64, Ordering::Relaxed);
                 *slot.buffer.lock().unwrap() = Some(Arc::new(crate::decode::AudioBuffer {
+                    loudness: Default::default(),
                     samples,
                     frames: frames as u64,
                     sample_rate: sr,
@@ -1155,7 +1273,14 @@ mod tests {
                 a.tempo.segments[0].end_beat = 256.;
                 a.tempo.beats = (0..=256).map(|i| i as f32 * 60. / bpm).collect();
                 a.tempo.downbeats = a.tempo.beats.iter().step_by(4).copied().collect();
-                a.camelot = Some(if relative == 0 { "8A" } else { "3A" }.into());
+                a.camelot = Some(
+                    if relative == 0 || loop_mix {
+                        "8A"
+                    } else {
+                        "3A"
+                    }
+                    .into(),
+                );
                 a.key_confidence = 1.;
                 a.sections = vec![Section {
                     start_sec: 0.,
@@ -1188,6 +1313,7 @@ mod tests {
             }
             let plan = mixless_mixplan::Planner::with_options(mixless_mixplan::PlannerOptions {
                 harmonic_key_shift: true,
+                strategy: loop_mix.then_some(StrategyId::LoopConstruct),
                 earliest_outgoing_sec: 1.,
                 ..Default::default()
             })
@@ -1199,7 +1325,16 @@ mod tests {
                 Default::default(),
                 Default::default(),
             );
-            assert_eq!(plan.transition_mode, Some(TransitionMode::BeatBlend));
+            assert_eq!(
+                plan.transition_mode,
+                Some(if loop_mix {
+                    TransitionMode::LoopRoll
+                } else {
+                    TransitionMode::BeatBlend
+                }),
+                "{:?}",
+                plan.failure_reason
+            );
             engine.shared.decks[outgoing.index()]
                 .set_playhead((plan.t_in_a as f64 - 0.25) * 44100.);
             engine
@@ -1220,7 +1355,7 @@ mod tests {
             let staged = engine.snapshot();
             let b = &staged.decks[1 - outgoing.index()];
             assert!(!b.playing && b.fader == 0. && b.keylock);
-            assert_eq!(b.pitch_semitones, -1.);
+            assert_eq!(b.pitch_semitones, if loop_mix { 0. } else { -1. });
             assert!((b.rate - 128. / 132.).abs() < 0.0001);
             engine.render_offline(6000);
             let waiting = engine.snapshot();
@@ -1240,7 +1375,19 @@ mod tests {
                     - plan.t_in_b as f64)
                     * 132.
                     / 60.;
-                max_phase_error = max_phase_error.max((beat_a - beat_b).abs());
+                let error = if loop_mix {
+                    let phase = (beat_a - beat_b).rem_euclid(1.);
+                    phase.min(1. - phase)
+                } else {
+                    (beat_a - beat_b).abs()
+                };
+                max_phase_error = max_phase_error.max(error);
+                if loop_mix && beat_a > 4. && beat_a < plan.handoff_bar.unwrap() as f64 * 4. - 1. {
+                    assert!(
+                        snap.deck(outgoing).playing && snap.decks[1 - outgoing.index()].playing
+                    );
+                    assert!(snap.decks[1 - outgoing.index()].loop_on);
+                }
             }
             assert!(
                 max_phase_error < 0.015,
@@ -1254,8 +1401,27 @@ mod tests {
                 snap.decks[1 - outgoing.index()].playing
                     && snap.decks[1 - outgoing.index()].fader > 0.
             );
-            assert_eq!(snap.decks[1 - outgoing.index()].pitch_semitones, -1.);
-            assert!((snap.decks[1 - outgoing.index()].rate - 1.).abs() < 0.00001);
+            assert_eq!(
+                snap.decks[1 - outgoing.index()].pitch_semitones,
+                if loop_mix { 0. } else { -1. }
+            );
+            assert!(
+                (snap.decks[1 - outgoing.index()].rate - plan.incoming_offset_end.rate).abs()
+                    < 0.00001
+            );
+            if loop_mix {
+                let incoming = &snap.decks[1 - outgoing.index()];
+                assert!(!incoming.loop_on);
+                assert!(
+                    incoming
+                        .frame
+                        .abs_diff((plan.t_end_b * 48000.).round() as u64)
+                        < 128,
+                    "loop release source frame {} expected {}",
+                    incoming.frame,
+                    plan.t_end_b * 48000.
+                );
+            }
             assert!((snap.decks[1 - outgoing.index()].gain_db + 3.).abs() < 0.011);
             eprintln!("{outgoing:?}: maximum rendered beat phase error {max_phase_error:.6} beats");
         }

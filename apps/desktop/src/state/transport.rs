@@ -1,5 +1,5 @@
-//! Mouse gestures keep cue jumps on press, short stops on release and brake
-//! holds distinct. A load or window deactivation cancels the pending gesture.
+//! Short cue clicks jump on release; holds preview only on the monitor.
+//! Play gestures keep short stops and brake holds distinct. A load or window deactivation cancels the pending gesture.
 use super::*;
 use std::time::{Duration, Instant};
 
@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 pub enum TransportButton {
     Play,
     Cue,
+    HotCue(usize),
 }
 
 pub(super) struct TransportPress {
@@ -17,6 +18,8 @@ pub(super) struct TransportPress {
     was_playing: bool,
     handled: bool,
     braking: bool,
+    previewing: bool,
+    cue_frame: Option<u64>,
 }
 
 impl TransportPress {
@@ -27,13 +30,24 @@ impl TransportPress {
         if current.track_id != Some(self.track) {
             return None;
         }
-        if self.braking {
+        if self.previewing {
+            Some(Command::EndCuePreview { deck: self.deck })
+        } else if self.braking {
             Some(Command::SetBrake {
                 deck: self.deck,
                 on: false,
             })
         } else if self.short_stop() && current.playing {
             Some(Command::PlayPause { deck: self.deck })
+        } else if !self.handled {
+            match self.button {
+                TransportButton::Cue => Some(Command::TriggerTemporaryCue { deck: self.deck }),
+                TransportButton::HotCue(index) => Some(Command::JumpCue {
+                    deck: self.deck,
+                    index: index as u8,
+                }),
+                TransportButton::Play => None,
+            }
         } else {
             None
         }
@@ -52,10 +66,7 @@ impl UiState {
             return;
         };
         let handled = match button {
-            TransportButton::Cue => {
-                self.temporary_cue(deck, false);
-                false
-            }
+            TransportButton::Cue | TransportButton::HotCue(_) => false,
             TransportButton::Play if !d.playing || d.brake => {
                 self.play_pause(deck);
                 true
@@ -70,7 +81,30 @@ impl UiState {
             was_playing: d.playing,
             handled,
             braking: false,
+            previewing: false,
+            cue_frame: match button {
+                TransportButton::Cue => Some(d.temporary_cue_frame.unwrap_or(d.frame)),
+                TransportButton::HotCue(index) => d.cues.get(index).copied().flatten(),
+                TransportButton::Play => None,
+            },
         });
+    }
+    pub fn begin_pad_press(&mut self, deck: DeckId, index: usize, shift: bool) {
+        if shift
+            || self.cue_shift[deck.index()]
+            || self
+                .core
+                .engine
+                .snapshot()
+                .deck(deck)
+                .cues
+                .get(index)
+                .is_none_or(|cue| cue.is_none())
+        {
+            self.trigger_cue(deck, index, shift);
+        } else {
+            self.begin_transport_press(deck, TransportButton::HotCue(index));
+        }
     }
     pub fn temporary_cue(&mut self, deck: DeckId, clear: bool) {
         if !clear && self.automix_active {
@@ -96,7 +130,16 @@ impl UiState {
         let (deck, button) = (press.deck, press.button);
         self.transport_press.as_mut().unwrap().handled = true;
         match button {
-            TransportButton::Cue => self.temporary_cue(deck, true),
+            TransportButton::Cue | TransportButton::HotCue(_) => {
+                if !self.core.engine.snapshot().pfl_available {
+                    self.error =
+                        "Select a monitor device in the master meter menu to preview cues".into();
+                } else if let Some(frame) = self.transport_press.as_ref().and_then(|p| p.cue_frame)
+                {
+                    self.transport_press.as_mut().unwrap().previewing = true;
+                    self.dispatch(Command::BeginCuePreview { deck, frame });
+                }
+            }
             TransportButton::Play => {
                 if self.automix_active {
                     self.stop_automix();
@@ -122,7 +165,7 @@ impl UiState {
         if let Some(press) = self.transport_press.take() {
             // Focus loss/new gesture must release an active hold without
             // turning an unhandled short click into an accidental stop.
-            if press.braking {
+            if press.braking || press.previewing {
                 if let Some(command) =
                     press.release_command(self.core.engine.snapshot().deck(press.deck))
                 {
@@ -147,6 +190,8 @@ mod tests {
             was_playing: true,
             handled: false,
             braking: false,
+            previewing: false,
+            cue_frame: None,
         };
         assert!(p.short_stop());
         assert!(!p.hold_due(started + Duration::from_millis(399)));
@@ -162,6 +207,36 @@ mod tests {
         assert!(p.hold_due(started + Duration::from_secs(1)));
     }
     #[test]
+    fn cue_click_and_preview_hold_release_have_distinct_commands() {
+        for button in [TransportButton::Cue, TransportButton::HotCue(3)] {
+            let mut press = TransportPress {
+                deck: DeckId::B,
+                track: TrackId(42),
+                button,
+                started: Instant::now(),
+                was_playing: false,
+                handled: false,
+                braking: false,
+                previewing: false,
+                cue_frame: Some(24000),
+            };
+            let mut deck = mixless_protocol::DeckSnapshot::default();
+            deck.track_id = Some(press.track);
+            assert!(matches!(
+                press.release_command(&deck),
+                Some(Command::TriggerTemporaryCue { .. } | Command::JumpCue { .. })
+            ));
+            press.handled = true;
+            press.previewing = true;
+            assert!(matches!(
+                press.release_command(&deck),
+                Some(Command::EndCuePreview { deck: DeckId::B })
+            ));
+            deck.track_id = Some(TrackId(43));
+            assert!(press.release_command(&deck).is_none());
+        }
+    }
+    #[test]
     fn releasing_a_hold_stops_only_the_original_loaded_track() {
         let (_dir, core, tracks) = crate::automix::tests::fixture();
         crate::analysis::load(&core, DeckId::A, tracks[0], || true).unwrap();
@@ -173,6 +248,8 @@ mod tests {
             was_playing: true,
             handled: true,
             braking: true,
+            previewing: false,
+            cue_frame: None,
         };
         let mut d = core.engine.snapshot().decks[0].clone();
         d.playing = true;

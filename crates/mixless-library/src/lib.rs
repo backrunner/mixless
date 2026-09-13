@@ -423,8 +423,7 @@ impl Library {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    /// Replace the playlist with the same name (if any) with a fresh one
-    /// containing `track_ids` in order. Used when re-importing a playlist.
+    /// Refresh membership, preserving existing manual order and appending new songs.
     pub fn replace_playlist(
         &self,
         name: &str,
@@ -436,13 +435,14 @@ impl Library {
             "SELECT id FROM playlists WHERE name=?1 AND id NOT IN (SELECT playlist_id FROM external_playlists) LIMIT 1",
             [name], |r| r.get(0)).optional()?;
         let id = if let Some(id) = existing {
-            tx.execute("DELETE FROM playlist_items WHERE playlist_id=?1", [id])?;
             id
         } else {
             tx.execute("INSERT INTO playlists (name) VALUES (?1)", [name])?;
             tx.last_insert_rowid()
         };
-        for (pos, tid) in track_ids.iter().enumerate() {
+        let ordered = ordering::refreshed_order(&tx, PlaylistId(id), track_ids)?;
+        tx.execute("DELETE FROM playlist_items WHERE playlist_id=?1", [id])?;
+        for (pos, tid) in ordered.iter().enumerate() {
             tx.execute(
                 "INSERT INTO playlist_items (playlist_id, position, track_id) VALUES (?1, ?2, ?3)",
                 params![id, pos as i64, tid.0],

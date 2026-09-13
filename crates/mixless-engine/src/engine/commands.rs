@@ -23,6 +23,7 @@ impl Engine {
             Command::SetCrossfader { value }
             | Command::SetMaster { value }
             | Command::SetChannelFader { value, .. }
+            | Command::SetStemGain { value, .. }
             | Command::SetFxSend { value, .. }
             | Command::SetCueGain { value } => value.is_finite(),
             Command::SetFx { deck, slot, params } => {
@@ -111,6 +112,7 @@ impl Shared {
         match *cmd {
             Command::PlayPause { deck } => {
                 let s = &self.decks[deck.index()];
+                s.preview_cue.store(0, Ordering::Release);
                 if s.frames.load(Ordering::Relaxed) == 0 {
                     return;
                 }
@@ -196,6 +198,12 @@ impl Shared {
                 self.decks[deck.index()]
                     .gain_milli
                     .store(v, Ordering::Relaxed);
+            }
+            Command::SetStemGain { deck, stem, value } => {
+                self.decks[deck.index()].stem_gain[stem.index()].store(
+                    (value.clamp(0., 1.) * 1000.).round() as u32,
+                    Ordering::Relaxed,
+                );
             }
             Command::SetEq { deck, band, db } => {
                 let v = ((db.clamp(-96.0, 12.0) + 96.0) * 100.0) as u32;
@@ -334,6 +342,7 @@ impl Shared {
                     slot.brake.store(false, Ordering::Relaxed);
                 }
             }
+            Command::SetFxAutoFade { on } => self.fx_auto_fade.store(on, Ordering::Relaxed),
             Command::SetQuantize { on } => self.quantize.store(on, Ordering::Relaxed),
             Command::JumpCue { deck, index } => {
                 if (index as usize) < 8 {
@@ -361,6 +370,28 @@ impl Shared {
                 self.decks[deck.index()]
                     .temporary_cue
                     .store(0, Ordering::Relaxed);
+            }
+            Command::BeginCuePreview { deck, frame } => {
+                let s = &self.decks[deck.index()];
+                if s.frames.load(Ordering::Relaxed) == 0 {
+                    return;
+                }
+                let frame = frame.min(s.frames.load(Ordering::Relaxed).saturating_sub(1));
+                self.clear_sync();
+                s.preview_cue.store(frame + 1, Ordering::Release);
+                s.brake.store(false, Ordering::Relaxed);
+                s.loop_on.store(false, Ordering::Relaxed);
+                s.seek_cue(frame);
+                s.playing.store(true, Ordering::Release);
+            }
+            Command::EndCuePreview { deck } => {
+                let s = &self.decks[deck.index()];
+                if let Some(frame) = s.preview_cue.load(Ordering::Acquire).checked_sub(1) {
+                    s.playing.store(false, Ordering::Release);
+                    s.seek_cue(frame);
+                    // Keep monitor-only routing through the release envelope;
+                    // a subsequent PlayPause explicitly restores normal output.
+                }
             }
             Command::SetCueKind {
                 track_id,

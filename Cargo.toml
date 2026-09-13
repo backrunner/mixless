@@ -5,6 +5,8 @@ members = [
     "crates/mixless-engine",
     "crates/mixless-library",
     "crates/mixless-analyze",
+    "crates/mixless-stems",
+    "crates/mixless-tools",
     "crates/mixless-mixplan",
     "crates/mixless-spotify",
     "crates/mixless-acquire",
@@ -18,13 +20,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
 repository = "https://github.com/mixless/mixless"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 mixless-protocol = { path = "crates/mixless-protocol" }
 mixless-engine = { path = "crates/mixless-engine" }
 mixless-library = { path = "crates/mixless-library" }
 mixless-analyze = { path = "crates/mixless-analyze" }
+mixless-stems = { path = "crates/mixless-stems" }
 mixless-mixplan = { path = "crates/mixless-mixplan" }
 mixless-midi = { path = "crates/mixless-midi" }
 mixless-spotify = { path = "crates/mixless-spotify" }
@@ -49,12 +52,28 @@ codegen-units = 1
 
 [profile.dev.package.mixless-engine]
 opt-level = 2
+[profile.dev.package.ebur128]
+opt-level = 2
+[profile.dev.package.symphonia-core]
+opt-level = 2
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 2
+[profile.dev.package.symphonia-bundle-flac]
+opt-level = 2
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 2
+[profile.dev.package.symphonia-codec-vorbis]
+opt-level = 2
+[profile.dev.package.symphonia-codec-pcm]
+opt-level = 2
 [profile.dev.package.gpui]
 opt-level = 2
 [profile.dev.package.lyon_tessellation]
 opt-level = 2
 
 [profile.dev.package.mixless-analyze]
+opt-level = 2
+[profile.dev.package.mixless-stems]
 opt-level = 2
 [profile.dev.package.rustfft]
 opt-level = 2

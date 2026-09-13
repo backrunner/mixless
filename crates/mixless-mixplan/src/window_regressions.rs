@@ -68,7 +68,8 @@ fn planning_compares_several_windows_and_keeps_the_overlap_inside_them() {
     ];
     b.mix_regions = vec![region(K::In, 0., 16., "8A"), region(K::In, 32., 48., "8A")];
     // The first entry is a vocal foreground; the later entry is a clear intro.
-    for bar in &mut a.bars {
+    // Leave two bars after the sung line for the outgoing level to close.
+    for bar in &mut a.bars[..62] {
         bar.vocal_presence = 0.8;
     }
     for bar in &mut b.bars {

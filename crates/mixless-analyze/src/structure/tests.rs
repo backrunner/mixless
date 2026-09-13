@@ -205,3 +205,47 @@ fn human_voice_evidence_overrides_plosive_kick_proxy_without_clearing_risk() {
     assert_eq!(sections[0].label, S::Verse);
     assert!(bars.iter().all(|b| b.vocal_presence >= 0.95));
 }
+
+#[test]
+fn a_flat_break_before_a_drop_is_not_a_buildup() {
+    let mut bars = bars(64);
+    for b in &mut bars[24..32] {
+        b.rms = 0.08;
+        b.low_db = -32.;
+        b.kick_salience = 0.2;
+        b.onset_density = 0.5;
+    }
+    let (sections, _) = detect(
+        &mut bars,
+        &(0..=64).map(|i| i as f32 * 2.).collect::<Vec<_>>(),
+    );
+    assert!(
+        bars[24..32]
+            .iter()
+            .all(|b| matches!(b.section, S::Break | S::Breakdown)),
+        "{sections:?}"
+    );
+}
+
+#[test]
+fn snare_roll_can_build_tension_without_getting_louder() {
+    let mut bars = bars(48);
+    for (i, b) in bars[16..24].iter_mut().enumerate() {
+        b.rms = 0.08;
+        b.low_db = -34.;
+        b.kick_salience = 0.2;
+        b.onset_density = 2. + i as f32 * 2.;
+        b.high_db = -28. + i as f32;
+    }
+    assert!(mixless_protocol::has_buildup(&bars, 32., 48.));
+    let (sections, _) = detect(
+        &mut bars,
+        &(0..=48).map(|i| i as f32 * 2.).collect::<Vec<_>>(),
+    );
+    assert!(
+        sections
+            .iter()
+            .any(|s| s.label == S::BuildUp && (s.end_sec - 48.).abs() < 0.01),
+        "{sections:?}"
+    );
+}

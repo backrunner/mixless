@@ -21,41 +21,6 @@ pub(crate) fn average_rms(t: &TrackAnalysis, start: f32, end: f32) -> Option<f32
     (duration > 0. && power > 0.).then(|| (power / duration).sqrt())
 }
 
-/// B keeps its trim after handoff, so a quiet intro never authorizes gain that
-/// clips a later drop. Missing/invalid peak coverage cannot authorize a boost.
-pub(crate) fn incoming_trim(
-    b: &TrackAnalysis,
-    input: f32,
-    a_rms: Option<f32>,
-    b_rms: Option<f32>,
-) -> f32 {
-    let mut peak = 0f32;
-    let mut covered = input;
-    let mut known = true;
-    for bar in b.bars.iter().filter(|bar| bar.end_sec > input) {
-        if bar.start_sec > covered + 0.01
-            || !bar.crest.is_finite()
-            || bar.crest < 1.
-            || !bar.rms.is_finite()
-            || bar.rms < 0.
-        {
-            known = false;
-        }
-        peak = peak.max(bar.rms * bar.crest);
-        covered = covered.max(bar.end_sec);
-    }
-    known &= covered >= b.duration_sec - 0.01;
-    let headroom = if known && peak > 0. && peak.is_finite() {
-        (20. * (0.707 / peak).log10()).clamp(0., 6.)
-    } else {
-        0.
-    };
-    match (a_rms, b_rms) {
-        (Some(a), Some(b)) => (20. * (a / b).log10()).clamp(-6., headroom),
-        _ => 0.,
-    }
-}
-
 /// Swap on a shared phrase downbeat with an incoming kick, including 2:1
 /// mappings. Ranking uses the material at the exchange, not the track's end.
 pub(crate) fn bass_handoff(

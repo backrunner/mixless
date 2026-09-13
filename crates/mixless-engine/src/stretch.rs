@@ -1,6 +1,9 @@
 use std::{ffi::c_void, ptr::NonNull};
 
-use crate::{decode::AudioBuffer, resample::Resampler};
+#[cfg(test)]
+use crate::decode::AudioBuffer;
+use crate::resample::Resampler;
+use crate::source::SampleSource;
 
 const OUTPUT_FRAMES: usize = 128;
 const MAX_RATE: f64 = 4.0;
@@ -111,11 +114,32 @@ impl MusicStretch {
 
     fn read_input(
         &mut self,
-        buffer: &AudioBuffer,
+        buffer: &impl SampleSource,
         resampler: &Resampler,
         frames: usize,
         params: StretchParams,
     ) {
+        // A cue at the output sample rate reads contiguous, integer-position
+        // PCM while priming. Cubic interpolation at t=0 is the original sample;
+        // copying the span avoids thousands of per-sample bounds/interpolation
+        // operations on each retrigger without changing its audio or latency.
+        if params.source_step == 1.
+            && params.loop_range.is_none()
+            && self.input_cursor >= 0.
+            && self.input_cursor.fract() == 0.
+            && self.input_cursor + frames as f64 <= buffer.frames() as f64
+        {
+            let first = self.input_cursor as usize * 2;
+            if let Some(samples) = buffer.contiguous() {
+                self.input[..frames * 2].copy_from_slice(&samples[first..first + frames * 2]);
+            } else {
+                for (i, frame) in self.input[..frames * 2].chunks_exact_mut(2).enumerate() {
+                    frame.copy_from_slice(&buffer.sample(first / 2 + i));
+                }
+            }
+            self.input_cursor += frames as f64;
+            return;
+        }
         for frame in 0..frames {
             let position = if let Some((start, end)) = params.loop_range {
                 start + (self.input_cursor - start).rem_euclid(end - start)
@@ -131,7 +155,7 @@ impl MusicStretch {
 
     fn prime(
         &mut self,
-        buffer: &AudioBuffer,
+        buffer: &impl SampleSource,
         resampler: &Resampler,
         position: f64,
         params: StretchParams,
@@ -172,7 +196,7 @@ impl MusicStretch {
 
     pub fn next(
         &mut self,
-        buffer: &AudioBuffer,
+        buffer: &impl SampleSource,
         resampler: &Resampler,
         position: f64,
         params: StretchParams,
@@ -277,6 +301,39 @@ pub(crate) fn frequency(samples: &[f32], sample_rate: f64) -> f64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn contiguous_cue_input_matches_interpolation_and_keeps_loop_and_edge_reads() {
+        let buffer = tone(48000);
+        let resampler = Resampler::new();
+        let mut stretch = MusicStretch::new(48000.);
+        for (start, step, loop_range) in [
+            (24000., 1., None),
+            (-10., 1., None),
+            (buffer.frames as f64 - 50., 1., None),
+            (24000.5, 44100. / 48000., None),
+            (30., 1., Some((20., 50.))),
+        ] {
+            let params = StretchParams {
+                rate: 1.08,
+                semitones: 2.,
+                source_step: step,
+                loop_range,
+            };
+            stretch.input_cursor = start;
+            stretch.read_input(&buffer, &resampler, 128, params);
+            let mut cursor = start;
+            for i in 0..128 {
+                let source =
+                    loop_range.map_or(cursor, |(lo, hi)| lo + (cursor - lo).rem_euclid(hi - lo));
+                let (left, right) = resampler.stereo_at(&buffer, source, step);
+                assert_eq!(stretch.input[i * 2], left);
+                assert_eq!(stretch.input[i * 2 + 1], right);
+                cursor += step;
+            }
+            assert_eq!(stretch.input_cursor, cursor);
+        }
+    }
+
     fn tone(sample_rate: u32) -> AudioBuffer {
         let frames = sample_rate as usize * 4;
         let mut samples = Vec::with_capacity(frames * 2);
@@ -287,6 +344,7 @@ mod tests {
             samples.extend_from_slice(&[sample, sample]);
         }
         AudioBuffer {
+            loudness: Default::default(),
             samples,
             frames: frames as u64,
             sample_rate,

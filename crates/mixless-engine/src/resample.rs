@@ -1,4 +1,6 @@
+#[cfg(test)]
 use crate::decode::AudioBuffer;
+use crate::source::SampleSource;
 
 const TAPS: usize = 48;
 const PHASES: usize = 128;
@@ -41,8 +43,11 @@ impl Resampler {
         Self { kernels }
     }
 
-    pub fn stereo_at(&self, buffer: &AudioBuffer, frame: f64, speed: f64) -> (f32, f32) {
-        if !frame.is_finite() || frame < 0.0 || frame >= buffer.frames as f64 || buffer.frames == 0
+    pub fn stereo_at(&self, buffer: &impl SampleSource, frame: f64, speed: f64) -> (f32, f32) {
+        if !frame.is_finite()
+            || frame < 0.0
+            || frame >= buffer.frames() as f64
+            || buffer.frames() == 0
         {
             return (0.0, 0.0);
         }
@@ -65,14 +70,15 @@ impl Resampler {
         let mut right = 0.0;
         for tap in 0..TAPS {
             let index = (center + tap as i64 - (TAPS / 2 - 1) as i64)
-                .clamp(0, buffer.frames as i64 - 1) as usize;
+                .clamp(0, buffer.frames() as i64 - 1) as usize;
             let lower = self.kernels[first + tap]
                 + fraction * (self.kernels[second + tap] - self.kernels[first + tap]);
             let upper = self.kernels[next_first + tap]
                 + fraction * (self.kernels[next_second + tap] - self.kernels[next_first + tap]);
             let weight = lower + rate_fraction * (upper - lower);
-            left += buffer.samples[index * 2] * weight;
-            right += buffer.samples[index * 2 + 1] * weight;
+            let sample = buffer.sample(index);
+            left += sample[0] * weight;
+            right += sample[1] * weight;
         }
         let blend = ((speed.abs() - 1.0) * 20.0).min(1.0) as f32;
         if blend < 1.0 {
@@ -100,6 +106,7 @@ mod tests {
             samples.extend_from_slice(&[sample, sample]);
         }
         let buffer = AudioBuffer {
+            loudness: Default::default(),
             samples,
             frames: 4800,
             sample_rate: 48000,
@@ -123,6 +130,7 @@ mod tests {
     fn resampler_preserves_dc_and_bounds() {
         let resampler = Resampler::new();
         let buffer = AudioBuffer {
+            loudness: Default::default(),
             samples: vec![0.25; 2000],
             frames: 1000,
             sample_rate: 48000,

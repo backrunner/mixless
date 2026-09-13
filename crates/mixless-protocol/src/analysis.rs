@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CueKind, TrackId};
+use crate::{CueKind, StemAnalysis, TrackId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +34,10 @@ pub struct TempoMap {
     pub segments: Vec<TempoSegment>,
     pub beats: Vec<f32>,
     pub downbeats: Vec<f32>,
+    /// Beat-phase evidence per segment, independent of bar-one accent ambiguity.
+    /// Empty for older analyses; consumers fall back to segment confidence.
+    #[serde(default)]
+    pub pulse_confidence: Vec<f32>,
 }
 
 impl TempoMap {
@@ -110,6 +114,28 @@ pub struct MixRegion {
     pub key_confidence: f32,
 }
 
+/// Fifty-millisecond spectral observations. These describe the mixture, not
+/// separated instruments or a transcribed score. Missing voice evidence is unknown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicalMoment {
+    pub start_sec: f32,
+    pub end_sec: f32,
+    pub rms: f32,
+    pub band_db: [f32; 3],
+    pub chroma: [f32; 12],
+    pub onset: f32,
+    /// Strongest low-band attack within this observation (source seconds).
+    #[serde(default)]
+    pub attack_sec: f32,
+    #[serde(default)]
+    pub low_onset: f32,
+    /// Persistence of pitched energy across adjacent observations.
+    pub sustain: f32,
+    /// Strongest spectral ridge in MIDI-note units; it can be a harmonic.
+    pub pitch_midi: Option<f32>,
+    pub vocal_confidence: Option<f32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackAnalysis {
     pub track_id: TrackId,
@@ -125,6 +151,11 @@ pub struct TrackAnalysis {
     #[serde(default)]
     pub mix_regions: Vec<MixRegion>,
     pub bars: Vec<BarFeature>,
+    #[serde(default)]
+    pub moments: Vec<MusicalMoment>,
+    /// Complete native model evidence. Missing means unknown, not silent.
+    #[serde(default)]
+    pub stems: Option<StemAnalysis>,
     pub waveform_path: Option<String>,
     pub partial: bool,
 }

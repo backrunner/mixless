@@ -2,8 +2,8 @@
 use super::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
+    mpsc::{channel, Sender},
     Mutex, OnceLock,
-    mpsc::{Sender, channel},
 };
 
 #[derive(Default)]
@@ -13,9 +13,14 @@ pub struct Preparation {
     sender: OnceLock<Sender<(u64, Vec<TrackId>)>>,
     plans: Mutex<HashMap<String, mixless_protocol::MixPlan>>,
     order: Mutex<VecDeque<String>>,
+    previews: Mutex<Vec<Option<Arc<mixless_protocol::MixPlan>>>>,
+    pub preview_revision: AtomicU64,
 }
 
 impl Preparation {
+    pub fn previews(&self) -> Vec<Option<Arc<mixless_protocol::MixPlan>>> {
+        self.previews.lock().expect("plan previews").clone()
+    }
     pub(super) fn has_selection(&self) -> bool {
         self.revision.load(Ordering::Acquire) > 0
     }
@@ -25,17 +30,32 @@ impl Preparation {
 }
 
 pub fn prepare_playlist(core: &Arc<AppCore>, tracks: Vec<TrackId>) {
+    prepare(core, tracks, false);
+}
+
+pub fn refresh_previews(core: &Arc<AppCore>) {
+    prepare(core, core.mix_preparation.tracks(), true);
+}
+
+fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
+    for id in &tracks {
+        crate::analysis::schedule_deep(core, *id);
+    }
     let mut current = core
         .mix_preparation
         .playlist
         .lock()
         .expect("playlist preparation");
-    if *current == tracks {
+    if *current == tracks && !force {
         return;
     }
     *current = tracks.clone();
     drop(current);
     let revision = core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel) + 1;
+    *core.mix_preparation.previews.lock().expect("plan previews") = vec![None; tracks.len()];
+    core.mix_preparation
+        .preview_revision
+        .fetch_add(1, Ordering::Release);
     let sender = core.mix_preparation.sender.get_or_init(|| {
         let (tx, rx) = channel::<(u64, Vec<TrackId>)>();
         let weak = Arc::downgrade(core);
@@ -52,28 +72,33 @@ pub fn prepare_playlist(core: &Arc<AppCore>, tracks: Vec<TrackId>) {
                 std::thread::scope(|scope| {
                     for _ in 0..tracks.len().min(2) {
                         let (core, tracks, next) = (&core, &tracks, &next);
-                        scope.spawn(move || {
-                            loop {
-                                if core.mix_preparation.revision.load(Ordering::Acquire) != revision
+                        scope.spawn(move || loop {
+                            if core.mix_preparation.revision.load(Ordering::Acquire) != revision {
+                                break;
+                            }
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            if i >= tracks.len() {
+                                break;
+                            }
+                            let a = crate::analysis::prepare(core, tracks[i]);
+                            let b = crate::analysis::prepare(core, tracks[(i + 1) % tracks.len()]);
+                            if let (Ok(a), Ok(b)) = (a, b) {
+                                let plan = pair(
+                                    core,
+                                    &a,
+                                    &b,
+                                    0.,
+                                    PerformanceOffset::identity(),
+                                    PerformanceOffset::identity(),
+                                );
+                                let mut previews =
+                                    core.mix_preparation.previews.lock().expect("plan previews");
+                                if core.mix_preparation.revision.load(Ordering::Acquire) == revision
                                 {
-                                    break;
-                                }
-                                let i = next.fetch_add(1, Ordering::Relaxed);
-                                if i >= tracks.len() {
-                                    break;
-                                }
-                                let a = crate::analysis::prepare(core, tracks[i]);
-                                let b =
-                                    crate::analysis::prepare(core, tracks[(i + 1) % tracks.len()]);
-                                if let (Ok(a), Ok(b)) = (a, b) {
-                                    let _ = pair(
-                                        core,
-                                        &a,
-                                        &b,
-                                        0.,
-                                        PerformanceOffset::identity(),
-                                        PerformanceOffset::identity(),
-                                    );
+                                    previews[i] = plan.ok().map(Arc::new);
+                                    core.mix_preparation
+                                        .preview_revision
+                                        .fetch_add(1, Ordering::Release);
                                 }
                             }
                         });
@@ -104,7 +129,12 @@ pub(super) fn pair(
     offset_a: PerformanceOffset,
     offset_b: PerformanceOffset,
 ) -> Result<mixless_protocol::MixPlan, String> {
-    pair_from_entry(core, a, b, earliest, 0., offset_a, offset_b)
+    let tracks = core.mix_preparation.tracks();
+    let following = tracks
+        .iter()
+        .position(|id| *id == b.track.id)
+        .and_then(|i| tracks.get((i + 1) % tracks.len()).copied());
+    pair_from_entry(core, a, b, earliest, 0., offset_a, offset_b, following)
 }
 
 pub(super) fn pair_from_entry(
@@ -115,6 +145,7 @@ pub(super) fn pair_from_entry(
     entry: f32,
     offset_a: PerformanceOffset,
     offset_b: PerformanceOffset,
+    following: Option<TrackId>,
 ) -> Result<mixless_protocol::MixPlan, String> {
     // Track-level IN/OUT markers constrain the corresponding side only.
     let ca: Vec<_> = core
@@ -131,8 +162,16 @@ pub(super) fn pair_from_entry(
         .into_iter()
         .filter(|c| c.kind != mixless_protocol::CueKind::Out)
         .collect();
+    // Read only current-version cached evidence. Do not stall playback for a
+    // third decode/model pass; the playlist preparation queue warms this cache.
+    let following_analysis = following.and_then(|id| {
+        core.library
+            .load_analysis(id, mixless_analyze::ANALYSIS_VERSION)
+            .ok()
+            .flatten()
+    });
     let key = format!(
-        "{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}",
+        "{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{:?}:{:?}",
         entry.to_bits(),
         core.analysis.content_revision.load(Ordering::Acquire),
         a.track.id.0,
@@ -142,7 +181,11 @@ pub(super) fn pair_from_entry(
         offset_a,
         offset_b,
         serde_json::to_string(&ca).map_err(|e| e.to_string())?,
-        serde_json::to_string(&cb).map_err(|e| e.to_string())?
+        serde_json::to_string(&cb).map_err(|e| e.to_string())?,
+        following,
+        following_analysis
+            .as_ref()
+            .map(|a| (&a.camelot, a.key_confidence, a.tempo.global_bpm))
     );
     let cached = core
         .mix_preparation
@@ -152,7 +195,18 @@ pub(super) fn pair_from_entry(
         .get(&key)
         .cloned();
     let base = cached.unwrap_or_else(|| {
-        let plan = choose_plan(a, b, &ca, &cb, offset_a, offset_b, 0., entry, false);
+        let plan = choose_plan(
+            a,
+            b,
+            &ca,
+            &cb,
+            offset_a,
+            offset_b,
+            0.,
+            entry,
+            false,
+            following_analysis.as_ref(),
+        );
         let mut plans = core.mix_preparation.plans.lock().expect("plans");
         let mut order = core.mix_preparation.order.lock().expect("plan order");
         if !plans.contains_key(&key) {
@@ -169,7 +223,18 @@ pub(super) fn pair_from_entry(
     if base.failure_reason.is_none() && base.t_in_a >= earliest {
         return Ok(base);
     }
-    let plan = choose_plan(a, b, &ca, &cb, offset_a, offset_b, earliest, entry, true);
+    let plan = choose_plan(
+        a,
+        b,
+        &ca,
+        &cb,
+        offset_a,
+        offset_b,
+        earliest,
+        entry,
+        true,
+        following_analysis.as_ref(),
+    );
     if let Some(error) = &plan.failure_reason {
         return Err(error.clone());
     }
@@ -186,6 +251,7 @@ fn choose_plan(
     earliest: f32,
     entry: f32,
     fallback: bool,
+    following: Option<&mixless_protocol::TrackAnalysis>,
 ) -> mixless_protocol::MixPlan {
     let planner = mixless_mixplan::Planner::with_options(mixless_mixplan::PlannerOptions {
         harmonic_key_shift: true,
@@ -217,7 +283,7 @@ fn choose_plan(
                 offset_a,
                 offset_b,
             };
-            let mut plan = planner.plan_next(&ctx);
+            let mut plan = planner.plan_with_following(&ctx, following);
             if fallback && plan.failure_reason.is_some() {
                 plan = mixless_mixplan::short_handoff(&ctx, earliest);
             }

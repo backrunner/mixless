@@ -15,6 +15,7 @@ impl UiState {
         d: &DeckSnapshot,
     ) -> gpui::AnyElement {
         let dc = theme::deck_color(deck);
+        let loading = self.deck_loading[deck.index()].as_ref();
         let sr = if d.src_sample_rate > 0 {
             d.src_sample_rate
         } else {
@@ -99,17 +100,18 @@ impl UiState {
                     ),
             );
         if let Some(key) = key {
+            let key_color = theme::key_color(&key);
             header_right = header_right.child(
                 gpui::div()
                     .flex_none()
                     .px_2()
                     .rounded(px(8.))
-                    .bg(theme::with_alpha(theme::ACCENT, 0.10))
+                    .bg(theme::with_alpha(key_color, 0.10))
                     .border_1()
-                    .border_color(theme::with_alpha(theme::ACCENT, 0.30))
+                    .border_color(theme::with_alpha(key_color, 0.30))
                     .text_size(px(10.))
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme::ACCENT)
+                    .text_color(key_color)
                     .child(key),
             );
         }
@@ -141,14 +143,29 @@ impl UiState {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
                             .overflow_hidden()
-                            .child(d.title.clone().unwrap_or_default()),
+                            .child(
+                                loading
+                                    .cloned()
+                                    .or_else(|| d.title.clone())
+                                    .unwrap_or_default(),
+                            ),
                     )
                     .child(
                         gpui::div()
                             .text_size(px(10.))
-                            .text_color(theme::MUTED)
+                            .text_color(if loading.is_some() {
+                                theme::WARN
+                            } else {
+                                theme::MUTED
+                            })
                             .overflow_hidden()
-                            .child(d.artist.clone().unwrap_or_default()),
+                            .child(if loading.is_some() {
+                                "Loading audio…".into()
+                            } else if self.grid_pending(deck) {
+                                "Ready to play · analyzing beats & phrases…".into()
+                            } else {
+                                d.artist.clone().unwrap_or_default()
+                            }),
                     ),
             )
             .child(header_right)

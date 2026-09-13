@@ -64,6 +64,8 @@ pub(super) fn stage(
                     )
                 })?;
             }
+            let mut lookahead = order.clone();
+            let following = lookahead.next(shuffle.load(Ordering::Relaxed));
             let mut error = String::new();
             for _ in 0..3 {
                 if !active() {
@@ -81,6 +83,7 @@ pub(super) fn stage(
                     played_from,
                     offset(d),
                     offset(snap.deck(incoming)),
+                    Some(following),
                 )?;
                 let display = Arc::new(plan.clone());
                 match core.engine.prepare_plan_on(plan, outgoing) {

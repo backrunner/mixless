@@ -2,45 +2,78 @@
 use super::*;
 
 impl UiState {
-    /// Minimal single-line input handling: printable keys, backspace, paste,
-    /// escape/enter to blur. No IME in v1.
+    /// Single-line URL editing, including selection and explicit blur.
     pub fn handle_url_input_key(
         &mut self,
         ks: &Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let selection = &mut self.url_selection;
         match ks.key.as_str() {
-            "escape" => {
-                self.show_import_modal = false;
-                window.blur();
-            }
+            "escape" | "tab" => self.keyboard_focus.focus(window),
             "enter" => {
                 if !self.url.trim().is_empty() {
-                    let url = self.url.trim().to_string();
-                    self.import_spotify(url);
+                    self.import_spotify(self.url.trim().to_string());
                 }
-                window.blur();
+                self.keyboard_focus.focus(window);
             }
-            "backspace" => {
-                self.url.pop();
-            }
-            _ => {
-                if ks.modifiers.platform && ks.key == "v" {
-                    if let Some(item) = cx.read_from_clipboard()
-                        && let Some(text) = item.text()
-                    {
-                        let text = text.replace(['\n', '\r'], " ");
-                        self.url.push_str(&text);
+            "left" | "right" | "home" | "end" => {
+                let right = matches!(ks.key.as_str(), "right" | "end");
+                let cursor = if ks.modifiers.platform || matches!(ks.key.as_str(), "home" | "end") {
+                    if right { self.url.len() } else { 0 }
+                } else if !ks.modifiers.shift && !selection.range().is_empty() {
+                    if right {
+                        selection.range().end
+                    } else {
+                        selection.range().start
                     }
-                } else if !ks.modifiers.control && !ks.modifiers.platform && !ks.modifiers.alt {
-                    if let Some(ch) = &ks.key_char
-                        && !ch.chars().any(|c| c.is_control())
-                    {
-                        self.url.push_str(ch);
+                } else {
+                    selection.adjacent(&self.url, right)
+                };
+                selection.move_to(cursor, ks.modifiers.shift);
+            }
+            "backspace" | "delete" => {
+                if selection.range().is_empty() {
+                    let cursor = if ks.modifiers.platform {
+                        0
+                    } else {
+                        selection.adjacent(&self.url, ks.key == "delete")
+                    };
+                    selection.move_to(cursor, true);
+                }
+                selection.replace(&mut self.url, "");
+            }
+            "a" if ks.modifiers.platform => {
+                selection.move_to(0, false);
+                selection.move_to(self.url.len(), true);
+            }
+            "c" | "x" if ks.modifiers.platform => {
+                let range = selection.range();
+                if !range.is_empty() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                        self.url[range].to_string(),
+                    ));
+                    if ks.key == "x" {
+                        selection.replace(&mut self.url, "");
                     }
                 }
             }
+            "v" if ks.modifiers.platform => {
+                if let Some(item) = cx.read_from_clipboard()
+                    && let Some(text) = item.text()
+                {
+                    selection.replace(&mut self.url, &text.replace(['\n', '\r'], " "));
+                }
+            }
+            _ if !ks.modifiers.control && !ks.modifiers.platform && !ks.modifiers.alt => {
+                if let Some(ch) = &ks.key_char
+                    && !ch.chars().any(|c| c.is_control())
+                {
+                    selection.replace(&mut self.url, ch);
+                }
+            }
+            _ => {}
         }
         cx.notify();
     }

@@ -49,24 +49,25 @@ impl Evidence {
                 | mixless_protocol::SectionLabel::Chorus
         );
         let recovery_overlap = !drop_cut
-            && matches!(
-                section(a, start + 0.01),
-                mixless_protocol::SectionLabel::Break
-                    | mixless_protocol::SectionLabel::Breakdown
-                    | mixless_protocol::SectionLabel::BuildUp
-            )
-            && a.sections
-                .iter()
-                .filter(|s| s.start_sec < end && s.end_sec > start)
-                .all(|s| crate::drops::recovery(s.label))
-            && matches!(
-                sb,
-                mixless_protocol::SectionLabel::Intro
-                    | mixless_protocol::SectionLabel::BuildUp
-                    | mixless_protocol::SectionLabel::Break
-                    | mixless_protocol::SectionLabel::Breakdown
-            );
-        let position = (if recovery_overlap { 0.06 } else { 0. })
+            && (crate::recovery::contains(a, start, end)
+                || (matches!(
+                    section(a, start + 0.01),
+                    mixless_protocol::SectionLabel::Break
+                        | mixless_protocol::SectionLabel::Breakdown
+                        | mixless_protocol::SectionLabel::BuildUp
+                ) && a
+                    .sections
+                    .iter()
+                    .filter(|s| s.start_sec < end && s.end_sec > start)
+                    .all(|s| crate::drops::recovery(s.label))
+                    && matches!(
+                        sb,
+                        mixless_protocol::SectionLabel::Intro
+                            | mixless_protocol::SectionLabel::BuildUp
+                            | mixless_protocol::SectionLabel::Break
+                            | mixless_protocol::SectionLabel::Breakdown
+                    )));
+        let position = (if recovery_overlap { 0.12 } else { 0. })
             - 0.03 * bin / b.duration_sec
             - if explicit_out {
                 0.
@@ -76,7 +77,8 @@ impl Evidence {
         // Phrase-compatible pairings are preferred even when BPM/key are equal.
         // The vocal rule is hard: a verse and a chorus with two foregrounds never
         // share the same overlap window.
-        if sa == mixless_protocol::SectionLabel::Verse
+        if n < 4.
+            && sa == mixless_protocol::SectionLabel::Verse
             && sb == mixless_protocol::SectionLabel::Chorus
             && vocal_a > 0.45
             && vocal_b > 0.45
@@ -104,7 +106,7 @@ impl Evidence {
             0.35 + 0.10 * structural_score
                 + 0.02 * fx_decision.confidence
                 + 0.08 * (1. - vocal_a.min(vocal_b))
-                + if drop_cut { 0.22 } else { 0. }
+                + if drop_cut { 0.08 } else { 0. }
         };
         let phrase = if blend {
             (out_phrase + in_phrase + start_phrase + end_phrase) / 4.
@@ -119,16 +121,15 @@ impl Evidence {
             (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),
             _ => 0.5,
         };
+        // A short bridge is a fallback. A complete, compatible recovery overlap
+        // earns useful duration even while preserving a vocal foreground.
         let length_fit = if blend {
-            // Stable low-foreground phrases can sustain a long layered mix.
-            // Busy material gains no reward merely for taking longer.
-            if recovery_overlap {
-                (n / 24.).min(1.) * 0.06 - ((n - 24.).max(0.) / 32.).min(1.) * 0.12
-            } else {
-                (n / 64.).min(1.) * 0.07 * (1. - vocal_a.max(vocal_b)).powi(2)
-            }
-        } else if !drop_cut && !scratch_cut {
-            (n / 16.).min(1.) * 0.08 * (1. - vocal_a.max(vocal_b)).powi(2)
+            // Judge sustained compatibility across the whole interval. A useful
+            // long blend earns room to develop, with no penalty beyond 24/32 bars.
+            let compatibility = (0.55 + 0.45 * key) * (1. - clash * 0.5);
+            0.24 * (1. - (-n / 20.).exp()) * compatibility
+        } else if recovery_overlap && !drop_cut && !scratch_cut && n >= 4. {
+            0.10 * (1. - (-n / 16.).exp())
         } else {
             0.
         };
@@ -136,7 +137,7 @@ impl Evidence {
             ((quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 + length_fit
                 - key_shift.abs() * 0.025
                 + if structural { 0.03 } else { 0. })
-                / 1.2)
+                / 1.4)
                 .clamp(0., 1.);
         Some(score)
     }

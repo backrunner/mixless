@@ -4,6 +4,7 @@
 
 mod cache;
 mod markers;
+pub mod mix_overlay;
 pub mod preview;
 mod raster;
 mod tiles;
@@ -153,14 +154,31 @@ pub fn paint_wave(
     }
 
     if d.loop_on {
-        let start = (anchor + (d.loop_start_frame as f32 - frame) / fpp).clamp(0., span);
-        let end = (anchor + (d.loop_end_frame as f32 - frame) / fpp).clamp(0., span);
+        let raw_start = anchor + (d.loop_start_frame as f32 - frame) / fpp;
+        let raw_end = anchor + (d.loop_end_frame as f32 - frame) / fpp;
+        let start = raw_start.clamp(0., span);
+        let end = raw_end.clamp(0., span);
         if end > start {
-            let color = theme::with_alpha(theme::LED_GREEN, 0.18);
+            let color = theme::with_alpha(theme::LED_RED, 0.28);
             if vertical {
                 quad_fill(window, ox, oy + start, thick, end - start, color);
+                quad_fill(window, ox, oy + start, 3., end - start, theme::LED_RED);
             } else {
                 quad_fill(window, ox + start, oy, end - start, thick, color);
+                quad_fill(window, ox + start, oy, end - start, 3., theme::LED_RED);
+            }
+            // Only paint a boundary when that source edge is actually visible.
+            // Offscreen loop edges must not masquerade as the viewport boundary.
+            for p in [raw_start, raw_end] {
+                if (0.0..span).contains(&p) {
+                    if vertical {
+                        quad_fill(window, ox, oy + p, thick, 3., theme::LED_RED);
+                        quad_fill(window, ox, oy + p - 3., 8., 8., theme::LED_RED);
+                    } else {
+                        quad_fill(window, ox + p, oy, 3., thick, theme::LED_RED);
+                        quad_fill(window, ox + p - 3., oy, 8., 8., theme::LED_RED);
+                    }
+                }
             }
         }
     }

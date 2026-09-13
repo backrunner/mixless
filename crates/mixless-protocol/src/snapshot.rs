@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve, default_fx};
+use crate::{default_fx, CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
+    #[serde(default)]
+    pub stems_ready: bool,
+    #[serde(default = "default_stem_gain")]
+    pub stem_gain: [f32; 3],
     pub track_id: Option<TrackId>,
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -66,6 +70,8 @@ pub struct DeckSnapshot {
     pub cue_kinds: [CueKind; 8],
     #[serde(default)]
     pub temporary_cue_frame: Option<u64>,
+    #[serde(default)]
+    pub cue_previewing: bool,
     /// Post fader/gain peak level per channel (0..1+), decayed per block.
     pub level: [f32; 2],
 }
@@ -73,6 +79,8 @@ pub struct DeckSnapshot {
 impl Default for DeckSnapshot {
     fn default() -> Self {
         Self {
+            stems_ready: false,
+            stem_gain: [1.; 3],
             track_id: None,
             title: None,
             artist: None,
@@ -118,9 +126,14 @@ impl Default for DeckSnapshot {
             cues: [None; 8],
             cue_kinds: default_cue_kinds(),
             temporary_cue_frame: None,
+            cue_previewing: false,
             level: [0.0; 2],
         }
     }
+}
+
+fn default_stem_gain() -> [f32; 3] {
+    [1.; 3]
 }
 
 fn default_cue_kinds() -> [CueKind; 8] {
@@ -148,6 +161,9 @@ pub struct EngineSnapshot {
     pub xf_curve: XfCurve,
     pub xf_reverse: bool,
     pub master: f32,
+    /// Stereo peak hold after master gain and limiting.
+    #[serde(default)]
+    pub master_level: [f32; 2],
     pub cue_gain: f32,
     pub cue_device: Option<String>,
     pub pfl_available: bool,
@@ -170,6 +186,7 @@ impl Default for EngineSnapshot {
             xf_curve: XfCurve::EqualPower,
             xf_reverse: false,
             master: 0.8,
+            master_level: [0.; 2],
             cue_gain: 0.8,
             cue_device: None,
             pfl_available: false,

@@ -1,10 +1,13 @@
 //! Shared offline fixtures for behavioral engine tests.
 
+mod allocation;
 mod cues;
 mod fx;
 mod output;
 mod performance;
 mod pitch;
+mod recording;
+mod stems;
 mod transport;
 
 use super::*;
@@ -19,6 +22,7 @@ fn sine_buffer(sr: u32, hz: f32, secs: f32) -> Arc<AudioBuffer> {
         samples.push(s);
     }
     Arc::new(AudioBuffer {
+        loudness: Default::default(),
         samples,
         frames: frames as u64,
         sample_rate: sr,

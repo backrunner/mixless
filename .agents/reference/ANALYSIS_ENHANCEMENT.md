@@ -1,6 +1,8 @@
+> 当前默认 Rust 分轨链路见 [原生接入](native-inference.md) 和 [验证记录](../history/2026-09-13-native-models.md)。下方系统分类器的测量保留作历史背景。
+
 # Analysis enhancement
 
-This note records the deployment decision for model assisted analysis on the macOS only v1 target.
+This note records the system classifier deployed in the basic analyzer and its historical measurements. The desktop now also runs HTDemucs and Basic Pitch through native Rust/ONNX in a separate default background queue; see [the deployment guide](native-inference.md).
 
 ## What runs today
 
@@ -33,11 +35,11 @@ cargo build --locked --release -p mixless-analyze --example analysis-profile
 cargo test --locked -p mixless-analyze native_model_runs_and_deadline_discards_partial_results -- --ignored
 ```
 
-## Why a custom structure network is deferred
+## Additional models and deployment
 
 Core ML can run custom models through the Neural Engine, GPU or CPU, and ONNX Runtime can target Core ML on macOS. Neither option is automatically cheap: a custom ONNX artifact needs a signed and versioned model, operator compatibility, runtime packaging, Core ML compilation cache handling and a CPU fallback. A model that is fast on the Neural Engine can still be slow during first compile or fall back to CPU for unsupported operators.
 
-The next model may change a production cue only after a held out DJ set shows better phrase boundary F1 than the rule detector, p95 analysis time under two seconds for a four minute file, incremental RSS under 128 MiB, and zero realtime thread work. Until then the system vocal classifier is the safer enhancement; the structure model remains deterministic and auditable.
+The earlier two-second/128 MiB targets concern the lightweight system classifier, not full stem inference. The desktop now queues HTDemucs ONNX separation and Basic Pitch note extraction through `mixless-stems`, with native Rust preprocessing, inference coordination and cache management. Completed evidence updates later AutoMix plans and cues; basic preparation and playback do not wait for it. The Python/MLX prototype has been removed. [Live stem mixing](stem-playback.md) now loads aligned cached PCM on workers and supplies three stem gains through one source clock and stretcher per deck; unavailable PCM retains original playback. Model estimates need labelled boundary, note and leakage evaluation and listening on held-out music; successful inference does not establish recognition accuracy.
 
 
 
@@ -48,7 +50,7 @@ The next model may change a production cue only after a held out DJ set shows be
 - [ONNX Runtime Core ML provider](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html) supports macOS 10.15+, with MLProgram requiring macOS 12+. Dynamic shapes and uncached model compilation can add cost; runtime support alone does not prove a specific model runs efficiently.
 - [Foote novelty segmentation](https://www.audiolabs-erlangen.de/resources/MIR/FMP/C4/C4S4_NoveltySegmentation.html) informs the current structural change detector.
 
-The most useful next dataset is annotated transitions: section boundaries, completed vocal phrases, safe cue windows, and beat/downbeat corrections. Evaluate boundaries within both 0.5 s and one beat, and report mid-phrase cuts and double-vocal overlaps separately. A small CNN/TCN on shared spectral features is a candidate for training or distillation; no custom weights or accuracy claims are included in this change. Validate on M1/M2 and Intel before enabling any more expensive model by default. The budgets above are proposed acceptance targets, not measured p95 or accuracy results.
+The most useful next dataset is annotated transitions: section boundaries, completed vocal phrases, safe cue windows, and beat/downbeat corrections. Evaluate boundaries within both 0.5 s and one beat, and report mid-phrase cuts and double-vocal overlaps separately. A small CNN/TCN on shared spectral features is a candidate for training or distillation. The current native models have local Apple Silicon integration and rendering checks; M1/M2 and Intel performance and recognition accuracy remain unmeasured. The historical lightweight budgets are not guarantees for full separation.
 
 ## Validation on 2026-09-06
 

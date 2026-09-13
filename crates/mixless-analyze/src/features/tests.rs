@@ -83,6 +83,11 @@ fn unaccented_beats_do_not_claim_reliable_downbeats() {
     let a = analyze(TrackId(1), &samples, sr);
     assert!((a.tempo.global_bpm - 120.).abs() < 0.3);
     assert!(a.tempo.segments.iter().all(|s| s.confidence < 0.65));
+    assert_eq!(a.tempo.pulse_confidence.len(), a.tempo.segments.len());
+    assert!(
+        a.tempo.pulse_confidence.iter().any(|v| *v >= 0.65),
+        "a reliable pulse does not imply bar one"
+    );
     let accented = analyze(TrackId(2), &drums(sr, 120., 32.), sr);
     assert!(accented.tempo.segments.iter().any(|s| s.confidence >= 0.65));
 }
@@ -139,4 +144,16 @@ fn antiphase_stereo_remains_audible_to_structure_detection() {
         .iter()
         .any(|b| b.rms > 0.01 && b.section != S::Silence));
     assert!(!a.tempo.beats.is_empty());
+}
+
+#[test]
+fn slow_beats_are_not_blindly_doubled_into_dnb() {
+    for bpm in [80., 87., 174.] {
+        let a = analyze(TrackId(10), &drums(22050, bpm, 24.), 22050);
+        assert!(
+            (a.tempo.global_bpm - bpm).abs() < 0.4,
+            "{bpm} detected as {}",
+            a.tempo.global_bpm
+        );
+    }
 }

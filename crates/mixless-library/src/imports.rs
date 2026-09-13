@@ -76,6 +76,12 @@ impl Library {
     ) -> Result<(), LibraryError> {
         let mut conn = self.conn.lock().expect("library mutex");
         let tx = conn.transaction()?;
+        let ready: Vec<_> = items
+            .iter()
+            .filter(|i| matches!(i.status.as_str(), "local" | "acquired"))
+            .filter_map(|i| i.track_id)
+            .collect();
+        let ordered = super::ordering::refreshed_order(&tx, playlist, &ready)?;
         tx.execute(
             "DELETE FROM playlist_items WHERE playlist_id=?1",
             [playlist.0],
@@ -87,11 +93,12 @@ impl Library {
         for item in items {
             tx.execute("INSERT INTO import_items(playlist_id,position,external_id,title,artist,duration_ms,status,track_id,error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![playlist.0,item.position as i64,item.external_id,item.title,item.artist,item.duration_ms,item.status,item.track_id.map(|id|id.0),item.error])?;
-            if matches!(item.status.as_str(), "local" | "acquired") {
-                if let Some(id) = item.track_id {
-                    tx.execute("INSERT INTO playlist_items(playlist_id,position,track_id) VALUES (?1,?2,?3)", params![playlist.0,item.position as i64,id.0])?;
-                }
-            }
+        }
+        for (position, id) in ordered.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO playlist_items(playlist_id,position,track_id) VALUES (?1,?2,?3)",
+                params![playlist.0, position as i64, id.0],
+            )?;
         }
         tx.commit()?;
         Ok(())

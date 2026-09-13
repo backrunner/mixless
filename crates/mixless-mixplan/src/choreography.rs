@@ -60,7 +60,7 @@ pub(super) fn arrange(
     rhythmic: bool,
     voice_a: f32,
     voice_b: f32,
-    section: SectionLabel,
+    _section: SectionLabel,
     technique: Technique,
 ) -> Vec<MixStage> {
     if mode != TransitionMode::BeatBlend {
@@ -82,9 +82,13 @@ pub(super) fn arrange(
         };
         if let Some(op) = &lanes.loop_b {
             return vec![
-                stage(0., op.off_bar - 0.5, "Build loop layer"),
-                stage(op.off_bar - 0.5, op.off_bar, "Filter · echo exit"),
-                stage(op.off_bar, n + 0.25, "Release incoming loop"),
+                stage(0., op.off_bar, "Introduce drum loop"),
+                stage(
+                    op.off_bar,
+                    op.off_bar + 0.25,
+                    "Bass exchange · release loop",
+                ),
+                stage(op.off_bar + 0.25, n, "Blend out outgoing"),
             ];
         }
         return vec![
@@ -108,7 +112,8 @@ pub(super) fn arrange(
     let high_end = (bass * 0.85).max(high_start + 0.5);
     let mid_start = (bass + 0.5).max(n - exit * 2.);
     let mid_end = n - exit * 0.15;
-    let echo = matches!(section, SectionLabel::Outro | SectionLabel::Break) && voice_a > 0.12;
+    // A compatible layered mix needs no automatic sweep or echo. EQ already
+    // makes room; reserve effects for the explicit bridge policy.
     for line in [
         &mut lanes.xfader,
         &mut lanes.gain_a,
@@ -160,19 +165,8 @@ pub(super) fn arrange(
             a.nodes.push((u, av));
             b.nodes.push((u, bv));
         }
-        let filter = ease((u - (n - exit)) / (exit));
-        lanes.filter_a.lp_hz.nodes.push((
-            u,
-            (20000f32.ln() + filter * (1800f32 / 20000.).ln())
-                .exp()
-                .clamp(20., 20000.),
-        ));
-        let send = if echo {
-            0.18 * ease((u - (n - 0.5)) / 0.25) * (1. - ease((u - (n - 0.125)) / 0.125))
-        } else {
-            0.
-        };
-        lanes.fx_send_a.nodes.push((u, send));
+        lanes.filter_a.lp_hz.nodes.push((u, 20000.));
+        lanes.fx_send_a.nodes.push((u, 0.));
     }
     vec![
         stage(0., intro, "Introduce layer"),
@@ -180,15 +174,7 @@ pub(super) fn arrange(
         stage(high_end, bass, "Hold layered mix"),
         stage(bass, bass + 0.5, "Exchange bass"),
         stage(bass + 0.5, mid_start, "Hold melody"),
-        stage(
-            mid_start,
-            n - exit * 0.15,
-            if echo {
-                "Mids · filter · echo"
-            } else {
-                "Mids · filter exit"
-            },
-        ),
+        stage(mid_start, n - exit * 0.15, "Exchange mids"),
         stage(mid_end, n, "Close outgoing level"),
     ]
     .into_iter()

@@ -13,10 +13,12 @@ symphonia = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
+ebur128 = "0.1.10"
+hound = "3"
 
 [build-dependencies]
 cc = "1"
 
 [dev-dependencies]
-hound = "3"
+tempfile = "3"
 mixless-mixplan = { workspace = true }

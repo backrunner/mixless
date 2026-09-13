@@ -1,6 +1,34 @@
 //! AutoMix session intent, worker lifecycle and UI progress.
 use super::*;
 
+/// Follow an entrance once; later manual selection remains under user control.
+pub(super) fn newly_playing_deck(
+    before: &EngineSnapshot,
+    after: &EngineSnapshot,
+) -> Option<DeckId> {
+    [DeckId::A, DeckId::B].into_iter().find(|deck| {
+        let (old, new) = (before.deck(*deck), after.deck(*deck));
+        new.playing && new.track_id.is_some() && (!old.playing || new.track_id != old.track_id)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn focus_follows_new_entrance_only_after_playback_starts() {
+        let mut before = EngineSnapshot::default();
+        before.decks[0].playing = true;
+        before.decks[0].track_id = Some(TrackId(1));
+        let mut after = before.clone();
+        after.decks[1].track_id = Some(TrackId(2));
+        assert_eq!(newly_playing_deck(&before, &after), None);
+        after.decks[1].playing = true;
+        assert_eq!(newly_playing_deck(&before, &after), Some(DeckId::B));
+        assert_eq!(newly_playing_deck(&after, &after), None);
+    }
+}
+
 impl UiState {
     pub fn toggle_automix(&mut self) {
         self.sync_request = None;
@@ -17,6 +45,7 @@ impl UiState {
             epoch.fetch_add(1, Ordering::AcqRel);
         }
         self.deck_load_rx = [None, None];
+        self.deck_loading = [None, None];
         self.grid_rx = [None, None];
         self.start_automix_worker(tracks);
     }

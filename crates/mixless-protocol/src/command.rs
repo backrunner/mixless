@@ -50,6 +50,14 @@ pub enum Command {
     ClearTemporaryCue {
         deck: DeckId,
     },
+    /// Audition only through the monitor bus, independently of channel faders.
+    BeginCuePreview {
+        deck: DeckId,
+        frame: u64,
+    },
+    EndCuePreview {
+        deck: DeckId,
+    },
     JumpCue {
         deck: DeckId,
         index: u8,
@@ -123,6 +131,11 @@ pub enum Command {
         deck: DeckId,
         db: f32,
     },
+    SetStemGain {
+        deck: DeckId,
+        stem: crate::StemKind,
+        value: f32,
+    },
     SetCrossfader {
         value: f32,
     },
@@ -163,6 +176,10 @@ pub enum Command {
         deck: DeckId,
         vinyl: bool,
         slip: bool,
+    },
+    /// Musical wet/dry fades; disabling retains a short click-prevention ramp.
+    SetFxAutoFade {
+        on: bool,
     },
     SetQuantize {
         on: bool,

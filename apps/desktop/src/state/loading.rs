@@ -6,6 +6,12 @@ impl UiState {
         self.library_refresh.initial = false;
         self.track_menu = None;
         self.playlist_sel = id;
+        if let Err(error) = self.core.settings.update(|s| {
+            s.last_playlist = id;
+            s.library_selection_saved = true;
+        }) {
+            self.error = error.into();
+        }
         self.track_sel = None;
         self.tracks = Arc::new(Vec::new());
         self.track_scroll
@@ -29,6 +35,12 @@ impl UiState {
         let (tx, rx) = channel();
         let (grid_tx, grid_rx) = channel();
         self.deck_load_rx[index] = Some(rx);
+        self.deck_loading[index] = Some(
+            self.tracks
+                .iter()
+                .find(|t| t.id == track_id)
+                .map_or_else(|| "Track".into(), |t| t.title.clone()),
+        );
         self.grid_rx[index] = Some(grid_rx);
         self.error = "".into();
         std::thread::spawn(move || {
@@ -56,6 +68,8 @@ impl UiState {
                 if !active() {
                     return Err("Load replaced".into());
                 }
+                core.engine
+                    .set_waveform(deck, track_id, prepared.wave.clone());
                 if prepared.analysis.tempo.beats.len() >= 2 {
                     core.engine
                         .set_beat_grid(deck, track_id, prepared.analysis.tempo.clone())
@@ -81,6 +95,8 @@ impl UiState {
             })();
             if active() {
                 let _ = grid_tx.send(grid);
+                crate::analysis::attach_stems(&core, deck, track_id, &loaded_hash);
+                crate::analysis::schedule_deep(&core, track_id);
             }
         });
     }
