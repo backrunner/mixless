@@ -26,6 +26,7 @@ impl UiState {
         let dc = theme::deck_color(deck);
         let flip = deck == DeckId::B;
         let play_btn = {
+            let pending = self.pending_play[deck.index()];
             let el = gpui::div()
                 .id(SharedString::from(format!("play-{:?}", deck)))
                 .flex()
@@ -37,17 +38,31 @@ impl UiState {
                 .border_1()
                 .border_color(if d.playing {
                     theme::with_alpha(theme::LED_GREEN, 0.55)
+                } else if pending {
+                    theme::with_alpha(theme::WARN, 0.55)
                 } else {
                     theme::LINE.into()
                 })
                 .bg(if d.playing {
                     theme::with_alpha(theme::LED_GREEN, 0.16)
+                } else if pending {
+                    theme::with_alpha(theme::WARN, 0.16)
                 } else {
                     theme::PANEL_INSET.into()
                 })
-                .text_color(if d.playing { theme::LED_GREEN } else { dc })
+                .text_color(if d.playing {
+                    theme::LED_GREEN
+                } else if pending {
+                    theme::WARN
+                } else {
+                    dc
+                })
                 .hover(|s| s.bg(theme::PANEL_RAISED))
-                .child(transport_icon(d.playing, d.brake, dc));
+                .child(transport_icon(
+                    d.playing,
+                    d.brake,
+                    if pending { theme::WARN } else { dc },
+                ));
             let state = cx.entity();
             el.on_mouse_down(MouseButton::Left, move |_ev, _window, cx| {
                 state.update(cx, |s, cx| {

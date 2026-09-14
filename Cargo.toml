@@ -19,7 +19,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
-repository = "https://github.com/mixless/mixless"
+repository = "https://github.com/backrunner/mixless"
 rust-version = "1.88"
 
 [workspace.dependencies]

@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn begin(
-    core: &AppCore,
+    core: &Arc<AppCore>,
     tracks: &[TrackId],
     active: impl Fn() -> bool,
     tx: &Sender<AutomixMsg>,

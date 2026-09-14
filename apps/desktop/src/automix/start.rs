@@ -79,7 +79,7 @@ pub(super) fn fade_in(
                     core,
                     Command::SetChannelFader {
                         deck,
-                        value: 0.8 * ease,
+                        value: ease,
                     },
                 )?;
                 command(

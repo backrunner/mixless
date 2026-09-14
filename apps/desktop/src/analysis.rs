@@ -12,6 +12,7 @@ mod deep;
 mod playback;
 mod reanalysis;
 mod stems;
+pub use deep::promote as promote_deep;
 pub use deep::schedule as schedule_deep;
 pub use playback::load_manual;
 pub use reanalysis::reanalyze;
@@ -231,6 +232,7 @@ pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
                 .lock()
                 .expect("deep jobs")
                 .contains(&id)
+                && !matches!(core.analysis.status(&prepared.track), Status::Basic(_, _))
             {
                 core.analysis.set(id, deep::ready_status(prepared));
             }
@@ -281,7 +283,8 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
     {
         return Ok(prepared.clone());
     }
-    core.analysis.set(id, Status::Checking);
+    // Cache hits must not flicker a finished row: only a real decode/analysis
+    // below may publish a busy status over Ready.
     let cached = if track.analyzed && hash == track.content_hash {
         core.library
             .load_analysis(id, mixless_analyze::ANALYSIS_VERSION)
@@ -354,7 +357,7 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
 /// Verify the decoded revision before the short publication lock. Cancelling
 /// AUTO must never wait for filesystem I/O on the UI thread.
 pub fn load(
-    core: &AppCore,
+    core: &Arc<AppCore>,
     deck: DeckId,
     id: TrackId,
     active: impl Fn() -> bool,
@@ -433,12 +436,51 @@ pub fn load(
     drop(_commit);
     drop(_load);
     attach_stems(core, deck, id, &hash);
+    deep::promote(core, id);
     Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_hit_revalidation_does_not_flicker_ready_status() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        let hash = core.library.get_track(id).unwrap().content_hash;
+        // Drop the in-memory prepared entry so the next prepare revalidates
+        // from SQLite, like an automix sweep past the 8-entry cache.
+        core.analysis
+            .prepared
+            .lock()
+            .expect("prepared cache")
+            .retain(|p| p.track.id != id);
+        let before = core.analysis.revision.load(Ordering::Acquire);
+        let prepared = prepare(&core, id).unwrap();
+        assert_eq!(prepared.track.content_hash, hash);
+        assert_eq!(core.analysis.status(&prepared.track), Status::Ready(hash));
+        assert_eq!(core.analysis.revision.load(Ordering::Acquire), before);
+    }
+
+    #[test]
+    fn cache_hit_revalidation_keeps_basic_status() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        let hash = core.library.get_track(id).unwrap().content_hash;
+        core.analysis
+            .set(id, Status::Basic(hash, "stem analysis failed".into()));
+        core.analysis
+            .prepared
+            .lock()
+            .expect("prepared cache")
+            .retain(|p| p.track.id != id);
+        prepare(&core, id).unwrap();
+        assert!(matches!(
+            core.analysis.status(&core.library.get_track(id).unwrap()),
+            Status::Basic(_, _)
+        ));
+    }
 
     #[test]
     fn cached_analysis_does_not_recreate_a_deleted_suggestion() {

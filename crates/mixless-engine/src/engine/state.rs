@@ -17,7 +17,7 @@ impl DeckSlot {
             rate_micro: AtomicU32::new(1_000_000),
             pitch_centi: AtomicU32::new(2400),
             keylock: AtomicBool::new(true),
-            fader: AtomicU32::new(800),
+            fader: AtomicU32::new(1000),
             gain_milli: AtomicU32::new(9600),
             eq_db: [
                 AtomicU32::new(9600),

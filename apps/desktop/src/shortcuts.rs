@@ -142,6 +142,8 @@ impl UiState {
                 self.close_fx_editor();
                 self.show_shortcuts = false;
                 self.show_import_modal = false;
+                self.playlist_menu = None;
+                self.confirm_remove_playlist = None;
                 self.keyboard_focus.focus(window);
             }
             Shortcut::SwitchDeck => {

@@ -2,8 +2,8 @@
 use super::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
-    mpsc::{channel, Sender},
     Mutex, OnceLock,
+    mpsc::{Sender, channel},
 };
 
 #[derive(Default)]
@@ -41,6 +41,10 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
     for id in &tracks {
         crate::analysis::schedule_deep(core, *id);
     }
+    // The playlist head is what AUTO will actually play first.
+    for id in tracks.iter().take(2) {
+        crate::analysis::promote_deep(core, *id);
+    }
     let mut current = core
         .mix_preparation
         .playlist
@@ -72,33 +76,41 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
                 std::thread::scope(|scope| {
                     for _ in 0..tracks.len().min(2) {
                         let (core, tracks, next) = (&core, &tracks, &next);
-                        scope.spawn(move || loop {
-                            if core.mix_preparation.revision.load(Ordering::Acquire) != revision {
-                                break;
-                            }
-                            let i = next.fetch_add(1, Ordering::Relaxed);
-                            if i >= tracks.len() {
-                                break;
-                            }
-                            let a = crate::analysis::prepare(core, tracks[i]);
-                            let b = crate::analysis::prepare(core, tracks[(i + 1) % tracks.len()]);
-                            if let (Ok(a), Ok(b)) = (a, b) {
-                                let plan = pair(
-                                    core,
-                                    &a,
-                                    &b,
-                                    0.,
-                                    PerformanceOffset::identity(),
-                                    PerformanceOffset::identity(),
-                                );
-                                let mut previews =
-                                    core.mix_preparation.previews.lock().expect("plan previews");
-                                if core.mix_preparation.revision.load(Ordering::Acquire) == revision
+                        scope.spawn(move || {
+                            loop {
+                                if core.mix_preparation.revision.load(Ordering::Acquire) != revision
                                 {
-                                    previews[i] = plan.ok().map(Arc::new);
-                                    core.mix_preparation
-                                        .preview_revision
-                                        .fetch_add(1, Ordering::Release);
+                                    break;
+                                }
+                                let i = next.fetch_add(1, Ordering::Relaxed);
+                                if i >= tracks.len() {
+                                    break;
+                                }
+                                let a = crate::analysis::prepare(core, tracks[i]);
+                                let b =
+                                    crate::analysis::prepare(core, tracks[(i + 1) % tracks.len()]);
+                                if let (Ok(a), Ok(b)) = (a, b) {
+                                    let plan = pair(
+                                        core,
+                                        &a,
+                                        &b,
+                                        0.,
+                                        PerformanceOffset::identity(),
+                                        PerformanceOffset::identity(),
+                                    );
+                                    let mut previews = core
+                                        .mix_preparation
+                                        .previews
+                                        .lock()
+                                        .expect("plan previews");
+                                    if core.mix_preparation.revision.load(Ordering::Acquire)
+                                        == revision
+                                    {
+                                        previews[i] = plan.ok().map(Arc::new);
+                                        core.mix_preparation
+                                            .preview_revision
+                                            .fetch_add(1, Ordering::Release);
+                                    }
                                 }
                             }
                         });
@@ -134,9 +146,12 @@ pub(super) fn pair(
         .iter()
         .position(|id| *id == b.track.id)
         .and_then(|i| tracks.get((i + 1) % tracks.len()).copied());
-    pair_from_entry(core, a, b, earliest, 0., offset_a, offset_b, following)
+    pair_from_entry(
+        core, a, b, earliest, 0., offset_a, offset_b, following, false,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn pair_from_entry(
     core: &AppCore,
     a: &crate::analysis::PreparedTrack,
@@ -146,6 +161,7 @@ pub(super) fn pair_from_entry(
     offset_a: PerformanceOffset,
     offset_b: PerformanceOffset,
     following: Option<TrackId>,
+    stem_playback: bool,
 ) -> Result<mixless_protocol::MixPlan, String> {
     // Track-level IN/OUT markers constrain the corresponding side only.
     let ca: Vec<_> = core
@@ -171,7 +187,7 @@ pub(super) fn pair_from_entry(
             .flatten()
     });
     let key = format!(
-        "{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{:?}:{:?}",
+        "{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{:?}:{:?}:{}",
         entry.to_bits(),
         core.analysis.content_revision.load(Ordering::Acquire),
         a.track.id.0,
@@ -185,7 +201,8 @@ pub(super) fn pair_from_entry(
         following,
         following_analysis
             .as_ref()
-            .map(|a| (&a.camelot, a.key_confidence, a.tempo.global_bpm))
+            .map(|a| (&a.camelot, a.key_confidence, a.tempo.global_bpm)),
+        stem_playback,
     );
     let cached = core
         .mix_preparation
@@ -206,6 +223,7 @@ pub(super) fn pair_from_entry(
             entry,
             false,
             following_analysis.as_ref(),
+            stem_playback,
         );
         let mut plans = core.mix_preparation.plans.lock().expect("plans");
         let mut order = core.mix_preparation.order.lock().expect("plan order");
@@ -234,6 +252,7 @@ pub(super) fn pair_from_entry(
         entry,
         true,
         following_analysis.as_ref(),
+        stem_playback,
     );
     if let Some(error) = &plan.failure_reason {
         return Err(error.clone());
@@ -252,11 +271,13 @@ fn choose_plan(
     entry: f32,
     fallback: bool,
     following: Option<&mixless_protocol::TrackAnalysis>,
+    stem_playback: bool,
 ) -> mixless_protocol::MixPlan {
     let planner = mixless_mixplan::Planner::with_options(mixless_mixplan::PlannerOptions {
         harmonic_key_shift: true,
         earliest_outgoing_sec: earliest,
         outgoing_entry_sec: entry,
+        stem_playback,
         ..Default::default()
     });
     let mut best: Option<mixless_protocol::MixPlan> = None;

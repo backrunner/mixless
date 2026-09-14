@@ -4,6 +4,10 @@ use super::*;
 use mixless_protocol::{Polyline, StemMix};
 
 pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
+    // A stem-layered candidate already carries deliberate envelopes.
+    if plan.stem_mix.is_some() {
+        return;
+    }
     let Some(summary) = &plan.summary else {
         return;
     };
@@ -128,5 +132,78 @@ pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
             line.nodes.push((last, line.nodes.last().unwrap().1));
         }
     }
+    plan.stem_mix = Some(result);
+}
+
+/// Drum-layered blend: the incoming deck plays drums alone until the handoff,
+/// where its vocal and instruments arrive while the outgoing tonal material
+/// releases. Only valid when both decks will have aligned stem PCM.
+pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
+    let Some(summary) = &plan.summary else {
+        return;
+    };
+    let n = summary.length_bars as f32;
+    let ease = |v: f32| {
+        let v = v.clamp(0., 1.);
+        v * v * (3. - 2. * v)
+    };
+    // Center the outgoing vocal release on the nearest measured breath so a
+    // word is never faded mid-syllable.
+    let lo = (handoff - 2.).max(0.);
+    let hi = (handoff + 1.).min(n);
+    let mut vocal_center = handoff + 0.5;
+    let mut nearest = f32::MAX;
+    let steps = ((hi - lo) * 32.).ceil().max(1.) as usize;
+    for i in 0..=steps {
+        let u = lo + (hi - lo) * i as f32 / steps as f32;
+        if crate::continuity::voice_gap(ctx.outgoing, plan.outgoing_source.sample(u)) == Some(true)
+            && (u - handoff).abs() < nearest
+        {
+            nearest = (u - handoff).abs();
+            vocal_center = u;
+        }
+    }
+    let mut result = StemMix {
+        outgoing: std::array::from_fn(|_| Polyline::default()),
+        incoming: std::array::from_fn(|_| Polyline::default()),
+    };
+    let gain = |u: f32, stem: usize, incoming: bool| {
+        let center = if !incoming && stem == 0 {
+            vocal_center
+        } else {
+            handoff + 0.5
+        };
+        if stem == 1 {
+            1.
+        } else if incoming {
+            ease((u - (handoff - 0.5)) / 2.)
+        } else {
+            1. - ease((u - (center - 1.)) / 2.)
+        }
+    };
+    for i in 0..=128 {
+        let u = n * i as f32 / 128.;
+        for stem in 0..3 {
+            result.incoming[stem].nodes.push((u, gain(u, stem, true)));
+            result.outgoing[stem].nodes.push((u, gain(u, stem, false)));
+        }
+    }
+    if let Some(last) = plan
+        .clock
+        .nodes
+        .last()
+        .map(|node| node.0)
+        .filter(|last| *last > n)
+    {
+        for stem in 0..3 {
+            result.incoming[stem]
+                .nodes
+                .push((last, gain(last, stem, true)));
+            result.outgoing[stem]
+                .nodes
+                .push((last, gain(last, stem, false)));
+        }
+    }
+    plan.requires_stems = true;
     plan.stem_mix = Some(result);
 }

@@ -1,8 +1,8 @@
 use super::*;
-fn drums(sr: u32, bpm: f32, seconds: f32) -> Vec<f32> {
+fn drums_at(sr: u32, bpm: f32, seconds: f32, t0: f32) -> Vec<f32> {
     let mut samples = Vec::new();
     for i in 0..(sr as f32 * seconds) as usize {
-        let t = i as f32 / sr as f32;
+        let t = t0 + i as f32 / sr as f32;
         let beat = t * bpm / 60.;
         let phase = beat.fract() * 60. / bpm;
         let accent = if beat.floor() as usize % 4 == 0 {
@@ -12,6 +12,24 @@ fn drums(sr: u32, bpm: f32, seconds: f32) -> Vec<f32> {
         };
         let s = accent * (-phase * 40.).exp() * (std::f32::consts::TAU * 70. * phase).sin();
         samples.extend([s, s]);
+    }
+    samples
+}
+fn drums(sr: u32, bpm: f32, seconds: f32) -> Vec<f32> {
+    drums_at(sr, bpm, seconds, 0.)
+}
+// Consecutive (bpm, seconds) spans sharing one continuous phase; bpm <= 0 is
+// silence, so breaks and tempo changes join at exact musical boundaries.
+fn parts(sr: u32, spans: &[(f32, f32)]) -> Vec<f32> {
+    let mut samples = Vec::new();
+    let mut t0 = 0.;
+    for &(bpm, seconds) in spans {
+        if bpm > 0. {
+            samples.extend(drums_at(sr, bpm, seconds, t0));
+        } else {
+            samples.resize(samples.len() + (sr as f32 * seconds) as usize * 2, 0.);
+        }
+        t0 += seconds;
     }
     samples
 }
@@ -156,4 +174,94 @@ fn slow_beats_are_not_blindly_doubled_into_dnb() {
             a.tempo.global_bpm
         );
     }
+}
+
+#[test]
+fn a_drumless_break_cannot_drift_a_constant_grid() {
+    let sr = 22050;
+    // Exactly 36 beats of silence between two 174 BPM passages: the second
+    // passage re-enters on the continuing grid.
+    let samples = parts(sr, &[(174., 30.), (0., 36. * 60. / 174.), (174., 30.)]);
+    let a = analyze(TrackId(11), &samples, sr);
+    let global = a.tempo.global_bpm;
+    assert!((global - 174.).abs() < 0.4, "global {global}");
+    assert!(
+        a.tempo
+            .segments
+            .iter()
+            .all(|s| (s.bpm - global).abs() < 0.01),
+        "segments {:?}",
+        a.tempo.segments.iter().map(|s| s.bpm).collect::<Vec<_>>()
+    );
+    let period = 60. / global;
+    let phase = a.tempo.beats[0];
+    for (i, &beat) in a.tempo.beats.iter().enumerate() {
+        assert!(
+            (beat - (phase + i as f32 * period)).abs() < 0.005,
+            "beat {i} at {beat}"
+        );
+    }
+    // A break measures no local pulse, but a constant grid reports the
+    // globally validated one instead of a false zero.
+    assert!(
+        a.tempo.pulse_confidence.iter().all(|v| *v >= 0.65),
+        "pulse {:?}",
+        a.tempo.pulse_confidence
+    );
+}
+
+#[test]
+fn a_single_wrong_window_cannot_phase_shift_the_grid() {
+    let sr = 22050;
+    // One 16-beat window of 165 BPM inside a constant 174 BPM track.
+    let samples = parts(sr, &[(174., 16.55), (165., 5.52), (174., 33.07)]);
+    let a = analyze(TrackId(12), &samples, sr);
+    eprintln!(
+        "global={} segments={:?} pulse={:?}",
+        a.tempo.global_bpm,
+        a.tempo
+            .segments
+            .iter()
+            .map(|s| (s.bpm * 10.).round() / 10.)
+            .collect::<Vec<_>>(),
+        a.tempo.pulse_confidence
+    );
+    let global = a.tempo.global_bpm;
+    assert!((global - 174.).abs() < 0.5, "global {global}");
+    assert!(
+        a.tempo
+            .segments
+            .iter()
+            .all(|s| (s.bpm - global).abs() < 0.01),
+        "segments {:?}",
+        a.tempo.segments.iter().map(|s| s.bpm).collect::<Vec<_>>()
+    );
+    let period = 60. / global;
+    let phase = a.tempo.beats[0];
+    for (i, &beat) in a.tempo.beats.iter().enumerate() {
+        assert!(
+            (beat - (phase + i as f32 * period)).abs() < 0.005,
+            "beat {i} at {beat}"
+        );
+    }
+}
+
+#[test]
+fn a_sustained_tempo_change_survives_the_outlier_filter() {
+    let sr = 22050;
+    let samples = parts(sr, &[(174., 40.), (150., 24.)]);
+    let a = analyze(TrackId(13), &samples, sr);
+    eprintln!(
+        "global={} segments={:?}",
+        a.tempo.global_bpm,
+        a.tempo
+            .segments
+            .iter()
+            .map(|s| (s.bpm * 10.).round() / 10.)
+            .collect::<Vec<_>>()
+    );
+    let first = a.tempo.segments.first().unwrap().bpm;
+    let last = a.tempo.segments.last().unwrap().bpm;
+    assert!((first - 174.).abs() < 1.5, "first {first}");
+    assert!((last - 150.).abs() < 2.5, "last {last}");
 }

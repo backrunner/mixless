@@ -1,8 +1,8 @@
 //! Import orchestration runs on a host worker. A row is ready only after the
 //! engine's decoder and offline analysis have accepted the actual local file.
-use crate::{duration_ok, local_match, AcquireError, ResolveJob};
-use mixless_analyze::{Analyzer, ANALYSIS_VERSION};
-use mixless_library::{content_hash, ImportItem, Library};
+use crate::{AcquireError, ResolveJob, duration_ok, local_match};
+use mixless_analyze::{ANALYSIS_VERSION, Analyzer};
+use mixless_library::{ImportItem, Library, content_hash};
 use mixless_protocol::{PlaylistId, TrackId};
 use mixless_spotify::SpotifyPlaylistMeta;
 use std::path::{Path, PathBuf};
@@ -21,8 +21,12 @@ pub struct ImportReport {
 impl ImportReport {
     pub fn summary(&self) -> String {
         let mut parts = vec![format!("Added {} tracks", self.local + self.acquired)];
-        if self.failed > 0 { parts.push(format!("{} failed", self.failed)); }
-        if self.suspect > 0 { parts.push(format!("{} need review", self.suspect)); }
+        if self.failed > 0 {
+            parts.push(format!("{} failed", self.failed));
+        }
+        if self.suspect > 0 {
+            parts.push(format!("{} need review", self.suspect));
+        }
         parts.join(" · ")
     }
 }
@@ -102,7 +106,7 @@ impl ImportService<'_> {
     pub fn import_local_file(&self, path: &Path) -> Result<TrackId, String> {
         self.local_audio(path).map(|(track, _)| track)
     }
-    fn local_audio(&self, path: &Path) -> Result<(TrackId, PlaylistId), String> {
+    fn local_audio(&self, path: &Path) -> Result<(TrackId, Option<PlaylistId>), String> {
         let track = self.audio(path, None).map_err(|e| e.message)?;
         let playlist = self
             .library
@@ -125,7 +129,9 @@ impl ImportService<'_> {
             match self.local_audio(path) {
                 Ok((_, playlist)) => {
                     report.local += 1;
-                    report.playlist.get_or_insert(playlist);
+                    if let Some(playlist) = playlist {
+                        report.playlist.get_or_insert(playlist);
+                    }
                 }
                 Err(error) => {
                     report.failed += 1;
@@ -472,11 +478,12 @@ mod tests {
             .iter()
             .find(|path| path.extension().unwrap() == "wav")
             .unwrap();
-        assert!(lib
-            .playlist_tracks(selected)
-            .unwrap()
-            .iter()
-            .all(|t| Path::new(&t.path).parent() == first_ready.parent()));
+        assert!(
+            lib.playlist_tracks(selected)
+                .unwrap()
+                .iter()
+                .all(|t| Path::new(&t.path).parent() == first_ready.parent())
+        );
 
         let new = first.join("new.wav");
         wav(&new, 1, 16);
@@ -528,10 +535,11 @@ mod tests {
         let first = lib.list_tracks().unwrap().remove(0);
         assert!(first.analyzed);
         assert_eq!(first.duration_ms, 1000);
-        assert!(lib
-            .load_analysis(first.id, ANALYSIS_VERSION)
-            .unwrap()
-            .is_some());
+        assert!(
+            lib.load_analysis(first.id, ANALYSIS_VERSION)
+                .unwrap()
+                .is_some()
+        );
         let second = service
             .import_local_file(&dir.path().join("./音楽.wav"))
             .unwrap();

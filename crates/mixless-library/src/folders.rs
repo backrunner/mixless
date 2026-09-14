@@ -5,8 +5,16 @@ use super::*;
 
 impl Library {
     /// Register the directory before scanning or analyzing its contents.
+    /// An explicit re-import lifts a previous remove-playlist hide.
     pub fn register_folder(&self, path: &Path) -> Result<PlaylistId, LibraryError> {
         let path = path.canonicalize()?;
+        {
+            let conn = self.conn.lock().expect("library mutex");
+            conn.execute(
+                "DELETE FROM hidden_folder_playlists WHERE folder_path=?1",
+                [path.to_string_lossy().as_ref()],
+            )?;
+        }
         let name = path
             .file_name()
             .unwrap_or(path.as_os_str())
@@ -51,10 +59,10 @@ impl Library {
                 [path.to_string_lossy()],
                 |row| row.get(0),
             )?);
-            add_folder_track(&tx, id, path)?;
+            let _ = add_folder_track(&tx, id, path)?;
             for root in &roots {
                 if path.starts_with(root) {
-                    add_folder_member(&tx, id, root)?;
+                    let _ = add_folder_member(&tx, id, root)?;
                 }
             }
             ids.push(id);
@@ -63,8 +71,13 @@ impl Library {
         Ok(ids)
     }
 
-    /// Append a ready local track without replacing previously imported siblings.
-    pub fn add_to_folder_playlist(&self, track: TrackId) -> Result<PlaylistId, LibraryError> {
+    /// Append a ready local track without replacing previously imported
+    /// siblings. `None` means the track's folder playlist was removed by the
+    /// user and stays hidden.
+    pub fn add_to_folder_playlist(
+        &self,
+        track: TrackId,
+    ) -> Result<Option<PlaylistId>, LibraryError> {
         let mut conn = self.conn.lock().expect("library mutex");
         let tx = conn.transaction()?;
         let path: String = tx.query_row(
@@ -104,7 +117,7 @@ impl Library {
         for (track, path) in tracks {
             let path = Path::new(&path);
             if !path.starts_with(&acquired) {
-                add_folder_track(&tx, track, path)?;
+                let _ = add_folder_track(&tx, track, path)?;
             }
         }
         tx.commit()?;
@@ -116,16 +129,26 @@ fn add_folder_track(
     conn: &Connection,
     track: TrackId,
     path: &Path,
-) -> Result<PlaylistId, LibraryError> {
+) -> Result<Option<PlaylistId>, LibraryError> {
     add_folder_member(conn, track, path.parent().ok_or(LibraryError::NotFound)?)
 }
 
+/// `None` when the folder's playlist was removed by the user: scans must not
+/// resurrect it, and no membership row is written.
 fn add_folder_member(
     conn: &Connection,
     track: TrackId,
     folder: &Path,
-) -> Result<PlaylistId, LibraryError> {
+) -> Result<Option<PlaylistId>, LibraryError> {
     let folder_path = folder.to_string_lossy();
+    let hidden: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM hidden_folder_playlists WHERE folder_path=?1)",
+        [folder_path.as_ref()],
+        |r| r.get(0),
+    )?;
+    if hidden {
+        return Ok(None);
+    }
     let existing: Option<i64> = conn
         .query_row(
             "SELECT playlist_id FROM external_playlists WHERE source='folder' AND external_id=?1",
@@ -155,7 +178,7 @@ fn add_folder_member(
          AND NOT EXISTS (SELECT 1 FROM playlist_exclusions WHERE playlist_id=?1 AND track_id=?2)",
         params![id, track.0],
     )?;
-    Ok(PlaylistId(id))
+    Ok(Some(PlaylistId(id)))
 }
 
 #[cfg(test)]
@@ -253,6 +276,43 @@ mod tests {
                 .collect::<Vec<_>>(),
             ids
         );
+    }
+
+    #[test]
+    fn removed_folder_playlist_stays_hidden_until_explicit_reimport() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Set");
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("a.wav");
+        fs::write(&path, b"fixture").unwrap();
+        let db = dir.path().join("library.db");
+        let lib = Library::open(&db).unwrap();
+        let id = lib.register_local_files(&[path.clone()]).unwrap()[0];
+        let playlist = PlaylistId(lib.list_playlists().unwrap()[0].id);
+        lib.remove_playlist(playlist).unwrap();
+        assert!(lib.remove_playlist(playlist).is_err());
+        drop(lib);
+
+        // Reopening and re-scanning the same files must not resurrect it;
+        // the track itself stays in the library.
+        let lib = Library::open(&db).unwrap();
+        lib.register_local_files(&[path.clone()]).unwrap();
+        assert!(lib.list_playlists().unwrap().is_empty());
+        assert!(lib.get_track(id).is_ok());
+        {
+            let conn = lib.conn.lock().unwrap();
+            conn.execute("UPDATE tracks SET analyzed=1 WHERE id=?1", [id.0])
+                .unwrap();
+        }
+        assert!(lib.add_to_folder_playlist(id).unwrap().is_none());
+
+        // An explicit re-import of the folder lifts the hide.
+        lib.register_folder(&folder).unwrap();
+        lib.register_local_files(&[path.clone()]).unwrap();
+        let restored = lib.list_playlists().unwrap();
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].folder_path.is_some());
+        assert_eq!(restored[0].tracks, 1);
     }
 
     #[test]

@@ -1,14 +1,180 @@
 use super::*;
 use std::collections::HashSet;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
+/// FIFO order lives in `queue`; `pending` additionally covers the job the
+/// worker is running. `sender` only wakes the worker.
 #[derive(Default)]
 pub(super) struct Jobs {
     pub pending: Mutex<HashSet<TrackId>>,
     completed: Mutex<HashMap<TrackId, u64>>,
-    sender: OnceLock<Sender<TrackId>>,
+    queue: Mutex<VecDeque<TrackId>>,
+    sender: OnceLock<Sender<()>>,
 }
 
-pub(super) fn retry_for_playback(core: &AppCore, id: TrackId) {
+impl Jobs {
+    /// Queue `id` at the back, or move it to the front when `priority` is set.
+    /// Returns false only when the worker is already running this track.
+    fn enqueue(&self, id: TrackId, priority: bool) -> bool {
+        let mut queue = self.queue.lock().expect("deep queue");
+        if let Some(pos) = queue.iter().position(|queued| *queued == id) {
+            if priority && pos > 0 {
+                queue.remove(pos);
+                queue.push_front(id);
+            }
+            return true;
+        }
+        if !self.pending.lock().expect("deep jobs").insert(id) {
+            return false;
+        }
+        if priority {
+            queue.push_front(id);
+        } else {
+            queue.push_back(id);
+        }
+        true
+    }
+
+    fn notify(&self, core: &Arc<AppCore>) {
+        let _ = self
+            .sender
+            .get_or_init(|| {
+                let (tx, rx) = channel::<()>();
+                let weak = Arc::downgrade(core);
+                std::thread::spawn(move || worker(weak, rx));
+                tx
+            })
+            .send(());
+    }
+
+    #[cfg(test)]
+    fn queued(&self) -> Vec<TrackId> {
+        self.queue
+            .lock()
+            .expect("deep queue")
+            .iter()
+            .copied()
+            .collect()
+    }
+}
+
+fn worker(weak: std::sync::Weak<AppCore>, rx: Receiver<()>) {
+    // Releasing the 165 MB model set on every idle gap makes the next queued
+    // track pay a full reload. Only drop it after a sustained quiet spell.
+    const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(30);
+    loop {
+        match rx.recv_timeout(IDLE_RELEASE) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                let Some(core) = weak.upgrade() else { break };
+                if core
+                    .analysis
+                    .deep_jobs
+                    .queue
+                    .lock()
+                    .expect("deep queue")
+                    .is_empty()
+                {
+                    if let Some(processor) = &core.stems {
+                        processor.release_models();
+                    }
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        let Some(core) = weak.upgrade() else { break };
+        loop {
+            let id = {
+                let mut queue = core.analysis.deep_jobs.queue.lock().expect("deep queue");
+                // A send always follows its push under this lock, so stale
+                // wake-ups drained here can never hide a queued track.
+                for _ in rx.try_iter() {}
+                queue.pop_front()
+            };
+            let Some(id) = id else { break };
+            job(&core, id);
+        }
+    }
+}
+
+fn job(core: &Arc<AppCore>, id: TrackId) {
+    let revision = core.analysis.content_revision.load(Ordering::Acquire);
+    let generation = core.analysis.epoch(id).load(Ordering::Acquire);
+    let result = run(core, id);
+    if let Ok(prepared) = &result {
+        for deck in [DeckId::A, DeckId::B] {
+            stems::attach_stems(core, deck, id, &prepared.track.content_hash);
+        }
+    }
+    if let Err(error) = &result {
+        tracing::warn!(?id,%error,"Stem analysis did not publish");
+    }
+    core.analysis
+        .deep_jobs
+        .pending
+        .lock()
+        .expect("deep jobs")
+        .remove(&id);
+    if core.analysis.epoch(id).load(Ordering::Acquire) == generation {
+        core.analysis
+            .deep_jobs
+            .completed
+            .lock()
+            .expect("deep completion")
+            .insert(id, generation);
+        match result {
+            Ok(prepared) => core.analysis.set(id, ready_status(&prepared)),
+            Err(error) => {
+                let status = match core.library.get_track(id) {
+                    Ok(track) if track.analyzed => Status::Basic(track.content_hash, error),
+                    _ => Status::Failed(error),
+                };
+                core.analysis.set(id, status);
+            }
+        }
+    } else {
+        schedule(core, id);
+    }
+    if core.analysis.content_revision.load(Ordering::Acquire) != revision {
+        crate::automix::refresh_previews(core);
+    }
+}
+
+fn queueable(core: &AppCore, id: TrackId) -> bool {
+    core.stems.is_some()
+        && core.settings.get().deep_analysis
+        && core
+            .analysis
+            .deep_jobs
+            .completed
+            .lock()
+            .expect("deep completion")
+            .get(&id)
+            != Some(&core.analysis.epoch(id).load(Ordering::Acquire))
+}
+
+pub fn schedule(core: &Arc<AppCore>, id: TrackId) {
+    if !queueable(core, id) {
+        return;
+    }
+    if core.analysis.deep_jobs.enqueue(id, false) {
+        core.analysis.deep_jobs.notify(core);
+    }
+}
+
+/// A track on a deck is heard soon; it jumps ahead of library preparation.
+/// A job already running is left to finish.
+pub fn promote(core: &Arc<AppCore>, id: TrackId) {
+    if !queueable(core, id) {
+        return;
+    }
+    if core.analysis.deep_jobs.enqueue(id, true) {
+        core.analysis.deep_jobs.notify(core);
+    }
+}
+
+pub(super) fn retry_for_playback(core: &Arc<AppCore>, id: TrackId) {
     if !core.settings.get().deep_analysis {
         return;
     }
@@ -18,113 +184,7 @@ pub(super) fn retry_for_playback(core: &AppCore, id: TrackId) {
         .lock()
         .expect("deep completion")
         .remove(&id);
-    if let Some(sender) = core.analysis.deep_jobs.sender.get() {
-        if core
-            .analysis
-            .deep_jobs
-            .pending
-            .lock()
-            .expect("deep jobs")
-            .insert(id)
-        {
-            let _ = sender.send(id);
-        }
-    }
-}
-
-pub fn schedule(core: &Arc<AppCore>, id: TrackId) {
-    if core.stems.is_none() || !core.settings.get().deep_analysis {
-        return;
-    }
-    let generation = core.analysis.epoch(id).load(Ordering::Acquire);
-    if core
-        .analysis
-        .deep_jobs
-        .completed
-        .lock()
-        .expect("deep completion")
-        .get(&id)
-        == Some(&generation)
-    {
-        return;
-    }
-    if !core
-        .analysis
-        .deep_jobs
-        .pending
-        .lock()
-        .expect("deep jobs")
-        .insert(id)
-    {
-        return;
-    }
-    let sender = core.analysis.deep_jobs.sender.get_or_init(|| {
-        let (tx, rx) = channel();
-        let weak = Arc::downgrade(core);
-        std::thread::spawn(move || {
-            while let Ok(id) = rx.recv() {
-                let Some(core) = weak.upgrade() else {
-                    break;
-                };
-                let revision = core.analysis.content_revision.load(Ordering::Acquire);
-                let generation = core.analysis.epoch(id).load(Ordering::Acquire);
-                let result = run(&core, id);
-                if let Ok(prepared) = &result {
-                    for deck in [DeckId::A, DeckId::B] {
-                        stems::attach_stems(&core, deck, id, &prepared.track.content_hash);
-                    }
-                }
-                if let Err(error) = &result {
-                    tracing::warn!(?id,%error,"Stem analysis did not publish");
-                }
-                core.analysis
-                    .deep_jobs
-                    .pending
-                    .lock()
-                    .expect("deep jobs")
-                    .remove(&id);
-                if core.analysis.epoch(id).load(Ordering::Acquire) == generation {
-                    core.analysis
-                        .deep_jobs
-                        .completed
-                        .lock()
-                        .expect("deep completion")
-                        .insert(id, generation);
-                    match result {
-                        Ok(prepared) => core.analysis.set(id, ready_status(&prepared)),
-                        Err(error) => {
-                            let status = match core.library.get_track(id) {
-                                Ok(track) if track.analyzed => {
-                                    Status::Basic(track.content_hash, error)
-                                }
-                                _ => Status::Failed(error),
-                            };
-                            core.analysis.set(id, status);
-                        }
-                    }
-                } else {
-                    schedule(&core, id);
-                }
-                if core.analysis.content_revision.load(Ordering::Acquire) != revision {
-                    crate::automix::refresh_previews(&core);
-                }
-                let idle = core
-                    .analysis
-                    .deep_jobs
-                    .pending
-                    .lock()
-                    .expect("deep jobs")
-                    .is_empty();
-                if idle {
-                    if let Some(processor) = &core.stems {
-                        processor.release_models();
-                    }
-                }
-            }
-        });
-        tx
-    });
-    let _ = sender.send(id);
+    promote(core, id);
 }
 
 pub(super) fn ready_status(prepared: &PreparedTrack) -> Status {
@@ -408,5 +468,58 @@ mod tests {
             plan.failure_reason
         );
         super::stems::verify_native_stem_playback_under_inference(&core, id);
+    }
+
+    #[test]
+    fn manual_load_is_audible_without_stem_analysis() {
+        use mixless_protocol::Command;
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        load_manual(&core, DeckId::A, id, || true).unwrap();
+        core.engine
+            .dispatch(Command::SetChannelFader {
+                deck: DeckId::A,
+                value: 1.,
+            })
+            .unwrap();
+        core.engine
+            .dispatch(Command::SetCrossfader { value: -1. })
+            .unwrap();
+        core.engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        let mut peak = 0f32;
+        for _ in 0..375 {
+            let output = core.engine.render_offline(128);
+            for sample in &output {
+                peak = peak.max(sample.abs());
+            }
+        }
+        let snap = core.engine.snapshot();
+        eprintln!(
+            "no-stems sanity: peak={peak:.5} playing={} frame={} stems_ready={}",
+            snap.decks[0].playing, snap.decks[0].frame, snap.decks[0].stems_ready
+        );
+        assert!(peak > 0.01, "peak {peak}");
+    }
+
+    #[test]
+    fn promote_moves_queued_tracks_to_the_front() {
+        let jobs = Jobs::default();
+        for i in [1, 2, 3] {
+            assert!(jobs.enqueue(TrackId(i), false));
+        }
+        assert_eq!(jobs.queued(), [TrackId(1), TrackId(2), TrackId(3)]);
+        assert!(jobs.enqueue(TrackId(3), true));
+        assert_eq!(jobs.queued(), [TrackId(3), TrackId(1), TrackId(2)]);
+        // A duplicate schedule does not reorder or duplicate the entry.
+        assert!(jobs.enqueue(TrackId(1), false));
+        assert_eq!(jobs.queued(), [TrackId(3), TrackId(1), TrackId(2)]);
+        // The job the worker popped is still pending but no longer queued;
+        // promoting it must not requeue it.
+        let running = jobs.queue.lock().unwrap().pop_front().unwrap();
+        assert_eq!(running, TrackId(3));
+        assert!(!jobs.enqueue(TrackId(3), true));
+        assert_eq!(jobs.queued(), [TrackId(1), TrackId(2)]);
     }
 }

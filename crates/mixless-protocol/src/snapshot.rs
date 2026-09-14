@@ -101,7 +101,7 @@ impl Default for DeckSnapshot {
             filter_resonance_enabled: true,
             lp_hz: 20_000.0,
             hp_hz: 20.0,
-            fader: 0.8,
+            fader: 1.0,
             gain_db: 0.0,
             send: 0.0,
             pfl: false,

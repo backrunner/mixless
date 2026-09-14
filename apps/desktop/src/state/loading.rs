@@ -29,6 +29,7 @@ impl UiState {
             self.dispatch(Command::StopAutomix);
         }
         let index = deck.index();
+        self.pending_play[index] = false;
         let generation = self.deck_load_epoch[index].fetch_add(1, Ordering::AcqRel) + 1;
         let epoch = self.deck_load_epoch.clone();
         let core = self.core.clone();
@@ -96,7 +97,7 @@ impl UiState {
             if active() {
                 let _ = grid_tx.send(grid);
                 crate::analysis::attach_stems(&core, deck, track_id, &loaded_hash);
-                crate::analysis::schedule_deep(&core, track_id);
+                crate::analysis::promote_deep(&core, track_id);
             }
         });
     }

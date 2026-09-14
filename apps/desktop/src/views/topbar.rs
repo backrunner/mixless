@@ -56,6 +56,17 @@ fn led_chip(label: &str, on: bool, color: Rgba) -> gpui::Div {
 
 impl UiState {
     pub fn render_topbar(&self, width: f32, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        // Draggable titlebar filler on either side of the centered automix
+        // status; the chip itself never initiates a window drag.
+        let drag_space = || {
+            gpui::div()
+                .flex_1()
+                .h_full()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                    crate::branding::drag_main_window();
+                })
+        };
         let wave_top = {
             let on = self.wave_layout == WaveLayout::Top;
             let el = gpui::div()
@@ -290,12 +301,16 @@ impl UiState {
             .child(
                 gpui::div()
                     .id("title-drag-space")
+                    .flex()
                     .flex_1()
+                    .items_center()
+                    .min_w_0()
                     .h_full()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                        crate::branding::drag_main_window();
-                    }),
+                    .child(drag_space())
+                    .when(self.automix_active, |el| {
+                        el.child(self.render_automix_chip(cx))
+                    })
+                    .child(drag_space()),
             )
             .child(
                 led_chip("QUANTIZE", self.snapshot.quantize, theme::LED_GREEN)
@@ -379,20 +394,6 @@ impl UiState {
                             cx.notify();
                         })),
                 )
-                .when(width >= 1700., |row| {
-                    row.child(
-                        gpui::div()
-                            .max_w(px(180.))
-                            .overflow_hidden()
-                            .text_size(px(10.))
-                            .text_color(theme::MUTED)
-                            .child(format!(
-                                "{} · {:.0}%",
-                                self.automix_status,
-                                self.snapshot.automix_progress * 100.
-                            )),
-                    )
-                })
             })
             .child(divider())
             .child(layout_group)

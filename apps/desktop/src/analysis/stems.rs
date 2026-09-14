@@ -1,7 +1,7 @@
 //! Called by load/model workers. No inference or file reads on the UI/audio thread.
 use super::*;
 
-pub fn attach_stems(core: &AppCore, deck: DeckId, id: TrackId, hash: &str) {
+pub fn attach_stems(core: &Arc<AppCore>, deck: DeckId, id: TrackId, hash: &str) {
     let Some(processor) = &core.stems else {
         return;
     };

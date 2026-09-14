@@ -131,7 +131,16 @@ fn a_sung_note_cannot_be_cut_at_an_inferred_bar_or_drop_marker() {
         },
     ];
     assert!(!crate::continuity::voice_cut_safe(&track, 4.));
+    // The onset-at-boundary exemption requires the phrase to have released:
+    // with the voice still singing, the new note is only a new syllable.
     track.stems.as_mut().unwrap().notes[0].start_sec = 4.;
+    assert!(!crate::continuity::voice_cut_safe(&track, 4.));
+    for frame in &mut track.stems.as_mut().unwrap().frames {
+        if frame.start_sec >= 3.4 && frame.start_sec < 4.0 {
+            frame.vocal_activity = 0.;
+        }
+    }
+    track.stems.as_mut().unwrap().notes[0].end_sec = 3.4;
     assert!(crate::continuity::voice_cut_safe(&track, 4.));
     // A breath can release the voice, while a held instrument still disallows
     // a hard dry cut. A resolving build/drop may intentionally replace the riser.
@@ -151,6 +160,294 @@ fn a_sung_note_cannot_be_cut_at_an_inferred_bar_or_drop_marker() {
     assert!(crate::continuity::voice_cut_safe(&track, 4.));
     assert!(!crate::continuity::cut_safe(&track, 4., false));
 }
+#[test]
+fn a_new_note_onset_cannot_disguise_a_still_singing_phrase_at_a_boundary() {
+    let mut track = with_stems(crate::tests::track(
+        1,
+        120.,
+        "8A",
+        SectionLabel::Outro,
+        16,
+        0.7,
+        0.2,
+    ));
+    track.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: 4.,
+            label: SectionLabel::BuildUp,
+        },
+        mixless_protocol::Section {
+            start_sec: 4.,
+            end_sec: track.duration_sec,
+            label: SectionLabel::Drop,
+        },
+    ];
+    track.stems.as_mut().unwrap().notes = vec![
+        StemNote {
+            stem: StemKind::Vocals,
+            start_sec: 1.5,
+            end_sec: 3.9,
+            midi: 60,
+            confidence: 0.9,
+        },
+        StemNote {
+            stem: StemKind::Vocals,
+            start_sec: 4.0,
+            end_sec: 6.0,
+            midi: 62,
+            confidence: 0.9,
+        },
+    ];
+    // Every frame reports an active voice; the boundary note is a new syllable.
+    assert!(!crate::continuity::voice_cut_safe(&track, 4.));
+    assert!(!crate::continuity::voice_released(&track, 4.));
+}
+
+#[test]
+fn a_boundary_note_onset_is_a_safe_cut_once_the_phrase_has_released() {
+    let mut track = with_stems(crate::tests::track(
+        1,
+        120.,
+        "8A",
+        SectionLabel::Outro,
+        16,
+        0.7,
+        0.2,
+    ));
+    track.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: 4.,
+            label: SectionLabel::BuildUp,
+        },
+        mixless_protocol::Section {
+            start_sec: 4.,
+            end_sec: track.duration_sec,
+            label: SectionLabel::Drop,
+        },
+    ];
+    for frame in &mut track.stems.as_mut().unwrap().frames {
+        if frame.start_sec >= 3.4 && frame.start_sec < 4.0 {
+            frame.vocal_activity = 0.;
+        }
+    }
+    track.stems.as_mut().unwrap().notes = vec![StemNote {
+        stem: StemKind::Vocals,
+        start_sec: 4.0,
+        end_sec: 6.0,
+        midi: 62,
+        confidence: 0.9,
+    }];
+    // The cut itself is safe — it lands before the new note sounds — but the
+    // voice continues past the boundary, so it is not a released exit for a
+    // hard cut; the planner should blend there or pick another exit.
+    assert!(crate::continuity::voice_cut_safe(&track, 4.));
+    assert!(!crate::continuity::voice_released(&track, 4.));
+}
+
+#[test]
+fn a_voice_that_stops_on_the_boundary_is_a_released_cut() {
+    let mut track = with_stems(crate::tests::track(
+        1,
+        120.,
+        "8A",
+        SectionLabel::Outro,
+        16,
+        0.7,
+        0.2,
+    ));
+    track.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: 4.,
+            label: SectionLabel::BuildUp,
+        },
+        mixless_protocol::Section {
+            start_sec: 4.,
+            end_sec: track.duration_sec,
+            label: SectionLabel::Drop,
+        },
+    ];
+    // The vocal sings through the whole build and stops on the downbeat —
+    // no quiet run-up required for a hard cut to land there.
+    for frame in &mut track.stems.as_mut().unwrap().frames {
+        frame.vocal_activity = if frame.start_sec < 4.0 { 0.9 } else { 0. };
+    }
+    track.stems.as_mut().unwrap().notes = vec![StemNote {
+        stem: StemKind::Vocals,
+        start_sec: 2.5,
+        end_sec: 3.95,
+        midi: 60,
+        confidence: 0.9,
+    }];
+    assert!(crate::continuity::voice_cut_safe(&track, 4.));
+    assert!(crate::continuity::voice_released(&track, 4.));
+    // A note whose transcription overshoots the boundary slightly still
+    // counts as released when nothing sounds after it.
+    track.stems.as_mut().unwrap().notes[0].end_sec = 4.05;
+    assert!(crate::continuity::voice_released(&track, 4.));
+}
+
+#[test]
+fn the_planner_no_longer_dry_cuts_into_an_active_outgoing_vocal() {
+    let mut a = with_stems(crate::tests::track(
+        1,
+        128.,
+        "8A",
+        SectionLabel::Drop,
+        64,
+        0.9,
+        0.8,
+    ));
+    // A sung phrase spans bars 44..52 (82.5–97.5 s), crossing the measured
+    // section boundary at 90 s. A new note begins exactly on that boundary.
+    for frame in &mut a.stems.as_mut().unwrap().frames {
+        frame.vocal_activity = if (82.5..97.5).contains(&frame.start_sec) {
+            1.
+        } else {
+            0.
+        };
+    }
+    a.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: 90.,
+            label: SectionLabel::Drop,
+        },
+        mixless_protocol::Section {
+            start_sec: 90.,
+            end_sec: a.duration_sec,
+            label: SectionLabel::Outro,
+        },
+    ];
+    a.stems.as_mut().unwrap().notes = vec![
+        StemNote {
+            stem: StemKind::Vocals,
+            start_sec: 82.5,
+            end_sec: 89.9,
+            midi: 60,
+            confidence: 0.9,
+        },
+        StemNote {
+            stem: StemKind::Vocals,
+            start_sec: 90.0,
+            end_sec: 97.5,
+            midi: 62,
+            confidence: 0.9,
+        },
+    ];
+    // Reliably incompatible key: blends are out, so a dry cut at 90 s would
+    // have won before the hard vocal gate.
+    let mut b = with_stems(crate::tests::track(
+        2,
+        128.,
+        "4A",
+        SectionLabel::Intro,
+        64,
+        0.8,
+        0.9,
+    ));
+    for frame in &mut b.stems.as_mut().unwrap().frames {
+        frame.vocal_activity = 0.;
+    }
+    let plan = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    if plan.failure_reason.is_none() {
+        assert!(
+            !(plan.t_out_a > 82.4 && plan.t_out_a < 97.6),
+            "transition still exits inside the sung phrase: {:?} t_out_a={}",
+            plan.summary,
+            plan.t_out_a,
+        );
+    }
+}
+
+#[test]
+fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
+    let mut a = with_stems(crate::tests::track(
+        1,
+        128.,
+        "8A",
+        SectionLabel::Drop,
+        64,
+        0.9,
+        0.8,
+    ));
+    a.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: 90.,
+            label: SectionLabel::Drop,
+        },
+        mixless_protocol::Section {
+            start_sec: 90.,
+            end_sec: a.duration_sec,
+            label: SectionLabel::Outro,
+        },
+    ];
+    // The voice sings through the whole drop and takes a measured breath only
+    // on the section boundary at 90 s, so it is the single place any exit may
+    // land.
+    for frame in &mut a.stems.as_mut().unwrap().frames {
+        frame.vocal_activity = if (frame.start_sec - 90.).abs() < 0.12 {
+            0.
+        } else {
+            1.
+        };
+    }
+    for bar in &mut a.bars {
+        bar.chord = Some("Am".into());
+    }
+    let mut b = with_stems(crate::tests::track(
+        2,
+        128.,
+        "4A",
+        SectionLabel::Intro,
+        64,
+        0.8,
+        0.9,
+    ));
+    for frame in &mut b.stems.as_mut().unwrap().frames {
+        frame.vocal_activity = 0.;
+    }
+    for bar in &mut b.bars {
+        bar.chord = Some("Dm".into());
+    }
+    // Without stem playback the pair keeps its previous non-layered behavior.
+    let plain = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(!plain.requires_stems);
+    assert!(plain.stem_mix.is_none());
+    // With both decks stem-ready, the tonal clash no longer forces a cut:
+    // B's drums carry a long blend until the handoff releases A's foreground.
+    let plan = Planner::with_options(PlannerOptions {
+        stem_playback: true,
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert_eq!(
+        plan.transition_mode,
+        Some(mixless_protocol::TransitionMode::BeatBlend),
+        "{:?} {:?}",
+        plan.summary,
+        plan.failure_reason,
+    );
+    let summary = plan.summary.as_ref().unwrap();
+    assert_eq!(summary.strategy, mixless_protocol::StrategyId::PhraseBlend);
+    let n = summary.length_bars as f32;
+    assert!(n >= 8.);
+    let stems = plan.stem_mix.as_ref().expect("stem-layered plan");
+    assert_eq!(stems.incoming[0].sample(0.), 0.);
+    assert_eq!(stems.incoming[2].sample(0.), 0.);
+    assert_eq!(stems.incoming[0].sample(n), 1.);
+    assert_eq!(stems.incoming[2].sample(n), 1.);
+    for u in [0., n * 0.5, n] {
+        assert_eq!(stems.incoming[1].sample(u), 1., "incoming drums at {u}");
+        assert_eq!(stems.outgoing[1].sample(u), 1., "outgoing drums at {u}");
+    }
+    assert_eq!(stems.outgoing[0].sample(n), 0.);
+    assert!(plan.requires_stems);
+}
+
 #[test]
 fn transcribed_progression_changes_matching_with_pitch_offset_and_rejects_corruption() {
     let a = with_stems(crate::tests::track(

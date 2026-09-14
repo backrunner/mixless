@@ -158,12 +158,14 @@ impl Render for UiState {
         let import_modal = self.render_import_modal(window, cx);
         let fxbar = self.show_fx.then(|| self.render_fxbar(cx, mixer_width));
         let shortcuts = self.show_shortcuts.then(|| self.render_shortcuts(cx));
-        let automix_bar = self.automix_active.then(|| self.render_automix_bar());
+        let automix_detail = self.render_automix_detail(cx);
         let fx_editor = self
             .fx_editor
             .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
         let audio_menu = self.render_audio_menu(cx);
         let track_menu = self.render_track_menu(window, cx);
+        let playlist_menu = self.render_playlist_menu(window, cx);
+        let remove_playlist_confirm = self.render_remove_playlist_confirm(cx);
         let error = self.error.clone();
 
         gpui::div()
@@ -199,12 +201,35 @@ impl Render for UiState {
                     cx.stop_propagation();
                     return;
                 }
+                if s.playlist_menu.is_some() {
+                    if ev.keystroke.key == "escape" {
+                        s.playlist_menu = None;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.confirm_remove_playlist.is_some() {
+                    if ev.keystroke.key == "escape" {
+                        s.confirm_remove_playlist = None;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.automix_detail {
+                    if ev.keystroke.key == "escape" {
+                        s.automix_detail = false;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 s.handle_shortcut(ev, window, cx);
             }))
             .child(drag_capture)
             .child(topbar)
             .when_some(waves, |el, w| el.child(w))
-            .when_some(automix_bar, |el, bar| el.child(bar))
             .child(
                 gpui::div()
                     .flex()
@@ -260,6 +285,9 @@ impl Render for UiState {
             })
             .when_some(audio_menu, |el, menu| el.child(menu))
             .when_some(track_menu, |el, menu| el.child(menu))
+            .when_some(playlist_menu, |el, menu| el.child(menu))
+            .when_some(automix_detail, |el, detail| el.child(detail))
+            .when_some(remove_playlist_confirm, |el, modal| el.child(modal))
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))
             .when_some(fx_editor, |el, modal| el.child(modal))

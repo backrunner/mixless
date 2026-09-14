@@ -1,8 +1,10 @@
 //! Native macOS application and help menus.
 
+use std::sync::Arc;
+
 use gpui::{App, KeyBinding, Menu, MenuItem, SystemMenuType, WindowHandle, actions};
 
-use crate::state::UiState;
+use crate::state::{AppCore, UiState};
 
 actions!(
     mixless,
@@ -17,30 +19,35 @@ actions!(
     ]
 );
 
-pub fn init(main_window: WindowHandle<UiState>, cx: &mut App) {
+pub fn init(core: Arc<AppCore>, main_window: WindowHandle<UiState>, cx: &mut App) {
     cx.on_action(move |_: &Preferences, cx| {
-        let core = main_window.update(cx, |state, _, _| {
-            state.end_drag();
-            state.end_momentary_fx();
-            state.core.clone()
-        });
-        if let Ok(core) = core {
+        let core = core.clone();
+        // Menu actions dispatch inside the active window's own update, which
+        // holds the window off `cx.windows`; a nested `main_window.update`
+        // would fail there, so run the window work after dispatch unwinds.
+        cx.defer(move |cx| {
+            let _ = main_window.update(cx, |state, _, _| {
+                state.end_drag();
+                state.end_momentary_fx();
+            });
             crate::preferences::open(core, cx);
-        }
+        });
     });
-    cx.on_action(|_: &About, cx| crate::views::about::open(cx));
+    cx.on_action(|_: &About, cx| cx.defer(crate::views::about::open));
     cx.on_action(move |_: &KeyboardShortcuts, cx| {
-        let _ = main_window.update(cx, |state, window, cx| {
-            if state.picker_open {
-                return;
-            }
-            state.end_drag();
-            state.end_momentary_fx();
-            state.show_import_modal = false;
-            state.show_shortcuts = true;
-            state.keyboard_focus.focus(window);
-            window.activate_window();
-            cx.notify();
+        cx.defer(move |cx| {
+            let _ = main_window.update(cx, |state, window, cx| {
+                if state.picker_open {
+                    return;
+                }
+                state.end_drag();
+                state.end_momentary_fx();
+                state.show_import_modal = false;
+                state.show_shortcuts = true;
+                state.keyboard_focus.focus(window);
+                window.activate_window();
+                cx.notify();
+            });
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());

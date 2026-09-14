@@ -80,9 +80,19 @@ impl Inference {
     ) -> Result<Self> {
         let paths = models::ensure(model_dir, download, progress, active)?;
         progress(Progress::Loading);
+        // Default keeps at least two cores free for the audio callback and UI;
+        // the env override exists for throughput benchmarking.
+        let detected = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let intra = std::env::var("MIXLESS_ORT_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(detected.saturating_sub(2).min(4).max(1))
+            .clamp(1, 16);
         let session = |path| -> Result<_> {
             Ok(ort::session::Session::builder()?
-                .with_intra_threads(2)?
+                .with_intra_threads(intra)?
                 .with_inter_threads(1)?
                 .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
                 .commit_from_file(path)?)

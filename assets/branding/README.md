@@ -25,12 +25,12 @@
 ```sh
 swift scripts/generate-icons.swift
 ./dev.sh --build
-python3 scripts/bundle-macos.py
+cargo run --locked -p mixless-tools -- bundle
 ```
 
 生成器输出不裁角、不带 Alpha 的方形 sRGB 母版。macOS ICNS 与 asset catalog 另行使用圆角轮廓和透明外边距；标题栏、About 窗口与开发模式 Dock 都嵌入同一套生成资源。`icon-preview.png` 显示这些桌面图标的真实尺寸。
 
-导出和构建要求 macOS／Xcode；打包脚本要求 Python 3.11+，输出本地未签名的 `target/app/Mixless.app`。修改母版后须重新导出并构建，应用下次启动时会加载新图标。
+导出和构建要求 macOS／Xcode；`mixless-tools` 输出本地未签名的 `target/app/Mixless.app`。修改母版后须重新导出并构建，应用下次启动时会加载新图标。
 
 ## 重新请求模型编辑
 

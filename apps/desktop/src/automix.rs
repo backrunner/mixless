@@ -43,7 +43,7 @@ fn command(core: &AppCore, cmd: Command) -> Result<(), String> {
 }
 
 fn load(
-    core: &AppCore,
+    core: &Arc<AppCore>,
     deck: DeckId,
     id: TrackId,
     active: impl Fn() -> bool,
@@ -59,7 +59,7 @@ fn load(
                 semitones: 0.,
             },
             Command::SetChannelGain { deck, db: 0. },
-            Command::SetChannelFader { deck, value: 0.8 },
+            Command::SetChannelFader { deck, value: 1. },
             Command::SetChannelFilter { deck, amount: 0. },
             Command::SetFxSend { deck, value: 0. },
             Command::SetKeyLock { deck, on: true },

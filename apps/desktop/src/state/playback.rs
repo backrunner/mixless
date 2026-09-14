@@ -34,8 +34,19 @@ impl UiState {
     }
 
     pub fn play_pause(&mut self, deck: DeckId) {
-        if self.core.engine.snapshot().deck(deck).frames == 0 {
-            return;
+        match play_target(
+            self.core.engine.snapshot().deck(deck).frames,
+            self.deck_loading[deck.index()].is_some(),
+        ) {
+            PlayTarget::Skip => return,
+            PlayTarget::Queued => {
+                if self.automix_active {
+                    self.stop_automix();
+                }
+                self.pending_play[deck.index()] = !self.pending_play[deck.index()];
+                return;
+            }
+            PlayTarget::Now => {}
         }
         if self.automix_active {
             self.stop_automix();
@@ -185,5 +196,67 @@ impl UiState {
     pub fn set_fx_mix(&mut self, deck: DeckId, slot: usize, mix: f32) {
         self.fx[deck.index()][slot].mix = mix;
         self.apply_fx(deck, slot);
+    }
+}
+
+/// Where a Play press goes. A press during a deck load would be dropped by the
+/// engine (`frames == 0` early-return) or undone by the commit's `playing`
+/// reset, so it is queued until the load resolves instead.
+pub(super) enum PlayTarget {
+    Now,
+    Queued,
+    Skip,
+}
+
+pub(super) fn play_target(frames: u64, loading: bool) -> PlayTarget {
+    if frames > 0 {
+        PlayTarget::Now
+    } else if loading {
+        PlayTarget::Queued
+    } else {
+        PlayTarget::Skip
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn play_queued_while_loading_starts_the_committed_deck() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        assert_eq!(core.engine.snapshot().deck(DeckId::A).frames, 0);
+        let mut pending_play = [false; 2];
+        // The press lands while the load worker still owns the deck.
+        assert!(matches!(play_target(0, true), PlayTarget::Queued));
+        pending_play[0] = !pending_play[0];
+        assert!(pending_play[0]);
+        // Pressing again before the commit cancels the queued press.
+        pending_play[0] = !pending_play[0];
+        assert!(!pending_play[0]);
+        pending_play[0] = true;
+        // A press on an idle empty deck still does nothing.
+        assert!(matches!(play_target(0, false), PlayTarget::Skip));
+        // A loaded deck mid-swap toggles its current buffer immediately.
+        assert!(matches!(play_target(48000, true), PlayTarget::Now));
+        crate::analysis::load_manual(&core, DeckId::A, tracks[0], || true).unwrap();
+        assert!(matches!(
+            play_target(core.engine.snapshot().deck(DeckId::A).frames, false),
+            PlayTarget::Now
+        ));
+        // poll() drains the flag into a real PlayPause once the load commits.
+        if std::mem::take(&mut pending_play[0]) {
+            core.engine
+                .dispatch(Command::PlayPause { deck: DeckId::A })
+                .unwrap();
+        }
+        let snapshot = core.engine.snapshot();
+        assert!(snapshot.decks[0].playing);
+        assert!(
+            core.engine
+                .render_offline(480)
+                .iter()
+                .any(|v| v.abs() > 0.01)
+        );
     }
 }

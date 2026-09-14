@@ -272,8 +272,8 @@ impl DensePlan {
         let sr = shared.sample_rate.load(Ordering::Relaxed);
         let a = &shared.decks[outgoing];
         let b = &shared.decks[1 - outgoing];
-        if a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
+        if a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
         {
             return Err(EngineError::Protocol("automix tracks changed"));
         }
@@ -306,6 +306,14 @@ impl DensePlan {
         let fader_match = 20. * (fader_a.max(0.001) / fader_b.max(0.001)).log10();
         let mut points = Vec::with_capacity(total_frames.div_ceil(STEP) + 1);
         let stem_ready = [a.stems_ready(), b.stems_ready()];
+        // A stem-layered plan only avoids the tonal clash because stem
+        // envelopes suppress it; without both aligned stem buffers it must be
+        // rejected rather than silently degraded to full-spectrum overlap.
+        if plan.requires_stems && !stem_ready.iter().all(|ready| *ready) {
+            return Err(EngineError::Protocol(
+                "automix plan requires stem playback on both decks",
+            ));
+        }
         for j in 0..=total_frames.div_ceil(STEP) {
             let u = bar_at(&plan.clock, (j * STEP).min(total_frames) as f32 / sr as f32);
             let mut decks = std::array::from_fn(|index| {
@@ -469,7 +477,7 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?;
         let outgoing =
-            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0 .0 as u64 {
+            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0.0 as u64 {
                 DeckId::A
             } else {
                 DeckId::B
@@ -500,8 +508,8 @@ impl Engine {
         let pair = dense.plan.summary.as_ref().unwrap().pair;
         let a = &self.shared.decks[dense.outgoing];
         let b = &self.shared.decks[1 - dense.outgoing];
-        if a.track_id.load(Ordering::Relaxed) != pair.0 .0 as u64
-            || b.track_id.load(Ordering::Relaxed) != pair.1 .0 as u64
+        if a.track_id.load(Ordering::Relaxed) != pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != pair.1.0 as u64
             || b.playing.load(Ordering::Relaxed)
             || dense.sample_rate != self.shared.sample_rate.load(Ordering::Relaxed)
         {
@@ -680,8 +688,8 @@ impl Shared {
         let b = &self.decks[1 - plan.outgoing];
         let summary = plan.plan.summary.as_ref().unwrap();
         if plan.sample_rate != self.sample_rate.load(Ordering::Relaxed)
-            || a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
+            || a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
         {
             auto.enabled.store(false, Ordering::Release);
             return false;
@@ -1045,11 +1053,13 @@ mod tests {
             manual.decks.each_ref().map(|d| d.fader),
             playing.decks.each_ref().map(|d| d.fader)
         );
-        assert!(manual
-            .decks
-            .iter()
-            .zip(&playing.decks)
-            .all(|(a, b)| a.frame > b.frame));
+        assert!(
+            manual
+                .decks
+                .iter()
+                .zip(&playing.decks)
+                .all(|(a, b)| a.frame > b.frame)
+        );
     }
     #[test]
     fn automix_pause_resume_and_single_lane_takeover() {
@@ -1097,9 +1107,11 @@ mod tests {
                         source.samples.iter().map(|s| s * 0.2).collect(),
                     )
                     .unwrap();
-                    assert!(engine
-                        .attach_stems(deck, id, &source, Arc::new(audio))
-                        .unwrap());
+                    assert!(
+                        engine
+                            .attach_stems(deck, id, &source, Arc::new(audio))
+                            .unwrap()
+                    );
                 }
             }
             plan.stem_mix = Some(StemMix {
@@ -1128,6 +1140,28 @@ mod tests {
             assert_eq!(engine.snapshot().decks[0].stem_gain[0], 0.7);
             assert_eq!(engine.snapshot().decks[1].stem_gain, [1.; 3]);
         }
+    }
+    #[test]
+    fn a_stem_layered_plan_is_rejected_without_aligned_stem_pcm() {
+        use mixless_protocol::StemMix;
+        let (engine, mut plan) = setup(DeckId::A);
+        plan.stem_mix = Some(StemMix {
+            outgoing: [
+                Polyline::constant(0.4),
+                Polyline::constant(1.),
+                Polyline::constant(0.4),
+            ],
+            incoming: [
+                Polyline::constant(0.),
+                Polyline::constant(1.),
+                Polyline::constant(0.),
+            ],
+        });
+        plan.requires_stems = true;
+        // Stem envelopes are optional evidence for ordinary plans; a plan that
+        // REQUIRES them to avoid a tonal clash must fail, not degrade.
+        assert!(engine.prepare_plan_on(plan, DeckId::A).is_err());
+        assert!(!engine.snapshot().automix_on);
     }
     #[test]
     fn automix_skip_stop_invalid_and_stale_plan() {

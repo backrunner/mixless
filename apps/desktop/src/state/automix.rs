@@ -72,6 +72,7 @@ impl UiState {
         self.automix_epoch.fetch_add(1, Ordering::AcqRel);
         self.automix_active = false;
         self.automix_retry = None;
+        self.automix_detail = false;
         self.automix_status.clear();
         self.automix_plan = None;
         self.automix_rx = None;

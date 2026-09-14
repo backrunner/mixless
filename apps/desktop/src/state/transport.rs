@@ -63,6 +63,10 @@ impl UiState {
         let snapshot = self.core.engine.snapshot();
         let d = snapshot.deck(deck);
         let Some(track) = d.track_id.filter(|_| d.frames > 0) else {
+            // The deck can still be empty while a load is in flight; queue it.
+            if button == TransportButton::Play {
+                self.play_pause(deck);
+            }
             return;
         };
         let handled = match button {

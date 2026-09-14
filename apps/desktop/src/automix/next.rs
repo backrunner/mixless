@@ -7,7 +7,7 @@ pub(super) struct Next {
 }
 
 pub(super) fn stage(
-    core: &AppCore,
+    core: &Arc<AppCore>,
     outgoing: DeckId,
     played_from: f32,
     order: &mut order::TrackOrder,
@@ -59,7 +59,7 @@ pub(super) fn stage(
                         core,
                         Command::SetChannelFader {
                             deck: outgoing,
-                            value: 0.8,
+                            value: 1.,
                         },
                     )
                 })?;
@@ -67,6 +67,10 @@ pub(super) fn stage(
             let mut lookahead = order.clone();
             let following = lookahead.next(shuffle.load(Ordering::Relaxed));
             let mut error = String::new();
+            // analysis::load attaches stem buffers synchronously, so readiness
+            // is known before planning; only then may the planner layer stems.
+            let mut stem_playback =
+                core.engine.stems_ready(outgoing) && core.engine.stems_ready(incoming);
             for _ in 0..3 {
                 if !active() {
                     return Ok(None);
@@ -84,6 +88,7 @@ pub(super) fn stage(
                     offset(d),
                     offset(snap.deck(incoming)),
                     Some(following),
+                    stem_playback,
                 )?;
                 let display = Arc::new(plan.clone());
                 match core.engine.prepare_plan_on(plan, outgoing) {
@@ -93,7 +98,14 @@ pub(super) fn stage(
                             transition: Some((display, prepared)),
                         }));
                     }
-                    Err(e) => error = e.to_string(),
+                    Err(e) => {
+                        // A stem-layered plan rejected for missing stem PCM
+                        // must not be retried under the same assumption.
+                        if display.requires_stems {
+                            stem_playback = false;
+                        }
+                        error = e.to_string();
+                    }
                 }
             }
             Err(error)

@@ -12,7 +12,7 @@ const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 14;
+pub const ANALYSIS_VERSION: u32 = 15;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -144,6 +144,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     // periods so accelerando/section changes do not accumulate phase error.
     let phrase_beats = 16usize;
     let mut local_bpms = Vec::new();
+    let mut local_confs = Vec::new();
     let mut probe = phase;
     while probe < duration {
         let end = (probe + phrase_beats as f32 * 60.0 / bpm).min(duration);
@@ -155,6 +156,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         } else {
             (bpm, phase, 0.)
         };
+        let norm_conf = local_confidence / ((end - probe) / 16.).clamp(0.01, 1.);
         let local_bpm = if estimate.is_finite() {
             // Autocorrelation can select a half/double-time alias in a short
             // phrase. Correct clear aliases while preserving genuine local
@@ -166,9 +168,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             } else {
                 estimate
             };
-            if local_confidence / ((end - probe) / 16.).clamp(0.01, 1.) < 0.55
-                || (corrected / bpm - 1.).abs() < 0.015
-            {
+            if norm_conf < 0.55 || (corrected / bpm - 1.).abs() < 0.015 {
                 bpm
             } else {
                 corrected.clamp(70., 180.)
@@ -177,6 +177,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             bpm
         };
         local_bpms.push(local_bpm);
+        local_confs.push(norm_conf);
         // Keep the next analysis window on the same phrase boundary as the
         // generated beat grid. This prevents a tempo change from shifting the
         // segment-to-source mapping after the first phrase.
@@ -184,6 +185,53 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     }
     if local_bpms.is_empty() {
         local_bpms.push(bpm);
+        local_confs.push(0.);
+    }
+    // A lone 16-beat estimate that disagrees with its neighbours is an
+    // autocorrelation artifact, not a musical change: one wrong period
+    // phase-shifts every later beat. Keep a deviation only when at least two
+    // adjacent windows agree on it with measured confidence. Metrical aliases
+    // of the global tempo are never sustained changes.
+    let len = local_bpms.len();
+    let mut reverted = vec![false; len];
+    for i in 0..len {
+        let v = local_bpms[i];
+        if (v / bpm - 1.).abs() < 0.015 {
+            continue;
+        }
+        let ratio = v / bpm;
+        let alias = [2. / 3., 0.75, 4. / 3., 1.5]
+            .iter()
+            .any(|r| (ratio / r - 1.).abs() < 0.04);
+        let sustained = [i.wrapping_sub(1), i + 1].iter().any(|&j| {
+            j < len
+                && j != i
+                && (local_bpms[j] / v - 1.).abs() < 0.015
+                && local_confs[i] >= 0.55
+                && local_confs[j] >= 0.55
+        });
+        reverted[i] = alias || !sustained;
+    }
+    for i in 0..len {
+        if !reverted[i] {
+            continue;
+        }
+        // A rejected window between two regions that agree with each other
+        // belongs to their shared tempo; otherwise the global fit is the
+        // safest reading.
+        let left = (0..i).rev().find(|&j| !reverted[j]).map(|j| local_bpms[j]);
+        let right = (i + 1..len).find(|&j| !reverted[j]).map(|j| local_bpms[j]);
+        local_bpms[i] = match (left, right) {
+            (Some(l), Some(r)) if (l / r - 1.).abs() < 0.015 => l,
+            _ => bpm,
+        };
+    }
+    // When the filtered estimates all agree with the global fit the track is
+    // constant-tempo: one period and one phase, so neither a confident
+    // outlier nor a drum-less break can phase-shift the rest of the grid.
+    let constant = local_bpms.iter().all(|&v| (v / bpm - 1.).abs() < 0.015);
+    if constant {
+        local_bpms.iter_mut().for_each(|v| *v = bpm);
     }
     let mut beats = Vec::new();
     let mut t = phase;
@@ -226,6 +274,10 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     // advertised as reliable throughout that song.
     let mut segments = Vec::new();
     let mut pulse_confidence = Vec::new();
+    // Constant-tempo grids validate alignment once, globally: a quiet break
+    // then reports the measured global pulse instead of a meaningless local
+    // zero, and per-window alignment cannot veto an already fitted grid.
+    let global_pulse = constant.then(|| tempo::pulse_confidence(&frames, bpm, phase));
     for first in (0..beats.len()).step_by(phrase_beats) {
         let last = (first + phrase_beats).min(beats.len());
         let local_bpm = local_bpms[(first / phrase_beats).min(local_bpms.len() - 1)];
@@ -234,14 +286,17 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         let end_time = beats.get(last).copied().unwrap_or(duration);
         let end = frames.partition_point(|f| f.time < end_time);
         let local = &frames[start..end];
-        pulse_confidence.push(tempo::pulse_confidence(local, local_bpm, local_phase));
+        let pulse = tempo::pulse_confidence(local, local_bpm, local_phase);
+        pulse_confidence.push(global_pulse.map_or(pulse, |g| pulse.max(g)));
+        let mut conf = confidence.min(accent_confidence);
+        if !constant {
+            conf = conf.min(tempo::alignment_confidence(local, local_bpm, local_phase));
+        }
         segments.push(TempoSegment {
             start_beat: first as f32,
             end_beat: last as f32,
             bpm: local_bpm,
-            confidence: confidence
-                .min(accent_confidence)
-                .min(tempo::alignment_confidence(local, local_bpm, local_phase)),
+            confidence: conf,
         });
     }
     if segments.is_empty() {

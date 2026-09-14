@@ -84,10 +84,16 @@ impl UiState {
                 match rx.try_recv() {
                     Ok(Ok(())) => {
                         self.deck_loading[index] = None;
+                        if std::mem::take(&mut self.pending_play[index]) {
+                            self.dispatch(Command::PlayPause {
+                                deck: DeckId::from_index(index).unwrap(),
+                            });
+                        }
                         changed = true;
                     }
                     Ok(Err(error)) => {
                         self.deck_loading[index] = None;
+                        self.pending_play[index] = false;
                         self.grid_rx[index] = None;
                         self.error = error.into();
                         changed = true;
@@ -97,6 +103,7 @@ impl UiState {
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         self.deck_loading[index] = None;
+                        self.pending_play[index] = false;
                         self.grid_rx[index] = None;
                         self.error = "Deck load worker stopped unexpectedly".into();
                         changed = true;
@@ -126,7 +133,11 @@ impl UiState {
                 changed = true;
                 self.wave_tempo[i] = None;
                 self.wave[i] = current_wave.map(|w| (tid.unwrap_or(-1), w));
-                self.wave_cache[i] = None;
+                // Same track, upgraded waveform (envelope → analyzed): keep the
+                // old raster until the rebuilt cache arrives on wave_cache_rx.
+                if tid != cached {
+                    self.wave_cache[i] = None;
+                }
                 self.wave_cache_rx[i] = None;
                 if let Some((_, wave)) = &self.wave[i] {
                     let (tx, rx) = channel();

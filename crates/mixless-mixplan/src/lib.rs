@@ -63,6 +63,9 @@ pub struct PlannerOptions {
     pub earliest_outgoing_sec: f32,
     /// Audible entry on this pass, including time spent in the incoming blend.
     pub outgoing_entry_sec: f32,
+    /// Both decks will play aligned stem buffers, enabling drum-layered blends
+    /// where tonal material would otherwise clash.
+    pub stem_playback: bool,
 }
 impl Default for PlannerOptions {
     fn default() -> Self {
@@ -74,6 +77,7 @@ impl Default for PlannerOptions {
             strategy: None,
             earliest_outgoing_sec: 0.0,
             outgoing_entry_sec: 0.0,
+            stem_playback: false,
         }
     }
 }

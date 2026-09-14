@@ -153,6 +153,12 @@ pub(super) fn pair(
     let start_phrase = boundary_quality(a, start).max(crate::recovery::quality(a, start));
     let explicit_out = user_range(ctx.cues_out, a.sample_rate).is_some();
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
+    // A hard cut or FX bridge may only land where the outgoing voice has
+    // released — singing up to the boundary is fine, sounding past it is not.
+    // A user's own OUT cue stays authoritative.
+    if !blend && !loop_roll && !explicit_out && !crate::continuity::voice_released(a, end) {
+        return None;
+    }
     if !explicit_in && !crate::drops::entry_allowed(b, bin) {
         return None;
     }
@@ -230,12 +236,17 @@ pub(super) fn pair(
         && options.strategy.is_none()
         && (crate::filtered::eligible(b, bin, b_end)
             || (n >= 8. && crate::filtered::layerable(b, bin, b_end)));
-    if blend
+    let tonal_clash = blend
         && !harmonic
         && !filtered
         && !percussion_only(a, start, end)
-        && !percussion_only(b, bin, b_end)
-    {
+        && !percussion_only(b, bin, b_end);
+    // With stem playback on both decks the clash is avoidable by construction:
+    // B's drums carry the layer alone until the handoff while its tonal
+    // material stays silent, so a long beat blend remains available.
+    let stem_layer =
+        tonal_clash && options.stem_playback && a.stems.is_some() && b.stems.is_some() && n >= 8.;
+    if tonal_clash && !stem_layer {
         return None;
     }
     // Do not let a long intro blend consume the start of an incoming vocal hook
@@ -297,7 +308,8 @@ pub(super) fn pair(
         vocal_a += va / samples as f32;
         vocal_b += vb / samples as f32;
         if va > 0.5 && vb > 0.5 {
-            if (!detailed || n < 4.)
+            if !stem_layer
+                && (!detailed || n < 4.)
                 && matches!(
                     (section(a, ta), section(b, tb)),
                     (
@@ -315,12 +327,17 @@ pub(super) fn pair(
             clash_run += ga.meter() * n / samples as f32;
             // A long overlap must not dilute a whole colliding vocal line to
             // an acceptable percentage. Allow at most one beat of spillover.
-            if (blend || loop_roll) && (!detailed || n < 4.) && clash_run > 1. {
+            if !stem_layer && (blend || loop_roll) && (!detailed || n < 4.) && clash_run > 1. {
                 return None;
             }
         } else {
             clash_run = 0.;
         }
+    }
+    // Stem envelopes decide which vocals are actually heard, so the overlap is
+    // not a clash for scoring or FX policy; vocal_a/vocal_b stay measured.
+    if stem_layer {
+        clash = 0.;
     }
     if (blend || loop_roll) && (!detailed || n < 4.) && clash > 0.0625 {
         return None;
@@ -491,7 +508,11 @@ pub(super) fn pair(
     }
     .score(ctx, options)?
         - if filtered { 0.10 } else { 0. }
-        - if blend && !filtered {
+        // Stem-layered tonal material never overlaps, so there is no measured
+        // progression tension; a flat penalty keeps true harmonic blends ahead.
+        - if stem_layer {
+            0.06
+        } else if blend && !filtered {
             crate::progression::tension(
                 a,
                 b,
@@ -571,7 +592,9 @@ pub(super) fn pair(
         stages,
         summary: Some(MixPlanSummary {
             pair: (a.track_id, b.track_id),
-            strategy: if blend {
+            strategy: if stem_layer {
+                S::PhraseBlend
+            } else if blend {
                 if hold {
                     S::EnergyHold
                 } else if !harmonic || !rhythmic_handoff {
@@ -621,6 +644,7 @@ pub(super) fn pair(
         handoff_bar: Some(handoff),
         literal_half_double: false,
         failure_reason: None,
+        requires_stems: false,
     };
     if mode == TransitionMode::PhraseBridge
         && !instant
@@ -641,6 +665,9 @@ pub(super) fn pair(
     }
     if plan.t_in_a < options.earliest_outgoing_sec {
         return None;
+    }
+    if stem_layer {
+        crate::stem_mix::layer(ctx, &mut plan, handoff);
     }
     Some(plan)
 }

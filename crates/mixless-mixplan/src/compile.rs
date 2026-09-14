@@ -246,5 +246,6 @@ pub(crate) fn compile(
         handoff_bar: hold.then_some(n * 0.5),
         literal_half_double: c.literal,
         failure_reason: None,
+        requires_stems: false,
     }
 }

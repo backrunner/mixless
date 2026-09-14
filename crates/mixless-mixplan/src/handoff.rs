@@ -42,6 +42,9 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
     if !crate::vocals::safe_exit(a, out) || !crate::vocals::safe_entry(b, input) {
         return fail();
     }
+    if explicit_out.is_none() && !crate::continuity::voice_released(a, out) {
+        return fail();
+    }
     let seconds = ((out - earliest.max(0.)) / ctx.offset_a.rate)
         .min((b.duration_sec - input) / ctx.offset_b.rate * 0.5)
         .min(4.);

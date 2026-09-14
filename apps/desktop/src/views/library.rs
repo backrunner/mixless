@@ -3,9 +3,11 @@
 
 mod drag;
 mod menu;
+mod playlist_menu;
 mod status;
 pub use drag::TrackDrag;
 pub use menu::TrackMenu;
+pub use playlist_menu::PlaylistMenu;
 
 use std::path::PathBuf;
 
@@ -355,7 +357,7 @@ impl UiState {
                     let display_name = folder_name(pl, &playlists);
                     let row = source_row(
                         SharedString::from(format!("pl-{}", pl.id)),
-                        display_name,
+                        display_name.clone(),
                         if pl.folder_path.is_some() {
                             SourceIcon::Folder
                         } else {
@@ -371,11 +373,25 @@ impl UiState {
                         row
                     };
                     let st = playlist_state.clone();
+                    let menu_state = playlist_state.clone();
                     let id = pl.id;
+                    let menu_name = display_name.to_owned();
                     rows.push(
                         row.on_click(move |_ev, _window, cx| {
                             st.update(cx, |s, cx| {
                                 s.select_playlist(Some(id));
+                                cx.notify();
+                            });
+                        })
+                        .on_mouse_down(MouseButton::Right, move |ev, _, cx| {
+                            cx.stop_propagation();
+                            menu_state.update(cx, |s, cx| {
+                                s.track_menu = None;
+                                s.playlist_menu = Some(PlaylistMenu {
+                                    id,
+                                    name: menu_name.clone(),
+                                    position: ev.position,
+                                });
                                 cx.notify();
                             });
                         })

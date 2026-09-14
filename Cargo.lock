@@ -3676,6 +3676,8 @@ dependencies = [
  "blake3",
  "hound",
  "lofty",
+ "mixless-analyze",
+ "mixless-mixplan",
  "mixless-protocol",
  "rusqlite",
  "serde",

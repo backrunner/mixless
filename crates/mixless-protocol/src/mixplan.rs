@@ -243,6 +243,10 @@ pub struct MixPlan {
     /// An impossible user range yields an explicit failure, never an unsafe fallback.
     #[serde(default)]
     pub failure_reason: Option<String>,
+    /// Stem-layered plans are tonal only because stem envelopes suppress the
+    /// clash; without aligned stem PCM on both decks the engine must refuse them.
+    #[serde(default)]
+    pub requires_stems: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

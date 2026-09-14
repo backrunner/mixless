@@ -45,26 +45,35 @@ impl UiState {
             .gap_2()
             .w(px(240.))
             .flex_none()
-            .child(
-                gpui::div()
+            .child({
+                let tile = gpui::div()
                     .flex_none()
                     .size(px(34.))
                     .rounded(px(5.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_size(px(15.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(if loaded { dc } else { theme::MUTED })
+                    .overflow_hidden()
                     .border_1()
                     .border_color(if loaded {
                         theme::with_alpha(dc, 0.35)
                     } else {
                         theme::LINE.into()
                     })
-                    .bg(theme::PANEL_INSET)
-                    .child(initial.to_string()),
-            )
+                    .bg(theme::PANEL_INSET);
+                if let Some(image) = self.deck_artwork[deck.index()].image.clone() {
+                    tile.child(
+                        gpui::img(image)
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover),
+                    )
+                } else {
+                    tile.text_size(px(15.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(if loaded { dc } else { theme::MUTED })
+                        .child(initial.to_string())
+                }
+            })
             .child(
                 gpui::div()
                     .flex()

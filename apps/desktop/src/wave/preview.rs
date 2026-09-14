@@ -37,18 +37,20 @@ impl PreviewStore {
             track.analyzed,
             *state.revisions.get(&track.id).unwrap_or(&0),
         );
-        if let Some((old, p)) = state.entries.get(&track.id) {
-            if *old == key {
-                return Some(p.clone());
-            }
-        }
+        // Stale-while-revalidate: a key change queues a refresh but keeps the
+        // last preview on screen instead of blanking the row.
+        let stale = match state.entries.get(&track.id) {
+            Some((old, p)) if *old == key => return Some(p.clone()),
+            Some((_, p)) => Some(p.clone()),
+            None => None,
+        };
         if state
             .retry
             .get(&track.id)
             .is_some_and(|t| t.elapsed() < Duration::from_millis(750))
             || !state.pending.insert(key.clone())
         {
-            return None;
+            return stale;
         }
         if state.tx.is_none() {
             let (tx, requests) = mpsc::channel::<Key>();
@@ -87,7 +89,7 @@ impl PreviewStore {
             state.rx = Some(rx);
         }
         let _ = state.tx.as_ref().unwrap().send(key);
-        None
+        stale
     }
     pub fn poll(&self) -> bool {
         let mut state = self.0.lock().unwrap();
@@ -112,10 +114,11 @@ impl PreviewStore {
         }
         changed
     }
+    /// The next `get` revalidates, but the current preview keeps rendering
+    /// until the worker replaces it; only LRU eviction drops an entry.
     pub fn invalidate(&self, id: TrackId) {
         let mut s = self.0.lock().unwrap();
         *s.revisions.entry(id).or_default() += 1;
-        s.entries.remove(&id);
         s.retry.remove(&id);
     }
 }
@@ -252,18 +255,20 @@ mod tests {
         let id = tracks[0];
         let track = core.library.get_track(id).unwrap();
         let previews = PreviewStore::default();
-        let wait = || {
+        let wait = |previous: Option<&Arc<Preview>>| {
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {
                 previews.poll();
                 if let Some(p) = previews.get(&track, &core) {
-                    return p;
+                    if previous.is_none_or(|old| !Arc::ptr_eq(old, &p)) {
+                        return p;
+                    }
                 }
                 assert!(Instant::now() < deadline, "preview did not finish");
                 std::thread::sleep(Duration::from_millis(5));
             }
         };
-        let before = wait();
+        let before = wait(None);
         assert!(before.wave.len() <= 512);
         assert_eq!(before.sample_rate, 48000);
         assert!((before.duration - 8.).abs() < 0.01);
@@ -271,7 +276,7 @@ mod tests {
             .set_cue(id, 7, 240000, mixless_protocol::CueKind::Out, true)
             .unwrap();
         previews.invalidate(id);
-        let after = wait();
+        let after = wait(Some(&before));
         assert!(!Arc::ptr_eq(&before, &after));
         let cue = after.cues.iter().find(|c| c.index == 7).unwrap();
         assert!(cue.user_set);
@@ -279,5 +284,35 @@ mod tests {
         assert!(
             (cue.frame as f32 / after.sample_rate as f32 / after.duration - 0.625).abs() < 0.0001
         );
+    }
+
+    #[test]
+    fn invalidated_preview_keeps_the_stale_render_until_refresh_lands() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        let track = core.library.get_track(id).unwrap();
+        let previews = PreviewStore::default();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let before = loop {
+            previews.poll();
+            if let Some(p) = previews.get(&track, &core) {
+                break p;
+            }
+            assert!(Instant::now() < deadline, "preview did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        previews.invalidate(id);
+        let stale = previews.get(&track, &core).expect("stale preview");
+        assert!(Arc::ptr_eq(&before, &stale));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            previews.poll();
+            let p = previews.get(&track, &core).expect("stale preview");
+            if !Arc::ptr_eq(&before, &p) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "refresh did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

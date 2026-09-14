@@ -160,7 +160,11 @@ impl UiState {
                             })
                             .overflow_hidden()
                             .child(if loading.is_some() {
-                                "Loading audio…".into()
+                                if self.pending_play[deck.index()] {
+                                    "Loading audio… · will play".into()
+                                } else {
+                                    "Loading audio…".into()
+                                }
                             } else if self.grid_pending(deck) {
                                 "Ready to play · analyzing beats & phrases…".into()
                             } else {

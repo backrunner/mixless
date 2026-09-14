@@ -65,12 +65,24 @@ pub(crate) fn voice_cut_safe(t: &TrackAnalysis, sec: f32) -> bool {
             return false;
         }
         // A new note at a measured arrangement change can be left to the next
-        // track; it is distinct from severing a note already in progress.
+        // track; it is distinct from severing a note already in progress. It
+        // authorizes the cut when the previous phrase actually released —
+        // either the voice was already quiet, or a sung note ended right at
+        // the boundary and nothing sounds just after it. An onset with the
+        // voice still carrying through is a new syllable, not a release.
         let structural = t
             .sections
             .iter()
             .any(|s| (s.start_sec - sec).abs() < 0.04 || (s.end_sec - sec).abs() < 0.04);
+        let released = (voice_active(t, sec - 0.15) < 0.35 && voice_active(t, sec - 0.30) < 0.5)
+            || (stems.notes.iter().any(|n| {
+                n.stem == mixless_protocol::StemKind::Vocals
+                    && n.confidence >= 0.45
+                    && n.end_sec > sec - 0.30
+                    && n.end_sec < sec + 0.02
+            }) && voice_active(t, sec + 0.10) < 0.4);
         if structural
+            && released
             && stems.notes.iter().any(|n| {
                 n.stem == mixless_protocol::StemKind::Vocals
                     && (n.start_sec - sec).abs() < 0.035
@@ -92,6 +104,50 @@ pub(crate) fn voice_cut_safe(t: &TrackAnalysis, sec: f32) -> bool {
         return true;
     }
     voice_active(t, sec - 0.08) < 0.45 || voice_active(t, sec + 0.08) < 0.35
+}
+
+/// The outgoing voice must have released by the time a hard cut or FX bridge
+/// lands — but it may have sung right up to the boundary. A build whose vocal
+/// stops on the downbeat is a legitimate cut point; what is not legitimate is
+/// a phrase still sounding past `sec`. Released means a measured breath or
+/// moment gap at `sec`, a sung note ending on the boundary with no vocal
+/// event continuing past it, or low activity in the first ~0.4 s after the
+/// cut. With no detailed evidence the coarse phrase map decides.
+pub(crate) fn voice_released(t: &TrackAnalysis, sec: f32) -> bool {
+    if t.stems.is_none() && t.moments.is_empty() {
+        return !crate::vocals::phrases(t)
+            .iter()
+            .any(|&(a, b)| sec > a + 0.05 && sec < b - 0.05);
+    }
+    if voice_gap(t, sec) == Some(true) || gap(t, sec) {
+        return true;
+    }
+    if let Some(stems) = &t.stems {
+        let ended = stems.notes.iter().any(|n| {
+            n.stem == mixless_protocol::StemKind::Vocals
+                && n.confidence >= 0.45
+                && n.end_sec > sec - 0.30
+                && n.end_sec < sec + 0.12
+        });
+        let continues = stems.notes.iter().any(|n| {
+            n.stem == mixless_protocol::StemKind::Vocals
+                && n.confidence >= 0.45
+                && n.start_sec < sec + 0.15
+                && n.end_sec > sec + 0.30
+        });
+        if ended && !continues {
+            return true;
+        }
+    }
+    let mut mean = 0.;
+    let mut count = 0usize;
+    let mut s = sec + 0.05;
+    while s < sec + 0.45 && s < t.duration_sec {
+        mean += voice_active(t, s);
+        count += 1;
+        s += 0.05;
+    }
+    count == 0 || mean / (count as f32) < 0.35
 }
 
 pub(crate) fn cut_safe(t: &TrackAnalysis, sec: f32, drop_boundary: bool) -> bool {

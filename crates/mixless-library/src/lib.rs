@@ -150,6 +150,9 @@ impl Library {
                 error TEXT,
                 PRIMARY KEY (playlist_id, position)
             );
+            CREATE TABLE IF NOT EXISTS hidden_folder_playlists (
+                folder_path TEXT PRIMARY KEY
+            );
             ",
         )?;
         // `CREATE TABLE IF NOT EXISTS` does not add columns to libraries made

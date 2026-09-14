@@ -26,6 +26,8 @@ hash = blake3(file_len || mtime_secs || first_64k_bytes || last_4k_bytes)
 
 步骤：flux → tempogram 70–180（含 half/double）→ 全局 BPM → 8–16 s 滑窗 + PELT → 低置信折叠为单 BPM → Ellis 2007 beat → 4/4 vs 3/4 downbeat。
 
+`ANALYSIS_VERSION=15`：16 beat 局部窗口里与全局值偏差 ≥1.5% 的估计，只有相邻窗口同向且各有置信度 ≥0.55 才保留为真实变速（单个离群窗口或 2/3、3/4、4/3、3/2 节拍别名一律回退）。过滤后全部一致的曲目按恒定速度处理：beat 按单周期单相位生成，pulse_confidence 取全局测量与局部测量的较大值，安静 break 不再把网格可靠性拖到零。
+
 失败：120 均匀 grid，`confidence=0`。
 
 规划器必须用 `bpm_at_beat(map, beat)` 读 **局部** `TempoSegment.bpm`，不是只读 `global_bpm`。

@@ -16,5 +16,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+mixless-mixplan = { workspace = true }
+mixless-analyze = { workspace = true }
 tempfile = "3"
 hound = "3"

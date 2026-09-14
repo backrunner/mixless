@@ -22,6 +22,79 @@ impl Library {
         Ok(())
     }
 
+    /// Folder-backed copies become plain manual playlists; exclusions and
+    /// unresolved import rows are not carried over.
+    pub fn duplicate_playlist(&self, id: PlaylistId) -> Result<PlaylistId, LibraryError> {
+        let mut conn = self.conn.lock().expect("library mutex");
+        let tx = conn.transaction()?;
+        let (name, folder): (String, Option<String>) = tx
+            .query_row(
+                "SELECT p.name,
+                        (SELECT e.external_id FROM external_playlists e
+                         WHERE e.playlist_id=p.id AND e.source='folder')
+                 FROM playlists p WHERE p.id=?1",
+                [id.0],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or(LibraryError::NotFound)?;
+        let display = folder
+            .as_deref()
+            .and_then(|path| Path::new(path).file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or(name);
+        // The suffix only competes with manual playlists; the folder row the
+        // copy was cloned from keeps its own name.
+        let mut candidate = format!("{display} copy");
+        for n in 2.. {
+            let taken: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM playlists WHERE name=?1
+                 AND id NOT IN (SELECT playlist_id FROM external_playlists))",
+                [&candidate],
+                |r| r.get(0),
+            )?;
+            if !taken {
+                break;
+            }
+            candidate = format!("{display} copy {n}");
+        }
+        tx.execute("INSERT INTO playlists(name) VALUES (?1)", [&candidate])?;
+        let copy = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO playlist_items(playlist_id,position,track_id)
+             SELECT ?1,position,track_id FROM playlist_items WHERE playlist_id=?2",
+            params![copy, id.0],
+        )?;
+        tx.commit()?;
+        Ok(PlaylistId(copy))
+    }
+
+    /// Removing a folder playlist hides the path so later scans do not
+    /// recreate it; `register_folder` lifts the hide. Tracks and audio stay.
+    pub fn remove_playlist(&self, id: PlaylistId) -> Result<(), LibraryError> {
+        let mut conn = self.conn.lock().expect("library mutex");
+        let tx = conn.transaction()?;
+        let folder: Option<String> = tx
+            .query_row(
+                "SELECT external_id FROM external_playlists
+                 WHERE playlist_id=?1 AND source='folder'",
+                [id.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(path) = folder {
+            tx.execute(
+                "INSERT OR IGNORE INTO hidden_folder_playlists(folder_path) VALUES (?1)",
+                [path],
+            )?;
+        }
+        if tx.execute("DELETE FROM playlists WHERE id=?1", [id.0])? != 1 {
+            return Err(LibraryError::NotFound);
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn reset_analysis(&self, id: TrackId, clear_cues: bool) -> Result<(), LibraryError> {
         let mut conn = self.conn.lock().expect("library mutex");
         let tx = conn.transaction()?;
@@ -63,6 +136,46 @@ mod tests {
         assert!(lib.playlist_tracks(folder).unwrap().is_empty());
         assert_eq!(lib.playlist_tracks(other).unwrap()[0].id, id);
         assert!(lib.get_track(id).is_ok() && path.exists());
+    }
+
+    #[test]
+    fn duplicate_copies_items_into_a_manual_playlist_with_a_numbered_copy_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Set");
+        fs::create_dir_all(&folder).unwrap();
+        let a = folder.join("a.wav");
+        let b = folder.join("b.wav");
+        fs::write(&a, b"fixture").unwrap();
+        fs::write(&b, b"fixture").unwrap();
+        let lib = Library::open(&dir.path().join("library.db")).unwrap();
+        let ids = lib.register_local_files(&[a, b]).unwrap();
+        let folder_playlist = lib
+            .list_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.folder_path.is_some())
+            .unwrap();
+        let copy = lib
+            .duplicate_playlist(PlaylistId(folder_playlist.id))
+            .unwrap();
+        let copy2 = lib
+            .duplicate_playlist(PlaylistId(folder_playlist.id))
+            .unwrap();
+        let playlists = lib.list_playlists().unwrap();
+        let by_id = |id: PlaylistId| playlists.iter().find(|p| p.id == id.0).unwrap();
+        assert_eq!(by_id(copy).name, "Set copy");
+        assert!(by_id(copy).folder_path.is_none());
+        assert_eq!(by_id(copy2).name, "Set copy 2");
+        assert_eq!(
+            lib.playlist_tracks(copy)
+                .unwrap()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        // The source folder playlist and its exclusion machinery are untouched.
+        assert_eq!(by_id(PlaylistId(folder_playlist.id)).tracks, 2);
     }
 
     #[test]

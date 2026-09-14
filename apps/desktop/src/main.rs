@@ -63,7 +63,7 @@ fn main() {
 
         let window = cx
             .open_window(options, |_window, cx| {
-                cx.new(|cx| state::UiState::new(core, cx))
+                cx.new(|cx| state::UiState::new(core.clone(), cx))
             })
             .expect("open window");
 
@@ -104,7 +104,7 @@ fn main() {
             })
             .expect("init state");
 
-        menus::init(window, cx);
+        menus::init(core, window, cx);
         cx.activate(true);
     });
 }

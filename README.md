@@ -1,9 +1,27 @@
-# Mixless
+<div align="center">
 
-Local AI Mixing / AI DJ desktop app. Dual decks, offline analysis, playlist automix.
+<img src="assets/branding/app-icon-1024.png" alt="Mixless icon" width="180">
+
+<h1>Mixless</h1>
+
+<p>
+<strong>Local AI mixing / AI DJ desktop app.</strong><br>
+Dual decks, offline analysis, stem-aware playlist automix — all in Rust.
+</p>
+
+<p>
+<a href="https://github.com/backrunner/mixless/actions/workflows/ci.yml"><img src="https://github.com/backrunner/mixless/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/backrunner/mixless"><img src="https://img.shields.io/badge/platform-macOS-black" alt="Platform: macOS"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MPL--2.0-blue" alt="License: MPL-2.0"></a>
+</p>
+
+</div>
+
+![Mixless workspace: dual decks with stem controls, spectral waveforms, mixer and FX rack above the library](assets/screenshots/workspace.png)
 
 - **Audio**: Rust realtime graph (`mixless-engine` + CoreAudio)
 - **UI**: [GPUI](https://github.com/zed-industries/gpui) (pure Rust, GPU-rendered, no web stack)
+- **Analysis**: on-device stem separation and note tracking via ONNX Runtime — no Python, no cloud
 - **License**: MPL-2.0 (optional closed-source acquire plugin is not in this tree)
 
 v1 targets **macOS** only. Design lives in [`.agents/`](.agents/README.md).
@@ -22,6 +40,7 @@ crates/mixless-mixplan
 crates/mixless-spotify
 crates/mixless-acquire
 crates/mixless-acquire-yt
+crates/mixless-midi
 ```
 
 `apps/desktop` must not contain DSP; it only hosts engine/library state and paints UI.
@@ -66,8 +85,11 @@ macOS assets and ICNS, and the original vector artwork. Regenerate the local ico
 
 ## Preferences
 
-Choose **Mixless > Preferences...** in the macOS menu bar or press **Cmd+,**.
+Choose **Mixless > Preferences...** in the macOS menu bar or press **Cmd+,**
+(the item appears as **Settings…** on recent macOS versions).
 The single preferences window contains General, Audio I/O and MIDI Mapping tabs.
+
+<img src="assets/screenshots/preferences.png" alt="Mixless preferences — General tab" width="420">
 
 - General saves waveform layout, FX visibility, quantize, key lock, vinyl/slip,
   crossfader curve and reverse. Filter / EQ resonance is enabled by default and
@@ -142,6 +164,8 @@ and immediate parent folders also remain separately selectable. Folder labels
 use the shortest unique name; hover reveals the full path. Reimports add files without duplicating or clearing existing
 members. Existing local tracks are grouped on the next launch. Startup and
 completed imports select a playlist; **All Tracks** is an explicit combined view.
+Right-click any playlist to duplicate it or remove it (with confirmation);
+removing a folder playlist hides the folder until it is imported again.
 Native file
 selection is asynchronous and folder scanning publishes rows in batches before
 musical analysis completes. Additional imports can be queued while importing.
@@ -258,14 +282,21 @@ these timings do not measure GPU presentation or establish listening quality.
 Audio DSP behavior, regression checks and remaining limitations are documented
 in [AUDIO_DSP.md](.agents/reference/AUDIO_DSP.md).
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and Conventional Commits.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled code licenses.
-
-### Audio effects
+## Audio effects
 
 Each deck has four insert slots with 70 selectable audio FX. Use **⋯** on a slot
 for the grouped catalogue, beat timing and parameter editor. See
 [FX_CATALOGUE.md](.agents/reference/FX_CATALOGUE.md) for the Rekordbox/djay category comparison and
 [AUDIO_DSP.md](.agents/reference/AUDIO_DSP.md) for algorithms and validation limits.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and Conventional Commits.
+
+## Legal
+
+Mixless is licensed under the [Mozilla Public License 2.0](LICENSE); see
+[NOTICE](NOTICE) for copyright and attribution. Bundled and separately installed
+third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Data handling is described in [PRIVACY.md](PRIVACY.md), and vulnerability
+reports go through [SECURITY.md](SECURITY.md).
