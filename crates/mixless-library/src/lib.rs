@@ -6,10 +6,12 @@ mod folders;
 mod hash;
 mod imports;
 mod ordering;
+mod schema;
 mod storage;
 mod verification;
 mod waveform;
 pub use imports::ImportItem;
+pub use schema::SCHEMA_VERSION;
 pub use storage::CacheUsage;
 
 use std::fs;
@@ -48,6 +50,10 @@ pub enum LibraryError {
     CueIndex(u8),
     #[error("analysis cache: {0}")]
     AnalysisJson(#[from] serde_json::Error),
+    /// A newer build wrote this file and the change was not additive; the
+    /// caller sets it aside rather than opening it.
+    #[error("library was written by a newer app (schema v{found}): {detail}")]
+    NewerSchema { found: u32, detail: String },
 }
 
 pub struct Library {
@@ -62,10 +68,26 @@ impl Library {
             fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        // Read the marker before touching the file: a refused library is
+        // left byte-identical, including its journal mode.
+        let stored = schema::user_version(&conn)?;
+        if stored > SCHEMA_VERSION {
+            // Beta → stable downgrade: the file belongs to a newer schema
+            // generation. It stays openable while the whole surface this
+            // build uses survived — payload versions still gate the derived
+            // data inside — and the newer build's marker is never stamped
+            // down. Otherwise refuse before any statement can misread rows.
+            schema::check_compatible(&conn, stored)?;
+        }
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
             PRAGMA foreign_keys = ON;
+            ",
+        )?;
+        if stored <= SCHEMA_VERSION {
+            conn.execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS tracks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
@@ -157,19 +179,22 @@ impl Library {
                 folder_path TEXT PRIMARY KEY
             );
             ",
-        )?;
-        // `CREATE TABLE IF NOT EXISTS` does not add columns to libraries made
-        // by earlier builds. Keep the migration local and backwards compatible.
-        let has_artwork_path = {
-            let mut stmt = conn.prepare("PRAGMA table_info(tracks)")?;
-            let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
-            let found = columns
-                .filter_map(Result::ok)
-                .any(|name| name == "artwork_path");
-            found
-        };
-        if !has_artwork_path {
-            conn.execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT", [])?;
+            )?;
+            // `CREATE TABLE IF NOT EXISTS` does not add columns to libraries
+            // made by earlier builds. Keep the migration local and backwards
+            // compatible.
+            let has_artwork_path = {
+                let mut stmt = conn.prepare("PRAGMA table_info(tracks)")?;
+                let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+                let found = columns
+                    .filter_map(Result::ok)
+                    .any(|name| name == "artwork_path");
+                found
+            };
+            if !has_artwork_path {
+                conn.execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT", [])?;
+            }
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         let artwork_dir = path
             .parent()

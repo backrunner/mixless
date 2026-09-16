@@ -49,6 +49,8 @@ pub struct AppCore {
     pub midi: Mutex<Option<Arc<mixless_midi::MidiHub>>>,
     /// Serializes background loads so a cancelled worker cannot overwrite a manual load.
     pub deck_load: Mutex<()>,
+    /// Set when a newer build's library had to be set aside; shown once at launch.
+    pub library_notice: Option<String>,
 }
 
 impl AppCore {
@@ -110,8 +112,21 @@ pub fn app_core() -> Arc<AppCore> {
     let acquired_dir = data_dir.join("acquired");
     std::fs::create_dir_all(&acquired_dir).ok();
 
-    let library =
-        mixless_library::Library::open(&data_dir.join("library.db")).expect("open library");
+    let db_path = data_dir.join("library.db");
+    let (library, library_notice) = match mixless_library::Library::open(&db_path) {
+        Ok(library) => (library, None),
+        Err(error @ mixless_library::LibraryError::NewerSchema { .. }) => {
+            // A downgrade met a schema this build cannot read. Set the file
+            // aside and open a fresh library instead of crash-looping;
+            // re-adding folders re-imports the tracks.
+            tracing::warn!(%error, "library schema is newer; setting it aside");
+            let notice = quarantine_library(&db_path);
+            let library =
+                mixless_library::Library::open(&db_path).expect("open library");
+            (library, Some(notice))
+        }
+        Err(error) => panic!("open library: {error}"),
+    };
     let settings = crate::settings::SettingsStore::load(data_dir.join("preferences.json"));
     let initial = settings.get();
     let engine = mixless_engine::Engine::new_with_audio(
@@ -156,7 +171,38 @@ pub fn app_core() -> Arc<AppCore> {
         settings_apply: Mutex::new(()),
         midi: Mutex::new(midi.ok().map(Arc::new)),
         deck_load: Mutex::new(()),
+        library_notice,
     })
+}
+
+/// Move `library.db` and its WAL sidecars to a `.unsupported-<ts>` copy so a
+/// fresh library can open at the original path; returns the launch notice.
+/// Sidecars move first: a leftover `-wal` beside a brand-new database would
+/// be recovered against it.
+fn quarantine_library(path: &std::path::Path) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let dest = path.with_extension(format!("db.unsupported-{stamp}"));
+    for suffix in ["-wal", "-shm", ""] {
+        let mut from = path.as_os_str().to_owned();
+        from.push(suffix);
+        let mut to = dest.as_os_str().to_owned();
+        to.push(suffix);
+        let _ = std::fs::rename(&from, &to);
+    }
+    assert!(
+        !path.exists(),
+        "could not set aside incompatible library at {}",
+        display_dir(path)
+    );
+    format!(
+        "Your library was written by a newer version of Mixless and could not be opened, so it was reset. \
+         The previous database was kept at {} — reinstall the newer version and rename it back to \
+         \"library.db\" (with its -wal/-shm files) to restore it.",
+        display_dir(&dest)
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -389,7 +435,11 @@ impl UiState {
             keyboard_focus: cx.focus_handle(),
             show_shortcuts: false,
             show_import_modal: false,
-            error: "".into(),
+            error: core
+                .library_notice
+                .clone()
+                .unwrap_or_default()
+                .into(),
             acquire: "".into(),
             import_details: Vec::new(),
             playlist_issues: Vec::new(),

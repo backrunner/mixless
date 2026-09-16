@@ -18,6 +18,26 @@ also ships `mixless-<channel>-latest.json`, a small manifest with the version,
 DMG URL and SHA-256 that a future updater can poll. Stable is
 `releases/latest` on the GitHub API; beta builds are prereleases.
 
+## Data compatibility
+
+Beta runs ahead of stable, so a beta → stable downgrade must never corrupt
+or strand the user's library:
+
+- `library.db` carries `PRAGMA user_version` = `SCHEMA_VERSION`
+  (`crates/mixless-library/src/schema.rs`). Bump it on every schema change.
+- Schema changes must be **additive** — new tables, or new columns that are
+  nullable or have defaults. Statements always name their columns, so an
+  older build tolerates extra columns. If a change cannot be additive, older
+  builds detect it on open (`LibraryError::NewerSchema`), set the file aside
+  as `library.db.unsupported-<ts>`, and start a fresh library instead of
+  crash-looping.
+- Derived data is gated per record: `track_analysis`/`track_waveforms`/
+  `cue_versions` carry payload versions, so a newer build's analysis is
+  invisible to an older build and simply re-analyzes. Never read a payload
+  without checking its version.
+- When adding a table or naming a new column in a query, extend
+  `REQUIRED_COLUMNS` in `schema.rs` so the downgrade check stays accurate.
+
 ## Required secrets
 
 Set these under **Settings → Secrets and variables → Actions**:

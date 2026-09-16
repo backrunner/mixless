@@ -75,6 +75,8 @@ SQLite + AppData。哈希 `blake3(len || mtime || first_64k || last_4k)`，无 i
 
 `load_analysis(id) -> TrackAnalysis`。Token 不得入库。
 
+Schema 变更只加不改（新表 / 可空或有默认值的列），同步 `schema.rs` 的 `SCHEMA_VERSION` 与 `REQUIRED_COLUMNS`；非加性变更会让旧版 build 在打开时拒绝该库（beta→stable 降级路径）。派生 payload 按行级 version 门控，读前必查版本。
+
 ## `mixless-spotify`
 
 OAuth PKCE + Web API + 本地 matcher。macOS Keychain。429 退避。只产出 `ResolveJob` / `SpotifyTrack`。
