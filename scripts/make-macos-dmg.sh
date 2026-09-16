@@ -37,8 +37,9 @@ mkdir -p "${mnt}"
 hdiutil convert "${out}" -format UDRW -o "${rw}" >/dev/null
 hdiutil attach "${rw}" -nobrowse -mountpoint "${mnt}" >/dev/null
 xattr -cr "${mnt}/Mixless.app"
-hdiutil detach "${mnt}" -quiet
-hdiutil convert "${rw}" -format UDZO -o "${out}.tmp" >/dev/null
-mv "${out}.tmp" "${out}"
+hdiutil detach "${mnt}" -quiet || hdiutil detach "${mnt}" -force
+# hdiutil appends .dmg to -o targets lacking the suffix — keep it.
+hdiutil convert "${rw}" -format UDZO -o "${tmp}/final.dmg" >/dev/null
+mv "${tmp}/final.dmg" "${out}"
 
 echo "DMG: ${out}"
