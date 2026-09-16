@@ -83,11 +83,15 @@ macOS assets and ICNS, and the original vector artwork. Regenerate the local ico
 `swift scripts/generate-icons.swift`; after building, run
 `cargo run --locked -p mixless-tools -- bundle` to assemble a local unsigned `.app`.
 
+Signed, notarized installer DMGs for the stable and beta channels are built by
+the release workflow; see [RELEASING.md](RELEASING.md).
+
 ## Preferences
 
 Choose **Mixless > Preferences...** in the macOS menu bar or press **Cmd+,**
 (the item appears as **Settings…** on recent macOS versions).
-The single preferences window contains General, Audio I/O and MIDI Mapping tabs.
+The single preferences window contains General, Audio I/O, MIDI Mapping and
+Storage tabs.
 
 <img src="assets/screenshots/preferences.png" alt="Mixless preferences — General tab" width="420">
 

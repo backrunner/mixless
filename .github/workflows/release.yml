@@ -1,0 +1,393 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v-prefixed release tag, for example v1.2.3 or v1.2.3-beta.1"
+        required: true
+      channel:
+        description: "Release channel (auto derives it from the tag version)"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - stable
+          - beta
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    name: Resolve release
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      channel: ${{ steps.release.outputs.channel }}
+      build_number: ${{ steps.release.outputs.build_number }}
+    steps:
+      - name: Validate release tag and channel
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          channel="${{ github.event.inputs.channel || 'auto' }}"
+
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tags must use semantic versions, for example v1.2.3 or v1.2.3-beta.1."
+            exit 1
+          fi
+
+          if [[ "${channel}" == "auto" ]]; then
+            if [[ "${version}" == *-* ]]; then
+              channel="beta"
+            else
+              channel="stable"
+            fi
+          fi
+
+          if [[ "${channel}" == "stable" && "${version}" == *-* ]]; then
+            echo "::error::Stable releases cannot use a prerelease version: ${version}."
+            exit 1
+          fi
+
+          if [[ "${channel}" == "beta" && ! "${version}" =~ -beta([.]|$) ]]; then
+            echo "::error::Beta releases must use a -beta prerelease version: ${version}."
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+          echo "build_number=${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+
+  macos-desktop:
+    name: macOS desktop
+    needs: resolve-release
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Set release version
+        run: |
+          set -euo pipefail
+          cargo run --locked -p mixless-tools -- set-version "${{ needs.resolve-release.outputs.version }}"
+          # Sync workspace member versions in the lockfile after stamping.
+          cargo update --workspace
+
+      - name: Validate signing and notarization secrets
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE || secrets.CSC_LINK }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD || secrets.CSC_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_TEAM_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing ${name}. Configure the matching GitHub secret before publishing a macOS release."
+              exit 1
+            fi
+          done
+
+          api_key_count=0
+          password_count=0
+          for name in APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_API_KEY_BASE64; do
+            [[ -z "${!name}" ]] || ((api_key_count += 1))
+          done
+          for name in APPLE_ID APPLE_PASSWORD; do
+            [[ -z "${!name}" ]] || ((password_count += 1))
+          done
+
+          if (( api_key_count == 3 )); then
+            echo "Using App Store Connect API key notarization"
+          elif (( password_count == 2 )); then
+            echo "Using Apple ID notarization"
+          else
+            (( api_key_count == 0 )) || echo "::error::APPLE_API_KEY_ID, APPLE_API_ISSUER, and APPLE_API_KEY_BASE64 must be configured together."
+            (( password_count == 0 )) || echo "::error::APPLE_ID and APPLE_PASSWORD must be configured together."
+            echo "::error::Configure either App Store Connect API key credentials or Apple ID credentials for notarization."
+            exit 1
+          fi
+
+      - name: Import Apple signing certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE || secrets.CSC_LINK }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD || secrets.CSC_KEY_PASSWORD }}
+
+      - name: Verify signing identity
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if ! security find-identity -v -p codesigning | grep -qF "${APPLE_SIGNING_IDENTITY}"; then
+            echo "::error::Signing identity \"${APPLE_SIGNING_IDENTITY}\" not found after certificate import."
+            security find-identity -v -p codesigning
+            exit 1
+          fi
+
+      - name: Prepare notarization credentials
+        shell: bash
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${APPLE_API_KEY_ID}" ]]; then
+            api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "${APPLE_API_KEY_BASE64}" | base64 -D > "${api_key_path}"
+            chmod 600 "${api_key_path}"
+            if ! grep -q 'BEGIN PRIVATE KEY' "${api_key_path}"; then
+              echo "::error::APPLE_API_KEY_BASE64 is not a valid base64-encoded .p8 key."
+              exit 1
+            fi
+            {
+              echo "APPLE_API_KEY=${APPLE_API_KEY_ID}"
+              echo "APPLE_API_ISSUER=${APPLE_API_ISSUER}"
+              echo "APPLE_API_KEY_PATH=${api_key_path}"
+            } >> "${GITHUB_ENV}"
+          else
+            {
+              echo "APPLE_ID=${APPLE_ID}"
+              echo "APPLE_PASSWORD=${APPLE_PASSWORD}"
+              echo "APPLE_TEAM_ID=${APPLE_TEAM_ID}"
+            } >> "${GITHUB_ENV}"
+          fi
+
+      - name: Install dmgbuild
+        run: |
+          set -euo pipefail
+          python3 -m venv "${RUNNER_TEMP}/dmg-venv"
+          "${RUNNER_TEMP}/dmg-venv/bin/pip" install --quiet "dmgbuild==1.6.7"
+          echo "${RUNNER_TEMP}/dmg-venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Build universal binary
+        env:
+          MIXLESS_CHANNEL: ${{ needs.resolve-release.outputs.channel }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p mixless-desktop --target aarch64-apple-darwin
+          cargo build --locked --release -p mixless-desktop --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/mixless \
+            target/x86_64-apple-darwin/release/mixless \
+            -output target/universal-apple-darwin/release/mixless
+          lipo target/universal-apple-darwin/release/mixless -verify_arch arm64 x86_64
+
+      - name: Assemble app bundle
+        run: |
+          set -euo pipefail
+          cargo run --locked -p mixless-tools -- bundle \
+            target/universal-apple-darwin/release/mixless \
+            dist/Mixless.app \
+            --version "${{ needs.resolve-release.outputs.version }}" \
+            --build-number "${{ needs.resolve-release.outputs.build_number }}" \
+            --channel "${{ needs.resolve-release.outputs.channel }}"
+
+      - name: Sign app bundle
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --timestamp \
+            --sign "${APPLE_SIGNING_IDENTITY}" \
+            dist/Mixless.app
+          codesign --verify --deep --strict --verbose=2 dist/Mixless.app
+
+      - name: Notarize and staple app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && ditto -c -k --keepParent Mixless.app Mixless-notarized.zip)
+
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+            notary_credentials=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}" --issuer "${APPLE_API_ISSUER}")
+          else
+            notary_credentials=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
+          fi
+
+          xcrun notarytool submit dist/Mixless-notarized.zip "${notary_credentials[@]}" --wait --timeout 30m
+          xcrun stapler staple dist/Mixless.app
+          spctl --assess --type execute --verbose=4 dist/Mixless.app
+          xcrun stapler validate dist/Mixless.app
+
+      - name: Build installer DMG
+        run: scripts/make-macos-dmg.sh dist/Mixless.app "dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg" "Mixless"
+
+      - name: Sign, notarize and staple DMG
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          dmg="dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg"
+          codesign --force --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${dmg}"
+
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+            notary_credentials=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}" --issuer "${APPLE_API_ISSUER}")
+          else
+            notary_credentials=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
+          fi
+
+          xcrun notarytool submit "${dmg}" "${notary_credentials[@]}" --wait --timeout 30m
+          xcrun stapler staple "${dmg}"
+          codesign --verify --verbose=4 "${dmg}"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg}"
+          xcrun stapler validate "${dmg}"
+
+      - name: Verify DMG install layout
+        run: scripts/verify-macos-dmg.sh "dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg"
+
+      - name: Stage release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          cp "dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg" release-artifacts/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mixless-desktop-macos-${{ needs.resolve-release.outputs.tag }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Clean up signing material
+        if: always()
+        shell: bash
+        run: find "${RUNNER_TEMP}" -maxdepth 1 -type f -name 'AuthKey_*.p8' -delete
+
+  publish-release:
+    name: Publish release
+    needs:
+      - resolve-release
+      - macos-desktop
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mixless-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Generate checksums and channel manifest
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          CHANNEL: ${{ needs.resolve-release.outputs.channel }}
+        run: |
+          set -euo pipefail
+          cd release-artifacts
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+          dmg="$(ls *.dmg | head -1)"
+          digest="$(awk '{print $1}' SHA256SUMS.txt)"
+          url="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${dmg}"
+          jq -n \
+            --arg channel "${CHANNEL}" \
+            --arg version "${VERSION}" \
+            --arg tag "${RELEASE_TAG}" \
+            --arg url "${url}" \
+            --arg sha256 "${digest}" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{channel: $channel, version: $version, tag: $tag, pub_date: $date,
+              platforms: {"darwin-universal": {url: $url, sha256: $sha256, name: $url | split("/") | last}}}' \
+            > "mixless-${CHANNEL}-latest.json"
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          CHANNEL: ${{ needs.resolve-release.outputs.channel }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find release-artifacts -type f -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release artifacts found" >&2
+            exit 1
+          fi
+          notes="Signed and notarized macOS installer on the ${CHANNEL} channel. Double-click Mixless inside the DMG to install, or drag it to Applications."
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            if [[ "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "::error::${RELEASE_TAG} is already published; refusing to overwrite it."
+              exit 1
+            fi
+            gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber
+          else
+            gh release create "${RELEASE_TAG}" "${files[@]}" \
+              --draft \
+              --verify-tag \
+              --title "Mixless ${RELEASE_TAG}" \
+              --notes "${notes}"
+          fi
+
+      - name: Publish draft
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          CHANNEL: ${{ needs.resolve-release.outputs.channel }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            let release;
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+              const releases = await github.paginate(github.rest.repos.listReleases, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+              });
+              release = releases.find((entry) => entry.tag_name === tag);
+              if (release) break;
+              if (attempt === 4) {
+                core.setFailed(`No release found for ${tag}`);
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            if (!release.draft) {
+              core.setFailed(`${tag} is already published`);
+              return;
+            }
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              draft: false,
+              prerelease: process.env.CHANNEL !== 'stable',
+              make_latest: process.env.CHANNEL === 'stable' ? 'true' : 'false',
+            });

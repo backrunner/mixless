@@ -11,6 +11,8 @@ mod menus;
 mod performance;
 mod preferences;
 mod root;
+#[cfg(target_os = "macos")]
+mod self_install;
 mod settings;
 mod shortcuts;
 mod state;
@@ -41,6 +43,9 @@ fn main() {
         env!("MIXLESS_BUILD_TIME")
     );
     tracing::info!(build = %build_id, profile = env!("MIXLESS_BUILD_PROFILE"), "starting Mixless");
+
+    #[cfg(target_os = "macos")]
+    self_install::relocate_from_disk_image();
 
     Application::new().run(|cx: &mut App| {
         branding::set_dock_icon();

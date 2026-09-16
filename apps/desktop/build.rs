@@ -22,10 +22,16 @@ fn main() {
         output("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"]).unwrap_or_else(|| "unknown-time".into());
     println!("cargo:rustc-env=MIXLESS_REVISION={revision}");
     println!("cargo:rustc-env=MIXLESS_BUILD_TIME={built}");
-    println!(
-        "cargo:rustc-env=MIXLESS_BUILD_PROFILE={}",
-        std::env::var("PROFILE").unwrap_or_default()
-    );
+    let profile = std::env::var("PROFILE").unwrap_or_default();
+    println!("cargo:rustc-env=MIXLESS_BUILD_PROFILE={profile}");
+    println!("cargo:rerun-if-env-changed=MIXLESS_CHANNEL");
+    let channel = match std::env::var("MIXLESS_CHANNEL") {
+        Ok(channel) if ["stable", "beta", "dev"].contains(&channel.as_str()) => channel,
+        Ok(channel) => panic!("MIXLESS_CHANNEL must be stable, beta or dev, got {channel:?}"),
+        Err(_) if profile == "release" => "stable".into(),
+        Err(_) => "dev".into(),
+    };
+    println!("cargo:rustc-env=MIXLESS_CHANNEL={channel}");
 }
 
 fn build_icon_bridge() {

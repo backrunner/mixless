@@ -80,6 +80,7 @@ impl Render for About {
                         ),
                         false,
                     ))
+                    .child(info_row("Channel", env!("MIXLESS_CHANNEL").into(), false))
                     .child(info_row("Revision", env!("MIXLESS_REVISION").into(), false))
                     .child(info_row("Built", env!("MIXLESS_BUILD_TIME").into(), true)),
             )
@@ -121,7 +122,7 @@ pub fn open(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(420.), px(400.)),
+            size(px(420.), px(430.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
