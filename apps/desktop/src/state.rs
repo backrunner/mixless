@@ -51,6 +51,41 @@ pub struct AppCore {
     pub deck_load: Mutex<()>,
 }
 
+impl AppCore {
+    /// Downloaded audio goes to the user's chosen folder, falling back to the
+    /// managed `acquired` directory inside the app data dir.
+    pub fn download_dir(&self) -> PathBuf {
+        self.settings
+            .get()
+            .download_dir
+            .clone()
+            .unwrap_or_else(|| self.acquired_dir.clone())
+    }
+}
+
+/// A download folder must accept new files; probe before saving the choice.
+pub fn ensure_writable_dir(path: &std::path::Path) -> Result<(), String> {
+    let probe = path.join(".mixless-write-test");
+    std::fs::create_dir_all(path)
+        .and_then(|()| std::fs::File::create(&probe).map(|_| ()))
+        .and_then(|()| std::fs::remove_file(&probe))
+        .map_err(|e| format!("Folder is not writable: {e}"))
+}
+
+/// Compact a folder path for display by contracting the home directory to `~`.
+pub fn display_dir(path: &std::path::Path) -> String {
+    if let Some(home) = dirs::home_dir()
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return if rest.as_os_str().is_empty() {
+            "~".into()
+        } else {
+            format!("~/{}", rest.display())
+        };
+    }
+    path.display().to_string()
+}
+
 pub enum ImportMsg {
     Progress(String),
     LibraryChanged,

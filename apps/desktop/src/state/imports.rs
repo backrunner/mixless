@@ -142,6 +142,44 @@ impl UiState {
         self.start_next_import();
     }
 
+    /// Pick the folder that downloaded Spotify audio is written to. The choice
+    /// is stored in preferences and applies to subsequent imports.
+    pub fn choose_download_dir(&mut self, cx: &mut Context<Self>) {
+        if self.picker_open {
+            return;
+        }
+        self.picker_open = true;
+        let selection = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Save downloaded audio to".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = selection.await;
+            let _ = this.update(cx, |s, cx| {
+                s.picker_open = false;
+                match result {
+                    Ok(Ok(Some(paths))) => {
+                        if let Some(dir) = paths.into_iter().next()
+                            && let Err(error) = ensure_writable_dir(&dir).and_then(|()| {
+                                s.core.settings.update(|p| p.download_dir = Some(dir))
+                            })
+                        {
+                            s.error = error.into();
+                        }
+                    }
+                    Ok(Err(error)) => s.error = error.to_string().into(),
+                    Err(error) => s.error = error.to_string().into(),
+                    _ => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub fn import_spotify(&mut self, url: String) {
         self.import_queue.push_back(ImportRequest::Spotify(url));
         self.start_next_import();
@@ -252,6 +290,7 @@ fn import_spotify_blocking(core: &AppCore, url: &str, tx: &Sender<ImportMsg>) {
             library: &core.library,
             analyzer: &core.analyzer,
         };
+        let dest = core.download_dir();
         let mut provider = None;
         service.spotify_playlist(
             &playlist,
@@ -260,7 +299,7 @@ fn import_spotify_blocking(core: &AppCore, url: &str, tx: &Sender<ImportMsg>) {
                 if provider.is_none() {
                     provider = Some(YoutubeMusicAcquire::detect()?);
                 }
-                provider.as_ref().unwrap().fetch(job, &core.acquired_dir)
+                provider.as_ref().unwrap().fetch(job, &dest)
             },
             |message| {
                 let _ = tx.send(ImportMsg::Progress(message));

@@ -41,6 +41,7 @@ enum JobResult {
     Audio(Result<(), String>),
     Midi(Result<(), String>),
     File(Result<(), String>),
+    Dir(Option<PathBuf>),
 }
 
 pub struct Preferences {
@@ -159,6 +160,15 @@ impl Preferences {
                 Ok(JobResult::Audio(result)) => self.result(result, "Audio settings saved"),
                 Ok(JobResult::Midi(result)) => self.result(result, "MIDI inputs saved"),
                 Ok(JobResult::File(result)) => self.result(result, "MIDI mapping file updated"),
+                Ok(JobResult::Dir(dir)) => {
+                    if let Some(dir) = dir {
+                        let result = crate::state::ensure_writable_dir(&dir)
+                            .and_then(|()| {
+                                self.core.settings.update(|s| s.download_dir = Some(dir))
+                            });
+                        self.result(result, "Download folder saved");
+                    }
+                }
                 Err(mpsc::TryRecvError::Empty) => self.job = Some(rx),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.result(Err("Settings operation stopped unexpectedly".into()), "")
@@ -381,6 +391,23 @@ impl Preferences {
         .detach();
     }
 
+    fn pick_download_dir(&mut self, cx: &mut Context<Self>) {
+        if self.job.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        self.job = Some(rx);
+        cx.spawn(async move |_, _| {
+            let dir = rfd::AsyncFileDialog::new()
+                .set_title("Save downloaded audio to")
+                .pick_folder()
+                .await
+                .map(|folder| folder.path().to_path_buf());
+            let _ = tx.send(JobResult::Dir(dir));
+        })
+        .detach();
+    }
+
     fn button(
         &self,
         id: impl Into<SharedString>,
@@ -598,14 +625,51 @@ impl Preferences {
         ))
         .child(row(
             "Downloaded audio",
-            self.button(
-                "audio-folder",
-                "Show in Finder",
-                true,
-                |s, _, cx| cx.reveal_path(&s.core.acquired_dir),
-                cx,
-            )
-            .into_any_element(),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    self.button(
+                        "audio-folder",
+                        "Show in Finder",
+                        true,
+                        |s, _, cx| {
+                            let dir = s.core.download_dir();
+                            std::fs::create_dir_all(&dir).ok();
+                            cx.reveal_path(&dir);
+                        },
+                        cx,
+                    )
+                    .into_any_element(),
+                )
+                .child(
+                    self.button(
+                        "audio-folder-change",
+                        "Change…",
+                        self.job.is_none(),
+                        |s, _, cx| s.pick_download_dir(cx),
+                        cx,
+                    )
+                    .into_any_element(),
+                )
+                .when(settings.download_dir.is_some(), |el| {
+                    el.child(
+                        self.button(
+                            "audio-folder-default",
+                            "Use default",
+                            self.job.is_none(),
+                            |s, _, _| s.save_general(|p| p.download_dir = None),
+                            cx,
+                        )
+                        .into_any_element(),
+                    )
+                })
+                .into_any_element(),
+        ))
+        .child(info(
+            "Location",
+            crate::state::display_dir(&self.core.download_dir()),
         ))
         .into_any_element()
     }

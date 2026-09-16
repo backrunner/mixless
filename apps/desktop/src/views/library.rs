@@ -906,6 +906,28 @@ impl UiState {
             .into_any_element()
     }
 
+    fn download_dir_button(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let disabled = self.picker_open;
+        gpui::div()
+            .id("choose-download-dir")
+            .flex_none()
+            .px_2()
+            .py_1()
+            .rounded(px(3.))
+            .text_size(px(10.))
+            .text_color(theme::TEXT)
+            .bg(theme::PANEL_RAISED)
+            .when(disabled, |el| el.opacity(0.4))
+            .when(!disabled, |el| {
+                el.cursor_pointer().hover(|s| s.bg(theme::LINE))
+            })
+            .child("Choose…")
+            .on_click(cx.listener(move |s, _, _, cx| {
+                s.choose_download_dir(cx);
+            }))
+            .into_any_element()
+    }
+
     pub fn render_import_modal(
         &self,
         window: &Window,
@@ -920,6 +942,9 @@ impl UiState {
         let close_state = state.clone();
         let spotify_state = state.clone();
         let can_import_spotify = !self.url.trim().is_empty();
+        let download_dir = self.core.download_dir();
+        let download_path = download_dir.display().to_string();
+        let download_label = crate::state::display_dir(&download_dir);
 
         let close = gpui::div()
             .id("import-modal-close")
@@ -1032,6 +1057,33 @@ impl UiState {
                             .gap_2()
                             .child(self.render_url_input(window, cx))
                             .child(spotify_button),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                gpui::div()
+                                    .flex_none()
+                                    .text_size(px(10.))
+                                    .text_color(theme::MUTED)
+                                    .child("Save to"),
+                            )
+                            .child(
+                                gpui::div()
+                                    .id("download-dir")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(10.))
+                                    .text_color(theme::TEXT)
+                                    .child(download_label)
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| PathTip(download_path.clone())).into()
+                                    }),
+                            )
+                            .child(self.download_dir_button(cx)),
                     )
                     .child(
                         gpui::div()

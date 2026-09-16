@@ -28,6 +28,8 @@ pub struct Settings {
     pub keylock: bool,
     pub vinyl: bool,
     pub slip: bool,
+    /// Custom folder for downloaded audio. None uses the managed data dir.
+    pub download_dir: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -49,6 +51,7 @@ impl Default for Settings {
             keylock: true,
             vinyl: false,
             slip: false,
+            download_dir: None,
         }
     }
 }
@@ -71,6 +74,11 @@ impl Settings {
             .is_some_and(|frames| frames == 0 || frames > 8192)
         {
             return Err("Invalid audio buffer size.".into());
+        }
+        if let Some(dir) = &self.download_dir
+            && !dir.is_absolute()
+        {
+            return Err("Download folder must be an absolute path.".into());
         }
         Ok(())
     }
