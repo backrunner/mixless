@@ -14,12 +14,16 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 blake3.workspace = true
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-native", "api-27"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
 hound = "3"
 rustfft = "6"
 fs2 = "0.4"
+
+# ONNX Runtime ships no x86_64-apple-darwin prebuilt (dropped by upstream and
+# pyke ort after 1.23). Inference is gated off there; cached stems still play.
+[target.'cfg(not(all(target_os = "macos", target_arch = "x86_64")))'.dependencies]
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-native", "api-27"] }
 
 [dev-dependencies]
 tempfile = "3"

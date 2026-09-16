@@ -1,5 +1,9 @@
-use crate::{cache, check, Error, Inference, Progress, Result};
-use mixless_protocol::{StemAnalysis, StemKind, StemNote};
+#[cfg(stems_ort)]
+use crate::Inference;
+use crate::{cache, check, Error, Progress, Result};
+use mixless_protocol::StemAnalysis;
+#[cfg(stems_ort)]
+use mixless_protocol::{StemKind, StemNote};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -28,6 +32,7 @@ pub struct Processor {
 }
 #[derive(Default)]
 struct State {
+    #[cfg(stems_ort)]
     inference: Option<Inference>,
     failed: Option<(Instant, String)>,
 }
@@ -60,6 +65,18 @@ impl Processor {
         if let Some(a) = self.cached(content_hash, duration)? {
             return Ok(a);
         }
+        self.run(content_hash, duration, load, progress, active)
+    }
+
+    #[cfg(stems_ort)]
+    fn run(
+        &self,
+        content_hash: &str,
+        duration: f32,
+        load: impl FnOnce() -> Result<Arc<mixless_engine::AudioBuffer>>,
+        progress: &mut impl FnMut(Progress),
+        active: &impl Fn() -> bool,
+    ) -> Result<StemAnalysis> {
         let mut state = loop {
             check(active)?;
             match self.state.try_lock() {
@@ -138,6 +155,22 @@ impl Processor {
         cache::save(&path, &stems, &analysis)?;
         Ok(analysis)
     }
+
+    #[cfg(not(stems_ort))]
+    fn run(
+        &self,
+        content_hash: &str,
+        duration: f32,
+        load: impl FnOnce() -> Result<Arc<mixless_engine::AudioBuffer>>,
+        progress: &mut impl FnMut(Progress),
+        active: &impl Fn() -> bool,
+    ) -> Result<StemAnalysis> {
+        let _ = (content_hash, duration, load, progress, active);
+        Err(Error::Model(
+            "Stem separation requires Apple Silicon".into(),
+        ))
+    }
+
     /// Byte total of cached stems — every entry, or only the given content
     /// hashes. Hashes may repeat across playlists, so they are deduplicated.
     pub fn cache_usage(&self, content_hashes: Option<&[String]>) -> u64 {
@@ -223,6 +256,7 @@ impl Processor {
         }
     }
     pub fn release_models(&self) {
+        #[cfg(stems_ort)]
         if let Ok(mut state) = self.state.try_lock() {
             state.inference = None;
         }

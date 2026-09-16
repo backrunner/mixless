@@ -3,14 +3,24 @@ mod cache;
 mod evidence;
 mod lock;
 mod models;
+#[cfg(stems_ort)]
 mod notes;
 mod playback;
 mod priority;
 mod processor;
 mod resample;
+#[cfg(stems_ort)]
 mod separation;
 pub use evidence::VERSION;
 pub use processor::Processor;
+
+/// False on Intel macOS: no ONNX Runtime build exists for
+/// x86_64-apple-darwin, so separation jobs fail there — cached stems and
+/// cached analyses still load and play.
+pub fn inference_supported() -> bool {
+    cfg!(stems_ort)
+}
+
 pub fn is_current(analysis: &mixless_protocol::StemAnalysis) -> bool {
     analysis.version == VERSION
         && analysis.separator_sha256 == models::SEPARATOR_HASH
@@ -37,6 +47,7 @@ pub enum Error {
     #[error("Analysis cancelled")]
     Cancelled,
 }
+#[cfg(stems_ort)]
 impl<T> From<ort::Error<T>> for Error {
     fn from(error: ort::Error<T>) -> Self {
         Self::Model(format!("Inference: {error}"))
@@ -60,6 +71,7 @@ pub(crate) fn check(active: &impl Fn() -> bool) -> Result<()> {
     }
 }
 
+#[cfg(stems_ort)]
 pub struct Inference {
     separator: ort::session::Session,
     notes: ort::session::Session,
@@ -71,6 +83,7 @@ pub struct Stems {
     pub residual_rms: f32,
 }
 
+#[cfg(stems_ort)]
 impl Inference {
     pub fn load(
         model_dir: &Path,

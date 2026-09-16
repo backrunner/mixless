@@ -121,8 +121,7 @@ pub fn app_core() -> Arc<AppCore> {
             // re-adding folders re-imports the tracks.
             tracing::warn!(%error, "library schema is newer; setting it aside");
             let notice = quarantine_library(&db_path);
-            let library =
-                mixless_library::Library::open(&db_path).expect("open library");
+            let library = mixless_library::Library::open(&db_path).expect("open library");
             (library, Some(notice))
         }
         Err(error) => panic!("open library: {error}"),
@@ -157,13 +156,15 @@ pub fn app_core() -> Arc<AppCore> {
         engine,
         library,
         analyzer: mixless_analyze::Analyzer::new(),
-        stems: Some(mixless_stems::Processor::new(
-            std::env::var_os("MIXLESS_MODEL_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| data_dir.join("models")),
-            data_dir.join("stem-cache"),
-            std::env::var_os("MIXLESS_MODELS_OFFLINE").is_none(),
-        )),
+        stems: mixless_stems::inference_supported().then(|| {
+            mixless_stems::Processor::new(
+                std::env::var_os("MIXLESS_MODEL_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| data_dir.join("models")),
+                data_dir.join("stem-cache"),
+                std::env::var_os("MIXLESS_MODELS_OFFLINE").is_none(),
+            )
+        }),
         shutting_down: false.into(),
         acquired_dir,
         settings,
@@ -435,11 +436,7 @@ impl UiState {
             keyboard_focus: cx.focus_handle(),
             show_shortcuts: false,
             show_import_modal: false,
-            error: core
-                .library_notice
-                .clone()
-                .unwrap_or_default()
-                .into(),
+            error: core.library_notice.clone().unwrap_or_default().into(),
             acquire: "".into(),
             import_details: Vec::new(),
             playlist_issues: Vec::new(),

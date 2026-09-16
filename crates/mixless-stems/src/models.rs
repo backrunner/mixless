@@ -1,6 +1,9 @@
 //! Versioned, checksum-verified artifacts. No audio is sent over the network.
+#[cfg(stems_ort)]
 use crate::{Error, Progress, Result};
+#[cfg(stems_ort)]
 use sha2::{Digest, Sha256};
+#[cfg(stems_ort)]
 use std::{
     fs::File,
     io::{Read, Write},
@@ -10,14 +13,18 @@ use std::{
 
 pub const SEPARATOR_HASH: &str = "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a";
 pub const NOTES_HASH: &str = "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec";
+#[cfg(stems_ort)]
 const SEPARATOR_URL: &str = "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/d54ed9eb60e258ea82131c6ee14578628816456a/htdemucs_fp16weights.onnx";
+#[cfg(stems_ort)]
 const NOTES_URL: &str = "https://raw.githubusercontent.com/spotify/basic-pitch/v0.4.0/basic_pitch/saved_models/icassp_2022/nmp.onnx";
 
+#[cfg(stems_ort)]
 pub struct Paths {
     pub separator: PathBuf,
     pub notes: PathBuf,
 }
 
+#[cfg(stems_ort)]
 pub fn ensure(
     dir: &Path,
     download: bool,
@@ -50,6 +57,7 @@ pub fn ensure(
     })
 }
 
+#[cfg(stems_ort)]
 fn valid(path: &Path, expected: &str) -> Result<bool> {
     let mut file = match File::open(path) {
         Ok(f) => f,
@@ -68,6 +76,7 @@ fn valid(path: &Path, expected: &str) -> Result<bool> {
     Ok(format!("{:x}", digest.finalize()) == expected)
 }
 
+#[cfg(stems_ort)]
 #[allow(clippy::too_many_arguments)]
 fn artifact(
     dir: &Path,
@@ -134,7 +143,7 @@ fn artifact(
     result
 }
 
-#[cfg(test)]
+#[cfg(all(test, stems_ort))]
 mod tests {
     use super::*;
     #[test]

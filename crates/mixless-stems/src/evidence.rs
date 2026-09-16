@@ -1,9 +1,13 @@
+#[cfg(stems_ort)]
 use crate::{models, Stems};
+#[cfg(stems_ort)]
 use mixless_protocol::{StemAnalysis, StemFrame, StemKind, StemNote};
+#[cfg(stems_ort)]
 use rustfft::{num_complex::Complex, FftPlanner};
 
 pub const VERSION: u32 = 1;
 
+#[cfg(stems_ort)]
 pub fn extract(stems: &Stems, mut notes: Vec<StemNote>) -> StemAnalysis {
     const STEP: usize = 2205;
     const FFT: usize = 2048;
