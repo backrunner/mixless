@@ -85,13 +85,7 @@ OAuth PKCE + Web API + 本地 matcher。macOS Keychain。429 退避。只产出 
 
 Resolver 链、打分、落盘、lofty 打标签、磁盘配额。依赖：`protocol`、`library`。
 
-```rust
-impl AcquireService {
-    pub fn enqueue(&self, jobs: Vec<ResolveJob>) -> BatchId;
-    pub fn cancel(&self, id: BatchId);
-    pub fn progress(&self, id: BatchId) -> BatchProgress;
-}
-```
+批量入口是 `ImportService`（不是独立队列）：`spotify_playlist(&SpotifyPlaylistMeta, fetch, progress) -> ImportReport` 与 `local_files`。每行状态持久化在 `import_items`（queued/local/acquired/suspect/missing），重跑即续传。
 
 ## `mixless-acquire-yt`
 

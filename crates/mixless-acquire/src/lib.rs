@@ -1,8 +1,9 @@
 pub mod imports;
 pub mod local_paths;
 mod matching;
-pub use matching::{candidate_score, local_match, normalize};
-use mixless_protocol::BatchId;
+pub use matching::{
+    MatchKey, candidate_score, could_match, job_key, local_match, normalize, track_key,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -21,37 +22,6 @@ pub struct ResolveJob {
     pub isrc: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcquireProgress {
-    pub index: usize,
-    pub total: usize,
-    pub title: String,
-    pub status: String,
-    pub path: Option<String>,
-}
-
 pub fn duration_ok(got_ms: u32, want_ms: u32) -> bool {
     got_ms > 0 && want_ms > 0 && got_ms.abs_diff(want_ms) <= 5000
-}
-
-pub fn search_query(job: &ResolveJob) -> String {
-    format!("{} {}", job.artist, job.title)
-}
-
-pub struct AcquireService;
-
-impl AcquireService {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn enqueue(&self, _jobs: Vec<ResolveJob>) -> BatchId {
-        BatchId(0)
-    }
-}
-
-impl Default for AcquireService {
-    fn default() -> Self {
-        Self::new()
-    }
 }

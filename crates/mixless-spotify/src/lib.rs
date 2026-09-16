@@ -162,11 +162,20 @@ fn parse_embed(html: &str, fallback_id: &str) -> Result<SpotifyPlaylistMeta, Spo
             isrc: None,
         });
     }
+    let total_tracks = entity["trackCount"].as_u64().map(|n| n as usize);
+    let warning = match total_tracks {
+        Some(total) if total > tracks.len() => Some(format!(
+            "Public preview lists {} of {} tracks; the rest are only available with Spotify login.",
+            tracks.len(),
+            total
+        )),
+        _ => Some("Public Spotify preview: the full playlist count is not verified. Private playlists require login.".into()),
+    };
     Ok(SpotifyPlaylistMeta {
         id: fallback_id.into(), name: entity["name"].as_str().unwrap_or("Spotify playlist").into(),
         owner: entity["subtitle"].as_str().unwrap_or("").into(), tracks,
-        total_tracks: entity["trackCount"].as_u64().map(|n|n as usize),
-        warning: Some("Public Spotify preview: the full playlist count is not verified. Private playlists require login.".into()),
+        total_tracks,
+        warning,
     })
 }
 

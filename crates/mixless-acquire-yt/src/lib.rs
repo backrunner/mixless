@@ -61,6 +61,18 @@ impl YoutubeMusicAcquire {
         }
         fs::create_dir_all(dest).map_err(|e| err(e.to_string()))?;
         let dest = dest.canonicalize().map_err(|e| err(e.to_string()))?;
+        // Reap staging dirs left behind by a force-quit mid-download. The
+        // destination may be a user-visible folder, so litter matters.
+        for entry in fs::read_dir(&dest).into_iter().flatten().flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".mixless-")
+                && entry.file_type().is_ok_and(|t| t.is_dir())
+            {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
         let final_path = dest.join(format!("{}.m4a", job.spotify_id));
         // The importer revalidates the actual decoder duration even on reuse.
         if final_path.is_file() && fs::metadata(&final_path).is_ok_and(|m| m.len() > 0) {
@@ -119,8 +131,12 @@ impl YoutubeMusicAcquire {
             return Err(err("downloader returned an invalid audio file"));
         }
         // Stable remote IDs avoid non-ASCII title collisions and prefix matches
-        // accidentally loading a thumbnail or JSON sidecar as audio.
-        fs::hard_link(&path, &final_path).map_err(|e| err(format!("publish audio: {e}")))?;
+        // accidentally loading a thumbnail or JSON sidecar as audio. Staging
+        // lives inside `dest`, so rename stays on one volume and also works on
+        // filesystems without hard links (exFAT/FAT32 removable drives).
+        fs::rename(&path, &final_path)
+            .or_else(|_| fs::hard_link(&path, &final_path))
+            .map_err(|e| err(format!("publish audio: {e}")))?;
         let provenance = serde_json::json!({"spotify_id":job.spotify_id,"source_url":format!("https://www.youtube.com/watch?v={}",chosen.id),"title":chosen.title,"artist":chosen.artist,"duration_ms":chosen.duration_ms,"score":chosen.score});
         let _ = fs::write(
             dest.join(format!("{}.json", job.spotify_id)),

@@ -33,10 +33,6 @@ pub struct TrackId(pub i64);
 pub struct PlaylistId(pub i64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct BatchId(pub i64);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EqBand {
     Low,

@@ -73,6 +73,43 @@ pub fn local_match(job: &ResolveJob, track: &Track) -> bool {
         && job.duration_ms.abs_diff(track.duration_ms) <= 2000
 }
 
+/// The identity fields `local_match` compares, normalized once per job/track.
+/// `could_match` must stay a necessary condition of `local_match` so callers
+/// can skip non-candidates without changing matching semantics.
+pub struct MatchKey {
+    title: String,
+    artist: String,
+    isrc: Option<String>,
+}
+pub fn job_key(job: &ResolveJob) -> MatchKey {
+    MatchKey {
+        title: normalize(&job.title),
+        artist: normalize(&job.artist),
+        isrc: job
+            .isrc
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(str::to_ascii_lowercase),
+    }
+}
+pub fn track_key(track: &Track) -> MatchKey {
+    MatchKey {
+        title: normalize(&track.title),
+        artist: normalize(&track.artist),
+        isrc: track
+            .isrc
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(str::to_ascii_lowercase),
+    }
+}
+/// Fast reject: true whenever `local_match` could return true for the pair.
+/// Survivors still go through `local_match` itself.
+pub fn could_match(job: &MatchKey, track: &MatchKey) -> bool {
+    (job.isrc.is_some() && job.isrc == track.isrc)
+        || (job.title == track.title && job.artist == track.artist)
+}
+
 /// Metadata must agree before downloading. Duration alone never proves identity.
 pub fn candidate_score(
     job: &ResolveJob,

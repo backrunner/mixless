@@ -1,6 +1,8 @@
 //! Import orchestration runs on a host worker. A row is ready only after the
 //! engine's decoder and offline analysis have accepted the actual local file.
-use crate::{AcquireError, ResolveJob, duration_ok, local_match};
+use crate::{
+    AcquireError, ResolveJob, could_match, duration_ok, job_key, local_match, track_key,
+};
 use mixless_analyze::{ANALYSIS_VERSION, Analyzer};
 use mixless_library::{ImportItem, Library, content_hash};
 use mixless_protocol::{PlaylistId, TrackId};
@@ -153,6 +155,10 @@ impl ImportService<'_> {
             .map_err(|e| e.to_string())?;
         let previous = self.library.import_items(pid).map_err(|e| e.to_string())?;
         let mut tracks = self.library.list_tracks().map_err(|e| e.to_string())?;
+        // Normalize each track's identity once up front; `could_match` then
+        // skips non-candidates so `local_match` does not re-normalize the whole
+        // library for every playlist row.
+        let mut keys: Vec<_> = tracks.iter().map(track_key).collect();
         let mut rows: Vec<_> = playlist
             .tracks
             .iter()
@@ -221,9 +227,16 @@ impl ImportService<'_> {
                             .find(|t| t.id == id && Path::new(&t.path).is_file())
                     })
                     .or_else(|| {
+                        let want = job_key(&job);
                         tracks
                             .iter()
-                            .find(|t| local_match(&job, t) && Path::new(&t.path).is_file())
+                            .zip(&keys)
+                            .find(|&(t, key)| {
+                                could_match(&want, key)
+                                    && local_match(&job, t)
+                                    && Path::new(&t.path).is_file()
+                            })
+                            .map(|(t, _)| t)
                     });
                 if let Some(track) = local {
                     if let Ok(id) = self.audio(Path::new(&track.path), Some(job.duration_ms)) {
@@ -232,7 +245,22 @@ impl ImportService<'_> {
                     // Missing/stale/corrupt matches may be replaced by the provider.
                 }
                 let path = fetch(&job).map_err(|e| e.to_string())?;
-                let id = self.audio(&path, Some(job.duration_ms))?;
+                let id = match self.audio(&path, Some(job.duration_ms)) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        // Provider downloads are named `<spotify id>.<ext>`;
+                        // only those are removed so a rejected download cannot
+                        // satisfy the provider's reuse check on the next retry.
+                        if path
+                            .file_stem()
+                            .is_some_and(|s| s == job.spotify_id.as_str())
+                        {
+                            let _ = std::fs::remove_file(&path);
+                            let _ = std::fs::remove_file(path.with_extension("json"));
+                        }
+                        return Err(error);
+                    }
+                };
                 self.library
                     .set_recording_metadata(id, &job.title, &job.artist, job.isrc.as_deref())
                     .map_err(|e| e.to_string())?;
@@ -250,7 +278,11 @@ impl ImportService<'_> {
                     }
                     .into();
                     if let Ok(track) = self.library.get_track(id) {
-                        tracks.retain(|t| t.id != id);
+                        if let Some(pos) = tracks.iter().position(|t| t.id == id) {
+                            tracks.remove(pos);
+                            keys.remove(pos);
+                        }
+                        keys.push(track_key(&track));
                         tracks.push(track);
                     }
                 }
@@ -619,6 +651,35 @@ mod tests {
         assert_eq!(again.playlist, Some(pid));
     }
     #[test]
+    fn isrc_reuses_a_local_file_even_when_title_and_artist_differ() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(&dir.path().join("lib.db")).unwrap();
+        let analyzer = Analyzer::new();
+        let service = ImportService {
+            library: &lib,
+            analyzer: &analyzer,
+        };
+        let path = dir.path().join("local.wav");
+        wav(&path, 1, 16);
+        let id = service.import_local_file(&path).unwrap();
+        lib.set_recording_metadata(id, "Local Name", "Local Artist", Some("USXJA1"))
+            .unwrap();
+        let mut meta = remote('a', "Other Name", 1);
+        meta.isrc = Some("usxja1".into());
+        let report = service
+            .spotify_playlist(
+                &playlist("remote", vec![meta]),
+                |_| panic!("isrc match must not call provider"),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(report.local, 1);
+        assert_eq!(
+            lib.playlist_tracks(report.playlist.unwrap()).unwrap()[0].id,
+            id
+        );
+    }
+    #[test]
     fn missing_suspect_and_failed_downloads_cannot_enter_automix_and_can_be_retried() {
         let dir = tempfile::tempdir().unwrap();
         let lib = Library::open(&dir.path().join("lib.db")).unwrap();
@@ -668,6 +729,35 @@ mod tests {
             .unwrap();
         assert_eq!(retry.local + retry.acquired, 3);
         assert_eq!(lib.playlist_tracks(pid).unwrap().len(), 3);
+    }
+    #[test]
+    fn rejected_provider_files_are_removed_so_retries_fetch_a_new_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(&dir.path().join("lib.db")).unwrap();
+        let analyzer = Analyzer::new();
+        let service = ImportService {
+            library: &lib,
+            analyzer: &analyzer,
+        };
+        // Provider naming: `<spotify id>.<ext>` plus a `.json` provenance file.
+        let dest = dir.path().join("downloads");
+        std::fs::create_dir_all(&dest).unwrap();
+        let id = "b".repeat(22);
+        let fetched = dest.join(format!("{id}.wav"));
+        let sidecar = dest.join(format!("{id}.json"));
+        wav(&fetched, 1, 16);
+        std::fs::write(&sidecar, "{}").unwrap();
+        let p = playlist("remote", vec![remote('b', "Wrong Version", 8)]);
+        let report = service
+            .spotify_playlist(&p, |_| Ok(fetched.clone()), |_| {})
+            .unwrap();
+        assert_eq!(report.suspect, 1);
+        assert!(!fetched.exists() && !sidecar.exists());
+        wav(&fetched, 8, 16);
+        let retry = service
+            .spotify_playlist(&p, |_| Ok(fetched.clone()), |_| {})
+            .unwrap();
+        assert_eq!(retry.acquired, 1);
     }
     #[test]
     fn invalid_playlist_replacement_rolls_back_existing_rows() {
