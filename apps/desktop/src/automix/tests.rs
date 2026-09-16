@@ -91,12 +91,17 @@ fn auto_repeats_playlist_and_can_resume_from_a_manual_overlap() {
         (worker, rx)
     };
     let (worker, rx) = spawn(1);
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // The automation clock only advances inside render_offline while worker
+    // staging runs on the wall clock, so bound the run by rendered audio and
+    // keep a generous deadline purely as a hang backstop.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut rendered = 0u64;
     let mut history = vec![];
     let mut last_pair = None;
     let mut disabled = false;
-    while Instant::now() < deadline {
+    while rendered < 300 * 48_000 && Instant::now() < deadline {
         let audio = core.engine.render_offline(480);
+        rendered += (audio.len() / 2) as u64;
         assert!(audio.iter().all(|s| s.is_finite() && s.abs() <= 1.));
         let snapshot = core.engine.snapshot();
         if snapshot.automix_on {
@@ -118,6 +123,11 @@ fn auto_repeats_playlist_and_can_resume_from_a_manual_overlap() {
                 disabled = true;
                 break;
             }
+        } else {
+            // Between pairs the worker stages the next transition in real
+            // time; pace the gap near realtime so fast rendering cannot run
+            // the playing deck into EOF before the next plan is committed.
+            std::thread::sleep(Duration::from_millis(15));
         }
         for msg in rx.try_iter() {
             match msg {
@@ -128,7 +138,6 @@ fn auto_repeats_playlist_and_can_resume_from_a_manual_overlap() {
                 _ => {}
             }
         }
-        std::thread::sleep(Duration::from_millis(3));
     }
     epoch.store(2, Ordering::Release);
     worker.join().unwrap();
@@ -155,10 +164,12 @@ fn auto_repeats_playlist_and_can_resume_from_a_manual_overlap() {
         .unwrap();
     epoch.store(3, Ordering::Release);
     let (worker, rx) = spawn(3);
-    let deadline = Instant::now() + Duration::from_secs(4);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut rendered = 0u64;
     let mut resumed = false;
-    while Instant::now() < deadline {
+    while rendered < 120 * 48_000 && Instant::now() < deadline {
         core.engine.render_offline(480);
+        rendered += 480;
         if core.engine.snapshot().automix_on {
             resumed = true;
             break;
@@ -166,7 +177,9 @@ fn auto_repeats_playlist_and_can_resume_from_a_manual_overlap() {
         if let Ok(AutomixMsg::Done(result)) = rx.try_recv() {
             panic!("AUTO could not reenable: {result:?}");
         }
-        std::thread::sleep(Duration::from_millis(3));
+        // The replacement worker settles the manual overlap on the wall
+        // clock; pace the render loop near realtime until AUTO returns.
+        std::thread::sleep(Duration::from_millis(15));
     }
     epoch.store(4, Ordering::Release);
     worker.join().unwrap();
