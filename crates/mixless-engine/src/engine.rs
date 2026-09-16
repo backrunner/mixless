@@ -93,6 +93,8 @@ struct DeckRt {
     slip_position: f64,
     amplitude: SmoothValue,
     gain: SmoothValue,
+    balance_l: SmoothValue,
+    balance_r: SmoothValue,
     eq: [SmoothValue; 3],
     step: SmoothValue,
     step_target: f32,
@@ -155,6 +157,7 @@ struct DeckSlot {
     keylock: AtomicBool,
     fader: AtomicU32,      // 0..1000
     gain_milli: AtomicU32, // (db + 96) * 100
+    balance_milli: AtomicU32, // (balance + 1) * 500
     eq_db: [AtomicU32; 3], // (db + 96) * 100
     eq_kill: [AtomicBool; 3],
     filter_milli: AtomicU32, // (amount + 1) * 500

@@ -19,6 +19,7 @@ impl DeckSlot {
             keylock: AtomicBool::new(true),
             fader: AtomicU32::new(1000),
             gain_milli: AtomicU32::new(9600),
+            balance_milli: AtomicU32::new(500),
             eq_db: [
                 AtomicU32::new(9600),
                 AtomicU32::new(9600),
@@ -196,6 +197,7 @@ impl Shared {
                 ),
                 fader: s.fader.load(Ordering::Relaxed) as f32 / 1000.0,
                 gain_db: s.gain_milli.load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
+                balance: s.balance_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0,
                 send: s.send_milli.load(Ordering::Relaxed) as f32 / 1000.0,
                 pfl: s.pfl.load(Ordering::Relaxed),
                 automix_cue_frame: s.automix_cue.load(Ordering::Relaxed).checked_sub(1),

@@ -59,6 +59,7 @@ fn load(
                 semitones: 0.,
             },
             Command::SetChannelGain { deck, db: 0. },
+            Command::SetBalance { deck, value: 0. },
             Command::SetChannelFader { deck, value: 1. },
             Command::SetChannelFilter { deck, amount: 0. },
             Command::SetFxSend { deck, value: 0. },

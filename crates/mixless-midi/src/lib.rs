@@ -70,6 +70,7 @@ pub enum MidiTarget {
     CueGain,
     Fader { deck: DeckId },
     Gain { deck: DeckId },
+    Balance { deck: DeckId },
     Eq { deck: DeckId, band: EqBand },
     Filter { deck: DeckId },
     Resonance { deck: DeckId },
@@ -89,6 +90,7 @@ impl MidiTarget {
             Self::CueGain => "Headphone volume".into(),
             Self::Fader { deck } => format!("Deck {deck:?} / Channel fader"),
             Self::Gain { deck } => format!("Deck {deck:?} / Trim"),
+            Self::Balance { deck } => format!("Deck {deck:?} / Balance"),
             Self::Eq { deck, band } => format!("Deck {deck:?} / EQ {band:?}"),
             Self::Filter { deck } => format!("Deck {deck:?} / Filter"),
             Self::Resonance { deck } => format!("Deck {deck:?} / Resonance"),
@@ -109,6 +111,7 @@ impl MidiTarget {
                 Self::Sync { deck },
                 Self::Fader { deck },
                 Self::Gain { deck },
+                Self::Balance { deck },
                 Self::Filter { deck },
                 Self::Resonance { deck },
                 Self::Tempo { deck },
@@ -436,6 +439,10 @@ fn target_to_cmd(target: &MidiTarget, val: u8) -> Command {
         MidiTarget::Gain { deck } => Command::SetChannelGain {
             deck,
             db: n * 24.0 - 12.0,
+        },
+        MidiTarget::Balance { deck } => Command::SetBalance {
+            deck,
+            value: n * 2.0 - 1.0,
         },
         MidiTarget::Eq { deck, band } => Command::SetEq {
             deck,

@@ -131,6 +131,11 @@ pub enum Command {
         deck: DeckId,
         db: f32,
     },
+    /// Stereo balance, -1.0 (full left) ..= 1.0 (full right), 0.0 = center.
+    SetBalance {
+        deck: DeckId,
+        value: f32,
+    },
     SetStemGain {
         deck: DeckId,
         stem: crate::StemKind,

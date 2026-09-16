@@ -85,7 +85,8 @@ impl Render for UiState {
         let width_scale = (viewport_width / 1440.0).clamp(0.82, 1.0);
         let compact_height = viewport_height < 870.0;
         let mixer_width = 288.0;
-        let deck_min_width = (340.0 * width_scale).max(300.0);
+        // +50px floor for the per-deck channel strip beside the jog.
+        let deck_min_width = (340.0 * width_scale).max(350.0);
         let vertical_wave_width = 72.0 * width_scale;
         let wave_strip_height = if compact_height { 48.0 } else { 60.0 };
         let library_height = 160.0;

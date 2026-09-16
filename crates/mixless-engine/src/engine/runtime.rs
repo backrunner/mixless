@@ -27,6 +27,8 @@ impl DeckRt {
             slip_position: 0.0,
             amplitude: SmoothValue::new(0.0, sr, 0.001),
             gain: SmoothValue::new(0.8, sr, 0.003),
+            balance_l: SmoothValue::new(1.0, sr, 0.003),
+            balance_r: SmoothValue::new(1.0, sr, 0.003),
             eq: std::array::from_fn(|_| SmoothValue::new(1.0, sr, 0.005)),
             step: SmoothValue::new(1.0, sr, 0.002),
             step_target: 1.0,
@@ -280,8 +282,8 @@ impl Shared {
         let trim = rt.cue_trim.next();
         rt.cue_sample = [stereo[0] * trim, stereo[1] * trim];
         let gain = rt.gain.next();
-        l = stereo[0] * gain;
-        r = stereo[1] * gain;
+        l = stereo[0] * gain * rt.balance_l.next();
+        r = stereo[1] * gain * rt.balance_r.next();
         rt.last_l = l;
         rt.last_r = r;
         (l, r)

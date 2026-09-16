@@ -96,6 +96,9 @@ impl Shared {
                     sr,
                     0.003,
                 );
+                let balance = slot.balance_milli.load(Ordering::Relaxed) as f32 / 500. - 1.;
+                deck.balance_l = SmoothValue::new(1. - balance.max(0.), sr, 0.003);
+                deck.balance_r = SmoothValue::new(1. + balance.min(0.), sr, 0.003);
                 deck.music.invalidate();
                 deck.music_mode = false;
                 deck.music_blend = SmoothValue::new(0.0, sr, 0.006);
@@ -235,6 +238,11 @@ impl Shared {
             deck.cue_trim.set(trim);
             deck.gain
                 .set(trim * slot.fader.load(Ordering::Relaxed) as f32 / 1000.0);
+            // Linear balance: center passes both channels at unity, each
+            // extreme silences the opposite side.
+            let balance = slot.balance_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0;
+            deck.balance_l.set(1.0 - balance.max(0.0));
+            deck.balance_r.set(1.0 + balance.min(0.0));
             let amount = slot.filter_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0;
             let resonance = if slot.resonance_enabled.load(Ordering::Relaxed) {
                 slot.resonance_milli.load(Ordering::Relaxed) as f32 / 1000.0

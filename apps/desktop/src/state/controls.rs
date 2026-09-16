@@ -8,6 +8,7 @@ impl UiState {
             KnobCtl::Master => 0.8,
             KnobCtl::Key(_) => 0.0,
             KnobCtl::Gain(_) => 0.0,
+            KnobCtl::Balance(_) => 0.0,
             KnobCtl::Filter(_) => 0.0,
             KnobCtl::Resonance(_) => 0.35,
             KnobCtl::Eq(_, _) => 0.0,
@@ -271,6 +272,7 @@ impl UiState {
             KnobCtl::Master => self.snapshot.master,
             KnobCtl::Key(d) => self.deck(d).pitch_semitones,
             KnobCtl::Gain(d) => self.deck(d).gain_db,
+            KnobCtl::Balance(d) => self.deck(d).balance,
             KnobCtl::Filter(d) => self.deck(d).filter_amount,
             KnobCtl::Resonance(d) => self.deck(d).filter_resonance,
             KnobCtl::Eq(d, band) => self.deck(d).eq_db[band.index()],
@@ -292,6 +294,7 @@ impl UiState {
                 semitones: v,
             }),
             KnobCtl::Gain(d) => self.dispatch(Command::SetChannelGain { deck: d, db: v }),
+            KnobCtl::Balance(d) => self.dispatch(Command::SetBalance { deck: d, value: v }),
             KnobCtl::Filter(d) => self.dispatch(Command::SetChannelFilter { deck: d, amount: v }),
             KnobCtl::Resonance(d) => self.dispatch(Command::SetFilterResonance {
                 deck: d,

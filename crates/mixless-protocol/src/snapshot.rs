@@ -34,6 +34,9 @@ pub struct DeckSnapshot {
     pub hp_hz: f32,
     pub fader: f32,
     pub gain_db: f32,
+    /// Stereo balance, -1.0 ..= 1.0, 0.0 = center.
+    #[serde(default)]
+    pub balance: f32,
     pub send: f32,
     pub pfl: bool,
     #[serde(default)]
@@ -103,6 +106,7 @@ impl Default for DeckSnapshot {
             hp_hz: 20.0,
             fader: 1.0,
             gain_db: 0.0,
+            balance: 0.0,
             send: 0.0,
             pfl: false,
             automix_cue_frame: None,

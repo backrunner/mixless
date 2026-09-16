@@ -200,7 +200,11 @@ pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
     });
 
     div()
-        .id(ElementId::Name(SharedString::from(format!("knob-{ctl:?}"))))
+        // Label participates in the id so the same engine parameter can be
+        // bound twice on screen (e.g. mixer TRIM and deck GAIN).
+        .id(ElementId::Name(SharedString::from(format!(
+            "knob-{ctl:?}-{label}"
+        ))))
         .flex()
         .flex_col()
         .items_center()

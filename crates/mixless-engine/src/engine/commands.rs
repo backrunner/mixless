@@ -23,6 +23,7 @@ impl Engine {
             Command::SetCrossfader { value }
             | Command::SetMaster { value }
             | Command::SetChannelFader { value, .. }
+            | Command::SetBalance { value, .. }
             | Command::SetStemGain { value, .. }
             | Command::SetFxSend { value, .. }
             | Command::SetCueGain { value } => value.is_finite(),
@@ -197,6 +198,12 @@ impl Shared {
                 let v = ((db.clamp(-96.0, 12.0) + 96.0) * 100.0) as u32;
                 self.decks[deck.index()]
                     .gain_milli
+                    .store(v, Ordering::Relaxed);
+            }
+            Command::SetBalance { deck, value } => {
+                let v = ((value.clamp(-1.0, 1.0) + 1.0) * 500.0).round() as u32;
+                self.decks[deck.index()]
+                    .balance_milli
                     .store(v, Ordering::Relaxed);
             }
             Command::SetStemGain { deck, stem, value } => {

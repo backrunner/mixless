@@ -1,6 +1,7 @@
 //! Deck panel composition and shared display helpers. Each child owns one
 //! visual section; FX slot rendering lives with the FX editor.
 
+mod channel;
 mod header;
 mod performance;
 mod stems;
@@ -48,6 +49,7 @@ impl UiState {
         let panel_padding = if compact_height { 8.0 } else { 12.0 };
         let header = self.render_deck_header(cx, deck, &d);
         let tempo_stack = self.render_deck_tempo(cx, deck, &d);
+        let channel = self.render_deck_channel(cx, deck, &d, compact_height);
 
         /* center: the jog fills all remaining deck space ----------------------- */
 
@@ -91,7 +93,8 @@ impl UiState {
             .gap(px(inner_gap))
             .when(flip, |el| el.flex_row_reverse())
             .child(tempo_stack)
-            .child(center_col);
+            .child(center_col)
+            .child(channel);
 
         let perform = self.render_deck_performance(cx, deck, &d, inner_gap);
 
