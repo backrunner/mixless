@@ -17,4 +17,7 @@ fail() { echo "verify-macos-dmg: $*" >&2; exit 1; }
 [ "$(readlink "${mount}/Applications")" = "/Applications" ] || fail "Applications symlink target wrong"
 [ -f "${mount}/.DS_Store" ] || fail "Finder layout (.DS_Store) missing"
 plutil -lint "${mount}/Mixless.app/Contents/Info.plist" >/dev/null || fail "Info.plist invalid"
+# The updater runs this exact check before installing; keep the pipeline
+# honest so a detritus xattr can never ship again.
+codesign --verify --deep --strict "${mount}/Mixless.app" || fail "app fails strict codesign"
 echo "verify-macos-dmg: OK"

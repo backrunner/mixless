@@ -26,4 +26,19 @@ dmgbuild -s "${root}/scripts/dmg-settings.py" \
     -D "app=${app}" \
     -D "background=${tmp}/background.png" \
     "${volname}" "${out}"
+
+# dmgbuild positions icons by scripting Finder on a mounted read-write
+# scratch image, and Finder stamps com.apple.FinderInfo on the .app —
+# `codesign --verify --strict` then rejects the installed bundle as
+# detritus. Roundtrip the image and strip every xattr off the app.
+rw="${tmp}/rw.dmg"
+mnt="${tmp}/mnt"
+mkdir -p "${mnt}"
+hdiutil convert "${out}" -format UDRW -o "${rw}" >/dev/null
+hdiutil attach "${rw}" -nobrowse -mountpoint "${mnt}" >/dev/null
+xattr -cr "${mnt}/Mixless.app"
+hdiutil detach "${mnt}" -quiet
+hdiutil convert "${rw}" -format UDZO -o "${out}.tmp" >/dev/null
+mv "${out}.tmp" "${out}"
+
 echo "DMG: ${out}"
