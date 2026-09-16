@@ -38,9 +38,11 @@ impl UiState {
         if quiet {
             return true;
         }
-        self.update_notice_hold = matches!(
+        // In-flight states hold until the next transition; only terminal
+        // notices (up-to-date, failed) fade on the timer.
+        self.update_notice_hold = !matches!(
             entry.status,
-            Status::Downloading { .. } | Status::Installing { .. } | Status::Ready { .. }
+            Status::UpToDate | Status::Failed(_)
         );
         self.update_notice_at = Some(Instant::now());
         self.update_notice = notice(&entry).into();

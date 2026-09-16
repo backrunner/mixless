@@ -3,6 +3,7 @@ name = "mixless-desktop"
 version.workspace = true
 edition = "2024"
 license.workspace = true
+repository.workspace = true
 description = "Mixless GPUI desktop app. No web, no DSP outside mixless-engine."
 
 [[bin]]

@@ -95,9 +95,15 @@ fn main() {
                         cx.background_executor().timer(UI_FRAME_INTERVAL).await;
                         if this
                             .update(cx, |state, cx| {
+                                // Poll unconditionally: the animating flag is
+                                // derived from poll-refreshed state, so gating
+                                // poll on it can latch a dead render chain and
+                                // freeze every polled surface for good.
                                 let animating = state.needs_continuous_repaint();
-                                let changed = !animating && state.poll();
-                                if !animating && (changed || state.needs_continuous_repaint()) {
+                                let changed = state.poll();
+                                if changed
+                                    || (!animating && state.needs_continuous_repaint())
+                                {
                                     cx.notify();
                                 }
                             })

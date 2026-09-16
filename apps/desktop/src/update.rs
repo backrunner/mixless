@@ -81,6 +81,11 @@ pub fn start(core: Arc<AppCore>, manual: bool) {
     }
     std::thread::spawn(move || {
         let report = |status: Status| {
+            if matches!(status, Status::Downloading { .. }) {
+                tracing::debug!(?status, "update status");
+            } else {
+                tracing::info!(?status, manual, "update status");
+            }
             *core.update.lock().expect("update status") = Some(Entry { status, manual });
         };
         let status = run(&report).unwrap_or_else(Status::Failed);
@@ -169,6 +174,11 @@ mod macos {
     }
 
     fn manifest(channel: &str) -> Result<Manifest, String> {
+        // Test hook: point the updater at a local feed to exercise the whole
+        // download/verify/install path without publishing a release.
+        if let Some(url) = env::var_os("MIXLESS_UPDATE_MANIFEST_URL") {
+            return get_json(&url.to_string_lossy());
+        }
         let repo = env!("CARGO_PKG_REPOSITORY");
         let name = format!("mixless-{channel}-latest.json");
         if channel == "stable" {
@@ -343,7 +353,7 @@ mod macos {
         if !status.success() {
             return Err("Update signature verification failed".into());
         }
-        let status = Command::new("/usr/bin/spctl")
+        let status = Command::new("/usr/sbin/spctl")
             .args(["--assess", "--type", "execute"])
             .arg(app)
             .status()
