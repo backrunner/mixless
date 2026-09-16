@@ -155,10 +155,10 @@ struct DeckSlot {
     rate_micro: AtomicU32,  // rate * 1000000
     pitch_centi: AtomicU32, // (semitones + 24) * 100
     keylock: AtomicBool,
-    fader: AtomicU32,      // 0..1000
-    gain_milli: AtomicU32, // (db + 96) * 100
+    fader: AtomicU32,         // 0..1000
+    gain_milli: AtomicU32,    // (db + 96) * 100
     balance_milli: AtomicU32, // (balance + 1) * 500
-    eq_db: [AtomicU32; 3], // (db + 96) * 100
+    eq_db: [AtomicU32; 3],    // (db + 96) * 100
     eq_kill: [AtomicBool; 3],
     filter_milli: AtomicU32, // (amount + 1) * 500
     resonance_milli: AtomicU32,

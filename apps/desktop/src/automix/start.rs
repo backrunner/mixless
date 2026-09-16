@@ -75,13 +75,7 @@ pub(super) fn fade_in(
         if t > last {
             let ease = t * t * t * (10. + t * (-15. + 6. * t));
             guarded(core, &active, || {
-                command(
-                    core,
-                    Command::SetChannelFader {
-                        deck,
-                        value: ease,
-                    },
-                )?;
+                command(core, Command::SetChannelFader { deck, value: ease })?;
                 command(
                     core,
                     Command::SetChannelFilter {

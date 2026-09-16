@@ -150,7 +150,11 @@ impl Isolator {
         let mid = self.mid_lp.process(upper_split);
         let high = self.high_hp.process(upper_split);
         let g = |i: usize, v: f32| {
-            if self.kill[i] { 0.0 } else { v * self.gain[i] }
+            if self.kill[i] {
+                0.0
+            } else {
+                v * self.gain[i]
+            }
         };
         // Resonance follows the exposed crossover. Neutral and all-kill remain
         // unchanged; smoothing avoids a click when preferences change mid-track.
@@ -313,7 +317,11 @@ impl SmoothValue {
 }
 
 pub fn flush_small(value: f32) -> f32 {
-    if value.abs() < 1e-20 { 0.0 } else { value }
+    if value.abs() < 1e-20 {
+        0.0
+    } else {
+        value
+    }
 }
 
 pub fn db_to_lin(db: f32) -> f32 {

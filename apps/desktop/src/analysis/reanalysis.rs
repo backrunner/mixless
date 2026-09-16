@@ -112,22 +112,24 @@ mod tests {
         core.engine.render_offline(4800);
         let before = core.engine.snapshot().decks[0].frame;
         reanalyze(&core, id, false).unwrap();
-        assert!(core
-            .library
-            .cues(id)
-            .unwrap()
-            .iter()
-            .any(|c| c.index == 7 && c.user_set));
+        assert!(
+            core.library
+                .cues(id)
+                .unwrap()
+                .iter()
+                .any(|c| c.index == 7 && c.user_set)
+        );
         assert!(core.engine.snapshot().decks[0].cues[7].is_some());
         reanalyze(&core, id, true).unwrap();
         assert!(core.library.cues(id).unwrap().iter().all(|c| !c.user_set));
         assert!(core.engine.snapshot().decks[0].cues[7].is_none());
         assert!(core.engine.snapshot().decks[0].playing);
         assert_eq!(core.engine.snapshot().decks[0].frame, before);
-        assert!(core
-            .engine
-            .render_offline(480)
-            .iter()
-            .any(|v| v.abs() > 0.01));
+        assert!(
+            core.engine
+                .render_offline(480)
+                .iter()
+                .any(|v| v.abs() > 0.01)
+        );
     }
 }

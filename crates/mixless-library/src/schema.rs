@@ -43,7 +43,10 @@ const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
             "mtime",
         ],
     ),
-    ("file_verification", &["path", "fingerprint", "content_hash"]),
+    (
+        "file_verification",
+        &["path", "fingerprint", "content_hash"],
+    ),
     ("cues", &["track_id", "idx", "frame", "kind", "user_set"]),
     (
         "track_analysis",
@@ -54,10 +57,7 @@ const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
         &["track_id", "content_hash", "version", "duration", "payload"],
     ),
     ("playlists", &["id", "name"]),
-    (
-        "playlist_items",
-        &["playlist_id", "position", "track_id"],
-    ),
+    ("playlist_items", &["playlist_id", "position", "track_id"]),
     ("playlist_exclusions", &["playlist_id", "track_id"]),
     ("library_order", &["track_id", "position"]),
     ("cue_versions", &["track_id", "version"]),

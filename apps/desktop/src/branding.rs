@@ -44,9 +44,13 @@ unsafe extern "C" {
 }
 pub fn configure_main_window() {
     #[cfg(target_os = "macos")]
-    unsafe { mixless_configure_main_window(); }
+    unsafe {
+        mixless_configure_main_window();
+    }
 }
 pub fn drag_main_window() {
     #[cfg(target_os = "macos")]
-    unsafe { mixless_drag_main_window(); }
+    unsafe {
+        mixless_drag_main_window();
+    }
 }

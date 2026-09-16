@@ -1,7 +1,7 @@
 use crate::theme;
 use gpui::{
-    App, Bounds, Context, FocusHandle, IntoElement, Render, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, div, prelude::*, px, size,
+    App, Bounds, Context, FocusHandle, IntoElement, Render, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, size,
 };
 
 pub struct About {
@@ -102,9 +102,7 @@ fn info_row(label: &str, value: String, last: bool) -> gpui::Div {
         .px_4()
         .py_2()
         .min_h(px(30.))
-        .when(!last, |el| {
-            el.border_b_1().border_color(theme::LINE_SOFT)
-        })
+        .when(!last, |el| el.border_b_1().border_color(theme::LINE_SOFT))
         .child(div().text_color(theme::MUTED).child(label.to_string()))
         .child(div().child(value))
 }

@@ -1,10 +1,8 @@
 //! Import orchestration runs on a host worker. A row is ready only after the
 //! engine's decoder and offline analysis have accepted the actual local file.
-use crate::{
-    AcquireError, ResolveJob, could_match, duration_ok, job_key, local_match, track_key,
-};
-use mixless_analyze::{ANALYSIS_VERSION, Analyzer};
-use mixless_library::{ImportItem, Library, content_hash};
+use crate::{could_match, duration_ok, job_key, local_match, track_key, AcquireError, ResolveJob};
+use mixless_analyze::{Analyzer, ANALYSIS_VERSION};
+use mixless_library::{content_hash, ImportItem, Library};
 use mixless_protocol::{PlaylistId, TrackId};
 use mixless_spotify::SpotifyPlaylistMeta;
 use std::path::{Path, PathBuf};
@@ -510,12 +508,11 @@ mod tests {
             .iter()
             .find(|path| path.extension().unwrap() == "wav")
             .unwrap();
-        assert!(
-            lib.playlist_tracks(selected)
-                .unwrap()
-                .iter()
-                .all(|t| Path::new(&t.path).parent() == first_ready.parent())
-        );
+        assert!(lib
+            .playlist_tracks(selected)
+            .unwrap()
+            .iter()
+            .all(|t| Path::new(&t.path).parent() == first_ready.parent()));
 
         let new = first.join("new.wav");
         wav(&new, 1, 16);
@@ -567,11 +564,10 @@ mod tests {
         let first = lib.list_tracks().unwrap().remove(0);
         assert!(first.analyzed);
         assert_eq!(first.duration_ms, 1000);
-        assert!(
-            lib.load_analysis(first.id, ANALYSIS_VERSION)
-                .unwrap()
-                .is_some()
-        );
+        assert!(lib
+            .load_analysis(first.id, ANALYSIS_VERSION)
+            .unwrap()
+            .is_some());
         let second = service
             .import_local_file(&dir.path().join("./音楽.wav"))
             .unwrap();

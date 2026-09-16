@@ -64,10 +64,7 @@ impl YoutubeMusicAcquire {
         // Reap staging dirs left behind by a force-quit mid-download. The
         // destination may be a user-visible folder, so litter matters.
         for entry in fs::read_dir(&dest).into_iter().flatten().flatten() {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".mixless-")
+            if entry.file_name().to_string_lossy().starts_with(".mixless-")
                 && entry.file_type().is_ok_and(|t| t.is_dir())
             {
                 let _ = fs::remove_dir_all(entry.path());

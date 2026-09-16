@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mixless_engine::AudioConfig;
 use mixless_midi::MidiConfig;
@@ -191,12 +191,14 @@ mod tests {
         assert!(settings.fx_auto_fade);
         assert!(settings.midi.enabled);
         assert_eq!(settings.audio.master_device.as_deref(), Some("USB"));
-        assert!(Settings {
-            cue_gain: f32::NAN,
-            ..Settings::default()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            Settings {
+                cue_gain: f32::NAN,
+                ..Settings::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

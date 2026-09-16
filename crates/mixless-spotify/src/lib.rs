@@ -172,8 +172,10 @@ fn parse_embed(html: &str, fallback_id: &str) -> Result<SpotifyPlaylistMeta, Spo
         _ => Some("Public Spotify preview: the full playlist count is not verified. Private playlists require login.".into()),
     };
     Ok(SpotifyPlaylistMeta {
-        id: fallback_id.into(), name: entity["name"].as_str().unwrap_or("Spotify playlist").into(),
-        owner: entity["subtitle"].as_str().unwrap_or("").into(), tracks,
+        id: fallback_id.into(),
+        name: entity["name"].as_str().unwrap_or("Spotify playlist").into(),
+        owner: entity["subtitle"].as_str().unwrap_or("").into(),
+        tracks,
         total_tracks,
         warning,
     })

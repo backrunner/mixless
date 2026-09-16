@@ -272,8 +272,8 @@ impl DensePlan {
         let sr = shared.sample_rate.load(Ordering::Relaxed);
         let a = &shared.decks[outgoing];
         let b = &shared.decks[1 - outgoing];
-        if a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
+        if a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
         {
             return Err(EngineError::Protocol("automix tracks changed"));
         }
@@ -477,7 +477,7 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?;
         let outgoing =
-            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0.0 as u64 {
+            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0 .0 as u64 {
                 DeckId::A
             } else {
                 DeckId::B
@@ -508,8 +508,8 @@ impl Engine {
         let pair = dense.plan.summary.as_ref().unwrap().pair;
         let a = &self.shared.decks[dense.outgoing];
         let b = &self.shared.decks[1 - dense.outgoing];
-        if a.track_id.load(Ordering::Relaxed) != pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != pair.1.0 as u64
+        if a.track_id.load(Ordering::Relaxed) != pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != pair.1 .0 as u64
             || b.playing.load(Ordering::Relaxed)
             || dense.sample_rate != self.shared.sample_rate.load(Ordering::Relaxed)
         {
@@ -688,8 +688,8 @@ impl Shared {
         let b = &self.decks[1 - plan.outgoing];
         let summary = plan.plan.summary.as_ref().unwrap();
         if plan.sample_rate != self.sample_rate.load(Ordering::Relaxed)
-            || a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
+            || a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
         {
             auto.enabled.store(false, Ordering::Release);
             return false;
@@ -1053,13 +1053,11 @@ mod tests {
             manual.decks.each_ref().map(|d| d.fader),
             playing.decks.each_ref().map(|d| d.fader)
         );
-        assert!(
-            manual
-                .decks
-                .iter()
-                .zip(&playing.decks)
-                .all(|(a, b)| a.frame > b.frame)
-        );
+        assert!(manual
+            .decks
+            .iter()
+            .zip(&playing.decks)
+            .all(|(a, b)| a.frame > b.frame));
     }
     #[test]
     fn automix_pause_resume_and_single_lane_takeover() {
@@ -1107,11 +1105,9 @@ mod tests {
                         source.samples.iter().map(|s| s * 0.2).collect(),
                     )
                     .unwrap();
-                    assert!(
-                        engine
-                            .attach_stems(deck, id, &source, Arc::new(audio))
-                            .unwrap()
-                    );
+                    assert!(engine
+                        .attach_stems(deck, id, &source, Arc::new(audio))
+                        .unwrap());
                 }
             }
             plan.stem_mix = Some(StemMix {

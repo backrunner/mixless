@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, size, App, Bounds, Context, FocusHandle, IntoElement, Render,
-    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    App, Bounds, Context, FocusHandle, IntoElement, Render, SharedString, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use mixless_engine::{AudioConfig, AudioDevice};
 use mixless_midi::{MidiBinding, MidiConfig, MidiMessage, MidiPort, MidiSourceKind, MidiTarget};
@@ -101,18 +101,20 @@ impl Preferences {
         };
         state.refresh();
         cx.on_release(|state, _| state.cancel_learn()).detach();
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
-            if this
-                .update(cx, |state, cx| {
-                    state.poll();
-                    cx.notify();
-                })
-                .is_err()
-            {
-                break;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if this
+                    .update(cx, |state, cx| {
+                        state.poll();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
             }
         })
         .detach();
@@ -184,10 +186,9 @@ impl Preferences {
                 },
                 Ok(JobResult::Dir(dir)) => {
                     if let Some(dir) = dir {
-                        let result = crate::state::ensure_writable_dir(&dir)
-                            .and_then(|()| {
-                                self.core.settings.update(|s| s.download_dir = Some(dir))
-                            });
+                        let result = crate::state::ensure_writable_dir(&dir).and_then(|()| {
+                            self.core.settings.update(|s| s.download_dir = Some(dir))
+                        });
                         self.result(result, "Download folder saved");
                     }
                 }

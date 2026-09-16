@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::{mpsc::channel, Mutex};
+use std::sync::{Mutex, mpsc::channel};
 use std::time::Instant;
 
 pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {

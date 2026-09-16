@@ -1,6 +1,6 @@
 //! Preparation overlays the whole row without taking over its mouse handlers.
 use crate::{analysis::Status, theme};
-use gpui::{prelude::*, px, AnyElement};
+use gpui::{AnyElement, prelude::*, px};
 
 pub(super) fn overlay(status: &Status) -> Option<AnyElement> {
     if matches!(status, Status::Basic(_, _) | Status::Enhancing(_)) {

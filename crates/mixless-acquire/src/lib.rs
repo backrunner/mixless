@@ -2,7 +2,7 @@ pub mod imports;
 pub mod local_paths;
 mod matching;
 pub use matching::{
-    MatchKey, candidate_score, could_match, job_key, local_match, normalize, track_key,
+    candidate_score, could_match, job_key, local_match, normalize, track_key, MatchKey,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
