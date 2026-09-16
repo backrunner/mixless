@@ -28,6 +28,7 @@ pub fn is_current(analysis: &mixless_protocol::StemAnalysis) -> bool {
         && analysis.valid(analysis.duration_sec)
 }
 
+#[cfg(stems_ort)]
 use std::path::Path;
 use thiserror::Error;
 

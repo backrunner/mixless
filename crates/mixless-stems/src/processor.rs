@@ -27,6 +27,7 @@ fn busy(error: Error) -> Error {
 pub struct Processor {
     models: PathBuf,
     cache: PathBuf,
+    #[cfg_attr(not(stems_ort), allow(dead_code))]
     download: bool,
     state: Mutex<State>,
 }

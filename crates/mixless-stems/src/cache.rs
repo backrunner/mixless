@@ -1,4 +1,6 @@
-use crate::{Error, Result, Stems};
+use crate::Result;
+#[cfg(stems_ort)]
+use crate::{Error, Stems};
 use mixless_protocol::StemAnalysis;
 use std::{fs, path::Path};
 
@@ -51,6 +53,7 @@ pub fn read(dir: &Path, duration: f32) -> Result<Option<StemAnalysis>> {
     Ok(Some(analysis))
 }
 
+#[cfg(stems_ort)]
 pub fn save(dir: &Path, stems: &Stems, analysis: &StemAnalysis) -> Result<()> {
     let root = dir
         .parent()
@@ -145,6 +148,7 @@ pub fn clear_all(root: &Path) -> Result<u64> {
 
 /// Fail when the disk cannot hold another entry plus headroom. Cache entries
 /// are never evicted automatically — cleanup is explicit, from Preferences.
+#[cfg(stems_ort)]
 pub fn reserve(root: &Path, bytes: u64) -> Result<()> {
     const HEADROOM: u64 = 512 * 1024 * 1024;
     if fs2::available_space(root)? > bytes + HEADROOM {
@@ -159,6 +163,7 @@ pub fn reserve(root: &Path, bytes: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(stems_ort)]
     #[test]
     fn partial_corrupt_and_different_content_caches_do_not_count_as_ready() {
         let root = tempfile::tempdir().unwrap();
