@@ -30,6 +30,7 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
         midi: Mutex::new(None),
         deck_load: Mutex::new(()),
         library_notice: None,
+        update: Mutex::new(None),
     });
     let mut tracks = vec![];
     for i in 0..3 {

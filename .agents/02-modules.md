@@ -102,3 +102,5 @@ yt-dlp sidecar。实现 `AudioAcquire` 的 YTM / YouTube。禁止在 UI 进程�
 `src-tauri` 薄宿主。`src` Svelte 5 + SCSS 功能目录。PFL 键：有耳机设备才可点。Hot Cue 垫无条件可点。
 
 禁止：TS 里 time-stretch；Web Audio 出主混音。
+
+`update.rs` 是 self-update：按 `MIXLESS_CHANNEL` 拉对应 `mixless-<channel>-latest.json`（stable 走 `releases/latest` 固定链接，beta 走 GitHub API 找最新 prerelease），semver 严格大于当前版本才装；下载 DMG 校验 SHA-256、`codesign --deep --strict`、`spctl`、Identifier/TeamIdentifier 与版本一致性后原子替换当前 bundle，banner 提示重启，绝不自动重启或降级。`MIXLESS_UPDATE_TARGET` 可改安装目标。`mixless-stems` 的 `ort` 依赖按 target 门控（`stems_ort` cfg），x86_64-apple-darwin 无 ONNX Runtime 预编译 → Intel 上 `core.stems = None`，分轨推理禁用但已缓存分轨可播。

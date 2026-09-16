@@ -67,7 +67,7 @@ fn relocate(install_only: bool) -> io::Result<()> {
     Ok(())
 }
 
-fn current_bundle() -> Option<PathBuf> {
+pub(crate) fn current_bundle() -> Option<PathBuf> {
     let exe = env::current_exe().ok()?.canonicalize().ok()?;
     exe.ancestors()
         .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("app"))
@@ -102,7 +102,7 @@ fn writable(dir: &Path) -> bool {
     }
 }
 
-fn install_bundle(source: &Path, dest: &Path) -> io::Result<()> {
+pub(crate) fn install_bundle(source: &Path, dest: &Path) -> io::Result<()> {
     let backup = dest.with_file_name(format!(
         ".{}-replaced-{}",
         dest.file_name().unwrap_or_default().to_string_lossy(),

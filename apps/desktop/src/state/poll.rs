@@ -17,6 +17,7 @@ impl UiState {
         changed |= self.poll_library_order();
         changed |= self.poll_library();
         changed |= self.poll_library_actions();
+        changed |= self.poll_update();
         if self.library_previews.poll() {
             self.library_key = None;
             changed = true;

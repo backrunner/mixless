@@ -15,8 +15,28 @@ release for the tag.
 The channel is baked into the build (`MIXLESS_CHANNEL`, the
 `MixlessReleaseChannel` Info.plist key, and the About window). Each release
 also ships `mixless-<channel>-latest.json`, a small manifest with the version,
-DMG URL and SHA-256 that a future updater can poll. Stable is
-`releases/latest` on the GitHub API; beta builds are prereleases.
+DMG URL and SHA-256 that the in-app updater polls. Stable builds read the
+asset on `releases/latest`; beta builds list releases through the GitHub API
+and take the newest prerelease carrying the beta manifest.
+
+## Updates
+
+`apps/desktop/src/update.rs` drives self-updates on every launch (release
+channels only; dev builds skip) and from **Mixless → Check for Updates…**:
+
+- The manifest for the build's channel is fetched and compared with
+  `CARGO_PKG_VERSION` by semver — only a strictly newer version installs, so
+  an older feed can never downgrade the app.
+- The DMG is downloaded to a temp dir, its SHA-256 must match the manifest,
+  and the `.app` inside must pass `codesign --deep --strict`, `spctl`
+  notarization assessment, a bundle `Identifier`/`TeamIdentifier` match with
+  the running app, and a `CFBundleShortVersionString` match with the
+  manifest.
+- Install replaces the running bundle via the same atomic swap the DMG
+  self-installer uses. The app never restarts itself — a banner asks the
+  user to restart to finish.
+
+`MIXLESS_UPDATE_TARGET=<path>` overrides the install destination for tests.
 
 ## Data compatibility
 

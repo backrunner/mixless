@@ -18,6 +18,7 @@ mod shortcuts;
 mod state;
 mod storage;
 mod theme;
+mod update;
 mod views;
 mod wave;
 
@@ -110,7 +111,9 @@ fn main() {
             })
             .expect("init state");
 
-        menus::init(core, window, cx);
+        menus::init(core.clone(), window, cx);
+        #[cfg(target_os = "macos")]
+        update::launch(&core);
         cx.activate(true);
     });
 }

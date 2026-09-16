@@ -16,6 +16,7 @@ pub use transport::TransportButton;
 mod library_actions;
 mod library_order;
 mod library_refresh;
+mod update;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,6 +52,8 @@ pub struct AppCore {
     pub deck_load: Mutex<()>,
     /// Set when a newer build's library had to be set aside; shown once at launch.
     pub library_notice: Option<String>,
+    /// Self-update worker status; `poll_update` turns it into a banner.
+    pub update: crate::update::Shared,
 }
 
 impl AppCore {
@@ -173,6 +176,7 @@ pub fn app_core() -> Arc<AppCore> {
         midi: Mutex::new(midi.ok().map(Arc::new)),
         deck_load: Mutex::new(()),
         library_notice,
+        update: Mutex::new(None),
     })
 }
 
@@ -341,6 +345,10 @@ pub struct UiState {
     pub show_shortcuts: bool,
     pub show_import_modal: bool,
     pub error: SharedString,
+    pub update_notice: SharedString,
+    update_entry: Option<crate::update::Entry>,
+    update_notice_hold: bool,
+    update_notice_at: Option<std::time::Instant>,
     pub acquire: SharedString,
     pub import_details: Vec<String>,
     pub playlist_issues: Vec<mixless_library::ImportItem>,
@@ -437,6 +445,10 @@ impl UiState {
             show_shortcuts: false,
             show_import_modal: false,
             error: core.library_notice.clone().unwrap_or_default().into(),
+            update_notice: "".into(),
+            update_entry: None,
+            update_notice_hold: false,
+            update_notice_at: None,
             acquire: "".into(),
             import_details: Vec::new(),
             playlist_issues: Vec::new(),

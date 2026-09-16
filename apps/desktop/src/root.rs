@@ -168,6 +168,7 @@ impl Render for UiState {
         let playlist_menu = self.render_playlist_menu(window, cx);
         let remove_playlist_confirm = self.render_remove_playlist_confirm(cx);
         let error = self.error.clone();
+        let update_notice = self.update_notice.clone();
 
         gpui::div()
             .id("root")
@@ -282,6 +283,23 @@ impl Render for UiState {
                         .text_size(px(11.))
                         .text_color(gpui::rgb(0xff8a80))
                         .child(error),
+                )
+            })
+            .when(!update_notice.is_empty(), |el| {
+                el.child(
+                    gpui::div()
+                        .absolute()
+                        .bottom_4()
+                        .left_4()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(6.))
+                        .bg(gpui::rgb(0x141216))
+                        .border_1()
+                        .border_color(theme::with_alpha(theme::ACCENT, 0.35))
+                        .text_size(px(11.))
+                        .text_color(theme::ACCENT)
+                        .child(update_notice),
                 )
             })
             .when_some(audio_menu, |el, menu| el.child(menu))
