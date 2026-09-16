@@ -1,10 +1,23 @@
 use crate::{cache, check, Error, Inference, Progress, Result};
 use mixless_protocol::{StemAnalysis, StemKind, StemNote};
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+/// Clearing waits behind an in-flight analysis, but not for a whole queue.
+const LOCK_WAIT: Duration = Duration::from_secs(15);
+
+fn busy(error: Error) -> Error {
+    match error {
+        Error::Cancelled => {
+            Error::Model("Stem analysis is running; retry after it finishes".into())
+        }
+        error => error,
+    }
+}
 
 /// One inference job per processor. Waiting workers do not decode or allocate models.
 pub struct Processor {
@@ -123,9 +136,70 @@ impl Processor {
         progress(Progress::Saving);
         let path = self.cache_path(content_hash);
         cache::save(&path, &stems, &analysis)?;
-        cache::prune(&self.cache, &path);
         Ok(analysis)
     }
+    /// Byte total of cached stems — every entry, or only the given content
+    /// hashes. Hashes may repeat across playlists, so they are deduplicated.
+    pub fn cache_usage(&self, content_hashes: Option<&[String]>) -> u64 {
+        match content_hashes {
+            Some(hashes) => hashes
+                .iter()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .map(|hash| cache::dir_bytes(&self.cache_path(hash)))
+                .sum(),
+            None => cache::dir_bytes(&self.cache),
+        }
+    }
+
+    /// Delete cached stems — every entry, or only the given content hashes.
+    /// A running analysis keeps ownership of the process lock; this waits
+    /// briefly rather than interrupting it.
+    pub fn clear_cache(&self, content_hashes: Option<&[String]>) -> Result<u64> {
+        std::fs::create_dir_all(&self.cache)?;
+        let deadline = Instant::now() + LOCK_WAIT;
+        let _process = crate::lock::acquire(&self.cache.join(".analysis.lock"), &|| {
+            Instant::now() < deadline
+        })
+        .map_err(busy)?;
+        match content_hashes {
+            Some(hashes) => {
+                let mut freed = 0;
+                for hash in hashes.iter().collect::<HashSet<_>>() {
+                    let path = self.cache_path(hash);
+                    freed += cache::dir_bytes(&path);
+                    if path.exists() {
+                        std::fs::remove_dir_all(path)?;
+                    }
+                }
+                Ok(freed)
+            }
+            None => cache::clear_all(&self.cache),
+        }
+    }
+
+    /// Delete downloaded inference models; they download again on next use.
+    /// An already-loaded session is unaffected until it is released.
+    pub fn clear_models(&self) -> Result<u64> {
+        std::fs::create_dir_all(&self.models)?;
+        let deadline = Instant::now() + LOCK_WAIT;
+        let _lock = crate::lock::acquire(&self.models.join(".models.lock"), &|| {
+            Instant::now() < deadline
+        })
+        .map_err(busy)?;
+        let mut freed = 0;
+        for entry in std::fs::read_dir(&self.models)?.flatten() {
+            let path = entry.path();
+            if entry.file_name().to_str() == Some(".models.lock") || !path.is_file() {
+                continue;
+            }
+            freed += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            std::fs::remove_file(&path)?;
+        }
+        self.release_models();
+        Ok(freed)
+    }
+
     pub fn invalidate(&self, content_hash: &str) -> Result<()> {
         let mut state = self
             .state

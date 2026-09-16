@@ -216,7 +216,7 @@ fn readable_folder_name(name: &str) -> String {
     name.to_owned()
 }
 
-fn folder_name(
+pub(crate) fn folder_name(
     playlist: &mixless_library::PlaylistSummary,
     all: &[mixless_library::PlaylistSummary],
 ) -> String {

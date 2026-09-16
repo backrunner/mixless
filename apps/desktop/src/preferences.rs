@@ -13,6 +13,7 @@ use mixless_protocol::{Command, DeckId, XfCurve};
 use crate::{
     settings::Settings,
     state::{AppCore, WaveLayout},
+    storage::{self, ClearKind, StorageReport},
     theme,
 };
 
@@ -21,6 +22,7 @@ enum Tab {
     General,
     Audio,
     Midi,
+    Storage,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -42,6 +44,8 @@ enum JobResult {
     Midi(Result<(), String>),
     File(Result<(), String>),
     Dir(Option<PathBuf>),
+    Storage(Result<StorageReport, String>),
+    StorageClear(Result<(u64, StorageReport), String>),
 }
 
 pub struct Preferences {
@@ -61,6 +65,8 @@ pub struct Preferences {
     job: Option<mpsc::Receiver<JobResult>>,
     status: String,
     error: bool,
+    storage: Option<StorageReport>,
+    confirm_clear: Option<ClearKind>,
 }
 
 impl Preferences {
@@ -90,6 +96,8 @@ impl Preferences {
             job: None,
             error: !status.is_empty(),
             status,
+            storage: None,
+            confirm_clear: None,
         };
         state.refresh();
         cx.on_release(|state, _| state.cancel_learn()).detach();
@@ -160,6 +168,20 @@ impl Preferences {
                 Ok(JobResult::Audio(result)) => self.result(result, "Audio settings saved"),
                 Ok(JobResult::Midi(result)) => self.result(result, "MIDI inputs saved"),
                 Ok(JobResult::File(result)) => self.result(result, "MIDI mapping file updated"),
+                Ok(JobResult::Storage(result)) => match result {
+                    Ok(report) => self.storage = Some(report),
+                    Err(error) => self.result(Err(error), ""),
+                },
+                Ok(JobResult::StorageClear(result)) => match result {
+                    Ok((freed, report)) => {
+                        self.storage = Some(report);
+                        self.result(Ok(()), &format!("Freed {}", storage::format_bytes(freed)));
+                    }
+                    Err(error) => {
+                        self.result(Err(error), "");
+                        self.refresh_storage();
+                    }
+                },
                 Ok(JobResult::Dir(dir)) => {
                     if let Some(dir) = dir {
                         let result = crate::state::ensure_writable_dir(&dir)
@@ -406,6 +428,269 @@ impl Preferences {
             let _ = tx.send(JobResult::Dir(dir));
         })
         .detach();
+    }
+
+    fn refresh_storage(&mut self) {
+        if self.job.is_some() {
+            return;
+        }
+        let core = self.core.clone();
+        self.start_job(move || JobResult::Storage(storage::report(&core)));
+    }
+
+    fn clear_storage(&mut self, kind: ClearKind) {
+        let core = self.core.clone();
+        self.status = "Clearing...".into();
+        self.error = false;
+        self.start_job(move || {
+            JobResult::StorageClear(
+                storage::clear(&core, kind)
+                    .and_then(|freed| storage::report(&core).map(|report| (freed, report))),
+            )
+        });
+    }
+
+    /// A cache row: name and what it holds on the left, size plus an optional
+    /// two-step Clear on the right. The first click arms; the second clears.
+    fn storage_row(
+        &self,
+        id: impl Into<SharedString>,
+        label: &str,
+        detail: &str,
+        bytes: u64,
+        kind: Option<ClearKind>,
+        cx: &Context<Self>,
+    ) -> gpui::Div {
+        let busy = self.job.is_some();
+        let armed = kind.is_some() && self.confirm_clear == kind;
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .min_h(px(44.))
+            .py_2()
+            .border_b_1()
+            .border_color(theme::LINE_SOFT)
+            .text_size(px(12.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(div().child(label.to_string()))
+                    .when(!detail.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(theme::MUTED)
+                                .child(detail.to_string()),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .flex_none()
+                    .child(
+                        div()
+                            .text_color(theme::MUTED)
+                            .child(storage::format_bytes(bytes)),
+                    )
+                    .when_some(kind, |el, kind| {
+                        el.child(
+                            self.button(
+                                format!("clear-{}", id.into()),
+                                if armed { "Confirm clear" } else { "Clear" },
+                                !busy && (bytes > 0 || armed),
+                                move |s, _, _| {
+                                    if s.confirm_clear == Some(kind) {
+                                        s.confirm_clear = None;
+                                        s.clear_storage(kind);
+                                    } else {
+                                        s.confirm_clear = Some(kind);
+                                    }
+                                },
+                                cx,
+                            )
+                            .text_color(if armed {
+                                theme::DANGER
+                            } else {
+                                theme::TEXT
+                            }),
+                        )
+                    }),
+            )
+    }
+
+    fn storage_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
+        let busy = self.job.is_some();
+        let mut page = div().flex().flex_col().child(section("Cached data")).child(
+            div()
+                .pb_2()
+                .text_size(px(11.))
+                .text_color(theme::MUTED)
+                .child(
+                    "Derived data Mixless recomputes on demand. Clearing never removes \
+                     source audio, playlists or saved cues."
+                        .to_string(),
+                ),
+        );
+        let Some(report) = &self.storage else {
+            return page
+                .child(info(
+                    "Usage",
+                    if busy {
+                        "Computing...".into()
+                    } else {
+                        "Not computed".into()
+                    },
+                ))
+                .child(div().flex().justify_end().py_3().child(self.button(
+                    "storage-scan",
+                    "Compute usage",
+                    !busy,
+                    |s, _, _| s.refresh_storage(),
+                    cx,
+                )))
+                .into_any_element();
+        };
+        page = page
+            .child(self.storage_row(
+                "stems",
+                "Stem cache",
+                "Separated vocals, drums and instruments used by stem mixing",
+                report.stems,
+                Some(ClearKind::Stems),
+                cx,
+            ))
+            .child(self.storage_row(
+                "analysis",
+                "Track analysis",
+                "Beat grids, keys, structure and note evidence in library.db",
+                report.analysis,
+                Some(ClearKind::Analysis),
+                cx,
+            ))
+            .child(self.storage_row(
+                "waveforms",
+                "Waveforms",
+                "Spectral envelopes in library.db, rebuilt from decoded audio",
+                report.waveforms,
+                Some(ClearKind::Waveforms),
+                cx,
+            ))
+            .child(self.storage_row(
+                "artwork",
+                "Artwork",
+                "Extracted covers, re-extracted on next launch",
+                report.artwork,
+                Some(ClearKind::Artwork),
+                cx,
+            ))
+            .child(self.storage_row(
+                "models",
+                "Analysis models",
+                "ONNX models, downloaded again when stem analysis runs",
+                report.models,
+                Some(ClearKind::Models),
+                cx,
+            ))
+            .child(section("Library"))
+            .child(self.storage_row(
+                "database",
+                "Library database",
+                "Tracks, cues, playlists and analysis payloads",
+                report.database,
+                None,
+                cx,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .min_h(px(44.))
+                    .py_2()
+                    .border_b_1()
+                    .border_color(theme::LINE_SOFT)
+                    .text_size(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().child("Downloaded audio"))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme::MUTED)
+                                    .child(crate::state::display_dir(&self.core.download_dir())),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .flex_none()
+                            .child(
+                                div()
+                                    .text_color(theme::MUTED)
+                                    .child(storage::format_bytes(report.acquired)),
+                            )
+                            .child(
+                                self.button(
+                                    "storage-acquired",
+                                    "Show in Finder",
+                                    true,
+                                    |s, _, cx| {
+                                        let dir = s.core.download_dir();
+                                        std::fs::create_dir_all(&dir).ok();
+                                        cx.reveal_path(&dir);
+                                    },
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                    ),
+            );
+        if !report.playlists.is_empty() {
+            page = page.child(section("Per playlist")).child(
+                div()
+                    .pb_2()
+                    .text_size(px(11.))
+                    .text_color(theme::MUTED)
+                    .child(
+                        "Clear stems, analysis, waveforms and artwork for the tracks in a list. \
+                         Caches are per track, so tracks shared with other lists are cleared too."
+                            .to_string(),
+                    ),
+            );
+            for playlist in &report.playlists {
+                page = page.child(self.storage_row(
+                    format!("playlist-{}", playlist.id),
+                    &playlist.name,
+                    &format!("{} tracks", playlist.tracks),
+                    playlist.bytes,
+                    Some(ClearKind::Playlist(playlist.id)),
+                    cx,
+                ));
+            }
+        }
+        page.child(div().flex().justify_end().py_3().child(self.button(
+            "storage-refresh",
+            "Refresh usage",
+            !busy,
+            |s, _, _| s.refresh_storage(),
+            cx,
+        )))
+        .into_any_element()
     }
 
     fn button(
@@ -1364,6 +1649,7 @@ impl Render for Preferences {
             Tab::General => self.general(cx),
             Tab::Audio => self.audio_page(cx),
             Tab::Midi => self.midi_page(cx),
+            Tab::Storage => self.storage_page(cx),
         };
         let mut root = div()
             .id("preferences")
@@ -1380,6 +1666,8 @@ impl Render for Preferences {
                 if ev.keystroke.key == "escape" {
                     if s.selector.is_some() {
                         s.selector = None;
+                    } else if s.confirm_clear.is_some() {
+                        s.confirm_clear = None;
                     } else if s.learning {
                         s.cancel_learn();
                     } else {
@@ -1408,6 +1696,7 @@ impl Render for Preferences {
                             (Tab::General, "General"),
                             (Tab::Audio, "Audio I/O"),
                             (Tab::Midi, "MIDI Mapping"),
+                            (Tab::Storage, "Storage"),
                         ]
                         .map(|(tab, label)| {
                             self.button(
@@ -1418,6 +1707,10 @@ impl Render for Preferences {
                                     s.cancel_learn();
                                     s.tab = tab;
                                     s.selector = None;
+                                    s.confirm_clear = None;
+                                    if tab == Tab::Storage && s.storage.is_none() {
+                                        s.refresh_storage();
+                                    }
                                 },
                                 cx,
                             )

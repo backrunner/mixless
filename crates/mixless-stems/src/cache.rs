@@ -1,9 +1,6 @@
 use crate::{Error, Result, Stems};
 use mixless_protocol::StemAnalysis;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 pub fn key(content: &str) -> String {
     blake3::hash(
@@ -96,76 +93,66 @@ pub fn save(dir: &Path, stems: &Stems, analysis: &StemAnalysis) -> Result<()> {
     result
 }
 
-pub fn prune(root: &Path, keep: &Path) {
-    const LIMIT: u64 = 6 * 1024 * 1024 * 1024;
-    let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = fs::read_dir(root)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let p = entry.path();
-            let name = p.file_name()?.to_str()?;
-            if name.len() != 64 || !name.bytes().all(|c| c.is_ascii_hexdigit()) {
-                return None;
-            }
-            let bytes = fs::read_dir(&p)
-                .ok()?
-                .flatten()
-                .filter_map(|e| e.metadata().ok().map(|m| m.len()))
-                .sum();
-            Some((
-                fs::metadata(p.join("analysis.json"))
-                    .ok()?
-                    .modified()
-                    .ok()?,
-                bytes,
-                p,
-            ))
-        })
-        .collect();
-    entries.sort_by_key(|e| e.0);
-    let mut total: u64 = entries.iter().map(|e| e.1).sum();
-    for (_, size, path) in entries {
-        if total <= LIMIT {
-            break;
-        }
-        if path != keep && fs::remove_dir_all(path).is_ok() {
-            total = total.saturating_sub(size);
-        }
-    }
+/// Published entries are content-keyed 64-hex directories; `.partial`
+/// siblings are interrupted saves, and other files are process locks.
+fn is_published(name: &str) -> bool {
+    name.len() == 64 && name.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Recursive byte total; missing or unreadable entries count as zero.
+pub fn dir_bytes(path: &Path) -> u64 {
+    let mut total = 0;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() {
+                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    total
+}
+
+/// Remove every published entry and stale partial write, returning the freed
+/// bytes. The caller holds the analysis lock, so no save can be in flight.
+pub fn clear_all(root: &Path) -> Result<u64> {
+    let mut freed = 0;
+    for entry in fs::read_dir(root)?.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_published(name) && !name.ends_with(".partial") {
+            continue;
+        }
+        freed += dir_bytes(&path);
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(freed)
+}
+
+/// Fail when the disk cannot hold another entry plus headroom. Cache entries
+/// are never evicted automatically — cleanup is explicit, from Preferences.
 pub fn reserve(root: &Path, bytes: u64) -> Result<()> {
     const HEADROOM: u64 = 512 * 1024 * 1024;
     if fs2::available_space(root)? > bytes + HEADROOM {
         return Ok(());
     }
-    let mut entries: Vec<_> = fs::read_dir(root)?
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            if name.len() != 64 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return None;
-            }
-            Some((
-                fs::metadata(path.join("analysis.json"))
-                    .ok()?
-                    .modified()
-                    .ok()?,
-                path,
-            ))
-        })
-        .collect();
-    entries.sort_by_key(|e| e.0);
-    for (_, path) in entries {
-        fs::remove_dir_all(path)?;
-        if fs2::available_space(root)? > bytes + HEADROOM {
-            return Ok(());
-        }
-    }
     Err(Error::Model(
-        "Not enough free space for the stem cache; basic analysis remains available".into(),
+        "Not enough free space for the stem cache; clear space or free some in Settings > Storage"
+            .into(),
     ))
 }
 
@@ -192,5 +179,55 @@ mod tests {
             .set_len(100)
             .unwrap();
         assert!(read(&path, 0.05).unwrap().is_none());
+    }
+
+    #[test]
+    fn usage_and_scoped_clearing_deduplicate_hashes_and_keep_locks() {
+        let root = tempfile::tempdir().unwrap();
+        let processor =
+            crate::Processor::new(root.path().join("models"), root.path().join("cache"), false);
+        for (hash, bytes) in [("aaa", 3usize), ("bbb", 5)] {
+            let entry = processor.cache_path(hash);
+            fs::create_dir_all(&entry).unwrap();
+            fs::write(entry.join("vocals.wav"), vec![0; bytes]).unwrap();
+        }
+        let stale = processor.cache_path("ccc").with_extension("1.partial");
+        fs::create_dir(&stale).unwrap();
+        fs::write(stale.join("vocals.wav"), [0; 2]).unwrap();
+        fs::write(root.path().join("cache/.analysis.lock"), b"").unwrap();
+
+        assert_eq!(processor.cache_usage(None), 10);
+        assert_eq!(
+            processor.cache_usage(Some(&["aaa".into(), "aaa".into(), "none".into()])),
+            3
+        );
+        assert_eq!(processor.clear_cache(Some(&["aaa".into()])).unwrap(), 3);
+        assert!(!processor.cache_path("aaa").exists());
+        assert_eq!(processor.cache_usage(None), 7);
+        assert_eq!(processor.clear_cache(None).unwrap(), 7);
+        assert!(processor.cache_path("bbb").read_dir().is_err());
+        // The process lock and a foreign file survive a full clear.
+        assert!(root.path().join("cache/.analysis.lock").exists());
+        assert_eq!(processor.cache_usage(None), 0);
+    }
+
+    #[test]
+    fn clearing_models_removes_artifacts_and_stale_partials() {
+        let root = tempfile::tempdir().unwrap();
+        let models = root.path().join("models");
+        fs::create_dir(&models).unwrap();
+        fs::write(models.join("htdemucs-fp16.onnx"), [0; 7]).unwrap();
+        fs::write(models.join(".basic-pitch.onnx.1.part"), b"xx").unwrap();
+        fs::write(models.join(".models.lock"), b"").unwrap();
+        let processor = crate::Processor::new(models, root.path().join("cache"), false);
+        assert_eq!(processor.clear_models().unwrap(), 9);
+        let remaining: Vec<_> = processor
+            .model_dir()
+            .read_dir()
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].file_name().to_str(), Some(".models.lock"));
     }
 }

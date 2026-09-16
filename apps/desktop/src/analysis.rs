@@ -104,6 +104,15 @@ impl AnalysisJobs {
         std::mem::take(&mut *self.updates.lock().expect("analysis updates"))
     }
 
+    /// Queue a track row refresh after an out-of-band library write
+    /// (e.g. storage cleanup cleared its analysis).
+    pub fn updated(&self, track: Track) {
+        self.updates
+            .lock()
+            .expect("analysis updates")
+            .insert(track.id, track);
+    }
+
     pub fn statuses(&self) -> HashMap<TrackId, Status> {
         self.states.lock().expect("analysis states").clone()
     }

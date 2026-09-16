@@ -105,6 +105,11 @@ The single preferences window contains General, Audio I/O and MIDI Mapping tabs.
   learning, editing, deletion and JSON import/export. Learning captures the first
   signal and suppresses performance commands until saved or canceled. Jog uses
   two's-complement relative CC. Legacy maps without a device ID match any input.
+- Storage reports disk usage for the stem, analysis, waveform, artwork and
+  model caches plus the library database and downloaded audio. Caches are
+  regenerable and never evicted automatically; each category can be cleared
+  explicitly, or scoped to a single playlist. Source audio, playlists and cue
+  points are never removed by clearing.
 
 Preferences and MIDI maps persist in `preferences.json` and `midi.json` beside
 the library database. Disconnected MIDI devices can be refreshed and reconnected

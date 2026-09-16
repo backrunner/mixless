@@ -6,9 +6,11 @@ mod folders;
 mod hash;
 mod imports;
 mod ordering;
+mod storage;
 mod verification;
 mod waveform;
 pub use imports::ImportItem;
+pub use storage::CacheUsage;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,7 @@ pub enum LibraryError {
 
 pub struct Library {
     conn: std::sync::Mutex<Connection>,
+    db_path: PathBuf,
     artwork_dir: PathBuf,
 }
 
@@ -174,6 +177,7 @@ impl Library {
             .join("artwork");
         let library = Self {
             conn: std::sync::Mutex::new(conn),
+            db_path: path.to_path_buf(),
             artwork_dir,
         };
         library.backfill_folder_playlists(&path.with_file_name("acquired"))?;

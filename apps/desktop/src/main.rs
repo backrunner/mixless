@@ -14,6 +14,7 @@ mod root;
 mod settings;
 mod shortcuts;
 mod state;
+mod storage;
 mod theme;
 mod views;
 mod wave;

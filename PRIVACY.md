@@ -30,6 +30,9 @@ analytics, tracking, or crash reporting** of any kind.
 
 ## Data deletion
 
-Removing the application support directory (library database, artwork, stem
-cache, models, preferences) removes all data Mixless stores. Uninstalling the
-app does not automatically delete that directory.
+Derived caches (stems, analysis, waveforms, artwork, downloaded models) are
+never evicted automatically; the Storage tab in Preferences reports their size
+and can clear them per category or per playlist. Source audio, playlists and
+cue points are kept. Removing the application support directory (library
+database, artwork, stem cache, models, preferences) removes all data Mixless
+stores. Uninstalling the app does not automatically delete that directory.
