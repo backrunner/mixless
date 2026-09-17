@@ -241,24 +241,9 @@ pub fn run(
                 outgoing = incoming;
                 continue;
             }
-            let (plan, prepared) = next.transition.unwrap();
+            let plan = next.transition.unwrap();
             let start = plan.t_in_a;
             let next_entry = plan.t_in_b;
-            guarded(&core, &active, || {
-                let d = core.engine.snapshot().deck(outgoing).clone();
-                if !d.playing {
-                    return Err("Playback stopped".into());
-                }
-                command(
-                    &core,
-                    Command::SetLoopBeats {
-                        deck: outgoing,
-                        beats: d.loop_beats,
-                        on: false,
-                    },
-                )?;
-                core.engine.commit_plan(prepared).map_err(|e| e.to_string())
-            })?;
             let _ = tx.send(AutomixMsg::Plan(outgoing, plan));
             // Look one track ahead while the staged pair plays. Decode is
             // bounded by the shared PCM cache, independent of the UI clock.

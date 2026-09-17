@@ -107,16 +107,9 @@ impl Recorder {
         *progress.error.lock().unwrap() = None;
         progress.active.store(true, Ordering::Release);
         let worker = std::thread::Builder::new().name("mixless-recording".into()).spawn(move || {
-            let result = (|| -> Result<(), String> {
-                loop {
-                    while let Ok(frame) = consumer.pop() {
-                        for sample in frame { writer.write_sample(sample).map_err(|e| e.to_string())?; }
-                    }
-                    if !progress.active.load(Ordering::Acquire) || consumer.is_abandoned() { break; }
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-                Ok(())
-            })();
+            let result = write_capture(&mut consumer, &mut writer, |consumer| {
+                !progress.active.load(Ordering::Acquire) || consumer.is_abandoned()
+            }).map_err(|e| e.to_string());
             // Always attempt to seal the header, even if the disk filled up.
             let finalized = writer.finalize().map_err(|e| e.to_string());
             let error = result.err().or_else(|| finalized.err()).or_else(|| {
@@ -164,6 +157,28 @@ impl Recorder {
     }
 }
 
+fn write_capture<W: std::io::Write + std::io::Seek>(
+    consumer: &mut rtrb::Consumer<[f32; 2]>,
+    writer: &mut hound::WavWriter<W>,
+    mut finished: impl FnMut(&rtrb::Consumer<[f32; 2]>) -> bool,
+) -> Result<(), hound::Error> {
+    loop {
+        // Observe the producer's terminal state before draining. Checking it
+        // after an empty pop could miss a final block published between that
+        // pop and stop(), leaving queued frames out of the finalized WAV.
+        let stopped = finished(consumer);
+        while let Ok(frame) = consumer.pop() {
+            for sample in frame {
+                writer.write_sample(sample)?;
+            }
+        }
+        if stopped {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
 impl Drop for Recorder {
     fn drop(&mut self) {
         let _ = self.stop();
@@ -184,5 +199,44 @@ impl super::Engine {
     }
     pub fn recording_status(&self) -> RecordingStatus {
         self.shared.recorder.status()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopping_capture_preserves_frames_published_with_stop_signal() {
+        let (producer, mut consumer) = rtrb::RingBuffer::new(4);
+        let mut producer = Some(producer);
+        let mut wav = std::io::Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(
+            &mut wav,
+            hound::WavSpec {
+                channels: 2,
+                sample_rate: 48_000,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            },
+        )
+        .unwrap();
+        write_capture(&mut consumer, &mut writer, |consumer| {
+            // Initially empty, then the final callback publishes just as the
+            // worker observes stop. No timing-dependent sleeps are needed.
+            let mut producer = producer.take().unwrap();
+            producer.push([0.25, -0.5]).unwrap();
+            drop(producer);
+            consumer.is_abandoned()
+        })
+        .unwrap();
+        writer.finalize().unwrap();
+        wav.set_position(0);
+        let recorded: Vec<f32> = hound::WavReader::new(wav)
+            .unwrap()
+            .samples()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(recorded, [0.25, -0.5]);
     }
 }

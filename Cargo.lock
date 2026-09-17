@@ -3630,6 +3630,7 @@ name = "mixless-desktop"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+ "fs2",
  "gpui",
  "image",
  "lofty",

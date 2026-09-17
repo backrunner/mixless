@@ -61,15 +61,8 @@ impl YoutubeMusicAcquire {
         }
         fs::create_dir_all(dest).map_err(|e| err(e.to_string()))?;
         let dest = dest.canonicalize().map_err(|e| err(e.to_string()))?;
-        // Reap staging dirs left behind by a force-quit mid-download. The
-        // destination may be a user-visible folder, so litter matters.
-        for entry in fs::read_dir(&dest).into_iter().flatten().flatten() {
-            if entry.file_name().to_string_lossy().starts_with(".mixless-")
-                && entry.file_type().is_ok_and(|t| t.is_dir())
-            {
-                let _ = fs::remove_dir_all(entry.path());
-            }
-        }
+        // Each TempDir owns its own cleanup. A similarly named directory
+        // may belong to another active download or to the user.
         let final_path = dest.join(format!("{}.m4a", job.spotify_id));
         // The importer revalidates the actual decoder duration even on reuse.
         if final_path.is_file() && fs::metadata(&final_path).is_ok_and(|m| m.len() > 0) {
@@ -361,6 +354,38 @@ fn parse_music(job: &ResolveJob, value: &Value, result: &mut Vec<Candidate>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_fetch_preserves_other_downloads_and_user_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = YoutubeMusicAcquire {
+            ytdlp: "unused".into(),
+            ffmpeg: "unused".into(),
+            deno: None,
+        };
+        let job = ResolveJob {
+            spotify_id: "a".repeat(22),
+            title: "Song".into(),
+            artist: "Artist".into(),
+            duration_ms: 180000,
+            isrc: None,
+        };
+        let cached = dir.path().join(format!("{}.m4a", job.spotify_id));
+        fs::write(&cached, b"cached audio").unwrap();
+        for name in [".mixless-active-download", ".mixless-user-files"] {
+            fs::create_dir(dir.path().join(name)).unwrap();
+            fs::write(dir.path().join(name).join("keep"), b"in progress").unwrap();
+        }
+        assert_eq!(
+            provider.fetch(&job, dir.path()).unwrap(),
+            cached.canonicalize().unwrap()
+        );
+        for name in [".mixless-active-download", ".mixless-user-files"] {
+            assert_eq!(
+                fs::read(dir.path().join(name).join("keep")).unwrap(),
+                b"in progress"
+            );
+        }
+    }
     #[test]
     #[ignore = "live metadata-only YouTube Music/YouTube search"]
     fn live_metadata_search() {

@@ -29,7 +29,7 @@ pub(crate) fn install_bundle_checked(
         .create(true)
         .truncate(false)
         .open(parent.join(format!(".{}.install.lock", name.to_string_lossy())))?;
-    lock.try_lock()
+    fs2::FileExt::try_lock_exclusive(&lock)
         .map_err(|e| io::Error::other(format!("Cannot lock app installation: {e}")))?;
     let replaced = match fs::symlink_metadata(dest) {
         Ok(meta) if meta.file_type().is_dir() => true,

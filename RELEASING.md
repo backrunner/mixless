@@ -71,9 +71,10 @@ or strand the user's library:
 - Schema changes must be **additive** — new tables, or new columns that are
   nullable or have defaults. Statements always name their columns, so an
   older build tolerates extra columns. If a change cannot be additive, older
-  builds detect it on open (`LibraryError::NewerSchema`), set the file aside
-  as `library.db.unsupported-<ts>`, and start a fresh library instead of
-  crash-looping.
+  builds detect it on open (`LibraryError::NewerSchema`), move the database
+  and its WAL/SHM journals into a unique `library.db.unsupported-*` directory,
+  and only then start a fresh library. A failed move rolls back the files
+  already moved; any files that cannot be restored remain in the backup.
 - Derived data is gated per record: `track_analysis`/`track_waveforms`/
   `cue_versions` carry payload versions, so a newer build's analysis is
   invisible to an older build and simply re-analyzes. Never read a payload

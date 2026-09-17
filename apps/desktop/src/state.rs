@@ -15,6 +15,7 @@ mod url_input;
 pub use transport::TransportButton;
 mod library_actions;
 mod library_order;
+mod library_recovery;
 mod library_refresh;
 mod update;
 
@@ -123,7 +124,14 @@ pub fn app_core() -> Arc<AppCore> {
             // aside and open a fresh library instead of crash-looping;
             // re-adding folders re-imports the tracks.
             tracing::warn!(%error, "library schema is newer; setting it aside");
-            let notice = quarantine_library(&db_path);
+            let backup = library_recovery::quarantine(&db_path)
+                .unwrap_or_else(|e| panic!("cannot preserve incompatible library: {e}"));
+            let notice = format!(
+                "Your library was written by a newer version of Mixless. A fresh library was opened; \
+                 the previous database and its journals are preserved in {}. Reinstall the newer \
+                 version and restore these files to recover it.",
+                display_dir(&backup)
+            );
             let library = mixless_library::Library::open(&db_path).expect("open library");
             (library, Some(notice))
         }
@@ -178,36 +186,6 @@ pub fn app_core() -> Arc<AppCore> {
         library_notice,
         update: Mutex::new(None),
     })
-}
-
-/// Move `library.db` and its WAL sidecars to a `.unsupported-<ts>` copy so a
-/// fresh library can open at the original path; returns the launch notice.
-/// Sidecars move first: a leftover `-wal` beside a brand-new database would
-/// be recovered against it.
-fn quarantine_library(path: &std::path::Path) -> String {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let dest = path.with_extension(format!("db.unsupported-{stamp}"));
-    for suffix in ["-wal", "-shm", ""] {
-        let mut from = path.as_os_str().to_owned();
-        from.push(suffix);
-        let mut to = dest.as_os_str().to_owned();
-        to.push(suffix);
-        let _ = std::fs::rename(&from, &to);
-    }
-    assert!(
-        !path.exists(),
-        "could not set aside incompatible library at {}",
-        display_dir(path)
-    );
-    format!(
-        "Your library was written by a newer version of Mixless and could not be opened, so it was reset. \
-         The previous database was kept at {} — reinstall the newer version and rename it back to \
-         \"library.db\" (with its -wal/-shm files) to restore it.",
-        display_dir(&dest)
-    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
