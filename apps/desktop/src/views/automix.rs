@@ -131,8 +131,8 @@ impl UiState {
     }
 
     /// Compact transition status for the top bar. Hover shows the details as a
-    /// tooltip; click pins them in a popover.
-    pub fn render_automix_chip(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+    /// tooltip.
+    pub fn render_automix_chip(&self) -> gpui::AnyElement {
         let Some(transition) = self.transition() else {
             return div()
                 .flex_none()
@@ -153,62 +153,9 @@ impl UiState {
             .rounded(px(4.))
             .text_size(px(10.))
             .text_color(theme::LED_GREEN)
-            .cursor_pointer()
             .hover(|s| s.bg(theme::PANEL_RAISED))
             .child(transition.summary.clone())
             .tooltip(move |_, cx| cx.new(|_| AutomixTip(transition.clone())).into())
-            .on_click(cx.listener(|s, _, _, cx| {
-                s.automix_detail = !s.automix_detail;
-                cx.notify();
-            }))
             .into_any_element()
-    }
-
-    /// Pinned transition details under the top bar; dismissed by backdrop or
-    /// Escape, hidden whenever there is no active plan.
-    pub fn render_automix_detail(&self, cx: &mut gpui::Context<Self>) -> Option<gpui::AnyElement> {
-        if !self.automix_detail {
-            return None;
-        }
-        let transition = self.transition()?;
-        let mut panel = div()
-            .id("automix-detail-panel")
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p_3()
-            .rounded(px(theme::POPUP_RADIUS))
-            .bg(theme::PANEL_RAISED)
-            .border_1()
-            .border_color(theme::LINE)
-            .shadow_lg()
-            .text_size(px(10.))
-            .text_color(theme::MUTED)
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|_, _, cx| cx.stop_propagation())
-            .child(div().text_color(theme::LED_GREEN).child(transition.summary))
-            .children(transition.lines.into_iter().map(|line| div().child(line)));
-        if let Some(echo) = transition.echo {
-            panel = panel.child(div().text_color(theme::ACCENT).child(echo));
-        }
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .occlude()
-                .flex()
-                .items_start()
-                .justify_center()
-                .pt(px(52.))
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(|s, _, _, cx| {
-                        s.automix_detail = false;
-                        cx.notify();
-                    }),
-                )
-                .child(panel)
-                .into_any_element(),
-        )
     }
 }

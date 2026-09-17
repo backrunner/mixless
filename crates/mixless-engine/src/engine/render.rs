@@ -58,6 +58,9 @@ impl Shared {
         rt.cross[0].set(ga);
         rt.cross[1].set(gb);
         rt.master.set(master);
+        rt.master_gain.set(db_to_lin(
+            self.master_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
+        ));
 
         let bufs: [Option<Arc<AudioBuffer>>; 2] =
             std::array::from_fn(|index| match self.decks[index].buffer.try_lock() {
@@ -91,11 +94,16 @@ impl Shared {
                 deck.filter_r = ChannelFilter::new(sr);
                 deck.amplitude = SmoothValue::new(0.0, sr, 0.001);
                 let trim = db_to_lin(slot.gain_milli.load(Ordering::Relaxed) as f32 / 100. - 96.);
-                deck.gain = SmoothValue::new(
-                    trim * slot.fader.load(Ordering::Relaxed) as f32 / 1000.,
+                deck.trim = SmoothValue::new(trim, sr, 0.003);
+                deck.limiter_gain = SmoothValue::new(
+                    db_to_lin(slot.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100. - 12.),
                     sr,
                     0.003,
                 );
+                deck.limiter = MasterLimiter::new(sr);
+                deck.automix_gain = SmoothValue::new(1.0, sr, 0.15);
+                deck.fader =
+                    SmoothValue::new(slot.fader.load(Ordering::Relaxed) as f32 / 1000., sr, 0.003);
                 let balance = slot.balance_milli.load(Ordering::Relaxed) as f32 / 500. - 1.;
                 deck.balance_l = SmoothValue::new(1. - balance.max(0.), sr, 0.003);
                 deck.balance_r = SmoothValue::new(1. + balance.min(0.), sr, 0.003);
@@ -235,9 +243,24 @@ impl Shared {
                 deck.eq[band].set(value);
             }
             let trim = db_to_lin(slot.gain_milli.load(Ordering::Relaxed) as f32 / 100.0 - 96.0);
-            deck.cue_trim.set(trim);
-            deck.gain
-                .set(trim * slot.fader.load(Ordering::Relaxed) as f32 / 1000.0);
+            deck.trim.set(trim);
+            deck.limiter_gain.set(db_to_lin(
+                slot.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
+            ));
+            let manual_db = slot.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0;
+            let auto_db = if self.automation.enabled.load(Ordering::Acquire)
+                && !self.automation.paused.load(Ordering::Relaxed)
+                && !self.automation.gain_cancelled.load(Ordering::Acquire)
+            {
+                (slot.automix_gain_centi.load(Ordering::Relaxed) as f32 / 100.0)
+                    .min(12.0 - manual_db)
+            } else {
+                slot.automix_gain_centi.store(0, Ordering::Relaxed);
+                0.0
+            };
+            deck.automix_gain.set(db_to_lin(auto_db));
+            deck.fader
+                .set(slot.fader.load(Ordering::Relaxed) as f32 / 1000.0);
             // Linear balance: center passes both channels at unity, each
             // extreme silences the opposite side.
             let balance = slot.balance_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0;
@@ -368,8 +391,11 @@ impl Shared {
                 l += wet[0];
                 r += wet[1];
             }
+            let master_gain = rt.master_gain.next();
+            (l, r) = rt.limiter.process(l * master_gain, r * master_gain);
             let master = rt.master.next();
-            (l, r) = rt.limiter.process(l * master, r * master);
+            l *= master;
+            r *= master;
             if !l.is_finite() || !r.is_finite() {
                 last_ok = false;
                 l = 0.0;

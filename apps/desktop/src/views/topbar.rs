@@ -4,9 +4,9 @@
 use gpui::prelude::*;
 use gpui::{IntoElement, Rgba, Styled, px};
 
-use crate::controls::{KnobSpec, knob};
-use crate::state::{KnobCtl, UiState, WaveLayout};
+use crate::state::{UiState, WaveLayout};
 use crate::theme;
+mod master;
 
 fn divider() -> gpui::Div {
     gpui::div()
@@ -181,67 +181,7 @@ impl UiState {
             })
         };
 
-        // A compact horizontal treatment keeps the control comfortably
-        // inside the 44 px macOS titlebar. The percentage is easier to scan
-        // than a label squeezed underneath the knob.
-        let master = gpui::div()
-            .id("master-control")
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_2()
-            .h(px(32.))
-            .px_2()
-            .rounded(px(6.))
-            .overflow_hidden()
-            .border_1()
-            .border_color(theme::with_alpha(theme::LED_GREEN, 0.24))
-            .bg(theme::PANEL_INSET)
-            // The top bar overlaps the transparent macOS titlebar.  Give the
-            // whole control its own hitbox so a drag that starts beside the
-            // small knob cannot fall through to the native window mover.
-            .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
-            })
-            .child(
-                gpui::div()
-                    .flex()
-                    .flex_none()
-                    .w(px(38.))
-                    .flex_col()
-                    .gap(px(1.))
-                    .child(
-                        gpui::div()
-                            .text_size(px(7.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme::MUTED)
-                            .child("MASTER"),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_size(px(10.))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::LED_GREEN)
-                            .child(format!(
-                                "{:.0}%",
-                                self.snapshot.master.clamp(0.0, 1.0) * 100.0
-                            )),
-                    ),
-            )
-            .child(knob(
-                KnobSpec {
-                    ctl: KnobCtl::Master,
-                    value: self.snapshot.master,
-                    min: 0.0,
-                    max: 1.0,
-                    diameter: 22.0,
-                    color: theme::LED_GREEN,
-                    label: "",
-                    bipolar: false,
-                },
-                cx,
-            ));
+        let master = self.render_master_controls(cx);
 
         gpui::div()
             .id("topbar")
@@ -308,7 +248,7 @@ impl UiState {
                     .h_full()
                     .child(drag_space())
                     .when(self.automix_active, |el| {
-                        el.child(self.render_automix_chip(cx))
+                        el.child(self.render_automix_chip())
                     })
                     .child(drag_space()),
             )

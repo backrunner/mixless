@@ -200,8 +200,7 @@ pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
     });
 
     div()
-        // Label participates in the id so the same engine parameter can be
-        // bound twice on screen (e.g. mixer TRIM and deck GAIN).
+        // Include the label so separately placed controls can share a parameter.
         .id(ElementId::Name(SharedString::from(format!(
             "knob-{ctl:?}-{label}"
         ))))
@@ -261,16 +260,16 @@ fn paint_knob(window: &mut Window, bounds: Bounds<Pixels>, t: f32, bipolar: bool
     if let Some(p) = knob_arc(cx, cy, ring_r, start, start + 270.0) {
         window.paint_path(p, gpui::rgb(0x232327));
     }
-    if t > 0.001 {
-        let (a, b) = if bipolar {
-            if end >= 0.0 { (0.0, end) } else { (end, 0.0) }
-        } else {
-            (start, end)
-        };
-        if b > a {
-            if let Some(p) = knob_arc(cx, cy, ring_r, a, b) {
-                window.paint_path(p, color);
-            }
+    // Bipolar arcs grow from the 0° origin, so a knob at hard left still has
+    // sweep; gate on the sweep itself rather than `t` or the fill vanishes.
+    let (a, b) = if bipolar {
+        if end >= 0.0 { (0.0, end) } else { (end, 0.0) }
+    } else {
+        (start, end)
+    };
+    if b - a > 0.001 {
+        if let Some(p) = knob_arc(cx, cy, ring_r, a, b) {
+            window.paint_path(p, color);
         }
     }
 

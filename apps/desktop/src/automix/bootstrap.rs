@@ -16,7 +16,7 @@ pub(super) fn begin(
     let gain = |index: usize| {
         let d = &initial.decks[index];
         let cross = if index == 0 { 1. - x } else { 1. + x };
-        cross * d.fader * 10f32.powf(d.gain_db / 20.)
+        cross * d.fader * 10f32.powf((d.gain_db + d.limiter_gain_db) / 20.)
     };
     let outgoing = initial
         .decks

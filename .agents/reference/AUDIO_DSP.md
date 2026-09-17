@@ -10,12 +10,52 @@ they never synthesize PCM or own the audible playback position.
 Per deck: source-rate conversion + source-domain loop → independent music
 tempo/key processing (or low-latency scratch resampling) → transport envelope →
 phase-aligned LR4 three-band isolator → resonant channel filter → four stereo
-insert effects → smoothed trim/channel fader → smoothed crossfader.
+insert effects → smoothed mixer TRIM → smoothed deck GAIN → per-deck
+temporary AutoMix gain → stereo-linked sample-peak limiter → channel
+fader/balance → smoothed crossfader.
+
+Deck GAIN independently controls the limiter input from -12 to +12 dB; mixer
+TRIM remains the channel calibration/AutoMix gain. Each deck limiter has a
+fixed 0.98 sample-peak ceiling and an 80 ms release. PFL taps the limited signal
+before fader/balance, and loading a new source clears old gain reduction while
+preserving the deck GAIN setting. Master and headphone bus limiters still
+protect their respective sums. These are sample-peak, not true-peak limiters.
 
 Post-fader/crossfader sends feed shared wet-only Echo and Reverb returns. Those
 returns keep processing after the send is closed, allowing the tail to decay.
-The summed bus passes through master gain and a stereo-linked sample-peak
-limiter. Signals below the limiter ceiling are not continuously waveshaped.
+The summed bus passes through master GAIN (-12 to +12 dB), a stereo-linked
+sample-peak limiter, then master LEVEL (0 to 100%). LEVEL cannot drive the
+limiter or undo attenuation: 25% output remains bounded by 0.245 even with
+positive master GAIN. Signals below the limiter ceiling are not continuously
+waveshaped. PFL remains independent of both master controls.
+
+### AutoMix transition compensation
+
+Dense-plan preparation estimates stereo power from the actual decoded source
+and aligned retained stems, including residual cross terms and planned EQ,
+filter, trim, fader and crossfader. It samples 400 ms windows every 200 ms on
+the host, using local full-source reference windows before and after the
+transition. No metering allocation or analysis is added to the callback.
+
+The temporary correction has a 1 dB deadband and a +6 dB ceiling, additionally
+bounded by the remaining deck GAIN range. Its envelope rises at most 1.5 dB/s
+and falls at most 4 dB/s; a backward pass removes gain before louder material
+returns. Runtime smoothing handles cancellation. Silence/noise, near-empty
+material, sub-two-second transitions and scratch gestures do not receive a
+gain boost. Planning also reduces the rank of windows where both sources are
+quiet relative to their own tracks.
+
+Compensation is separate from the manual GAIN setting and source normalization;
+the deck shows its scheduled `AUTO +…` amount. The musical handoff, skip, stop or source
+replacement releases it instead of carrying it into a solo tempo-settling tail
+or the next pair. Pause
+suspends it, and resume restores the current envelope. Manual level, stem,
+tone, FX or transport edits disable this compensation for the current plan.
+
+This is a bounded feed-forward power estimate, not an exact LUFS prediction of
+time stretching or insert/send FX. The deck and master limiters remain the
+sample-peak protection. Offline A/B measurements do not establish subjective
+listening quality or inter-sample true-peak protection.
 
 ### Independent tempo and key
 

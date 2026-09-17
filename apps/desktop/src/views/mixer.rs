@@ -92,7 +92,7 @@ impl UiState {
             .pt(px(if compact_height { 2.0 } else { 4.0 }))
             .child(knob(
                 KnobSpec {
-                    ctl: KnobCtl::Gain(deck),
+                    ctl: KnobCtl::Trim(deck),
                     value: d.gain_db,
                     min: -12.0,
                     max: 12.0,

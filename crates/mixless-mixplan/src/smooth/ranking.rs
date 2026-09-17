@@ -18,6 +18,71 @@ pub(super) struct Evidence {
     pub scratch_cut: bool,
     pub fx_decision: policy::Decision,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn score(levels: [f32; 2], master_scale: f32) -> f32 {
+        let a = crate::tests::track(
+            1,
+            120.,
+            "8A",
+            mixless_protocol::SectionLabel::Outro,
+            64,
+            0.9,
+            0.2 * master_scale,
+        );
+        let b = crate::tests::track(
+            2,
+            120.,
+            "8A",
+            mixless_protocol::SectionLabel::Intro,
+            64,
+            0.9,
+            0.2 * master_scale,
+        );
+        let ctx = PlanContext {
+            outgoing: &a,
+            incoming: &b,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: Default::default(),
+        };
+        Evidence {
+            start: 96.,
+            end: 128.,
+            bin: 0.,
+            n: 16.,
+            mode: TransitionMode::BeatBlend,
+            explicit_out: false,
+            phrases: [1.; 4],
+            voices: [0.1; 2],
+            rms: levels.map(|r| Some(r * master_scale)),
+            key: 1.,
+            key_shift: 0.,
+            clash: 0.,
+            drop_cut: false,
+            scratch_cut: false,
+            fx_decision: policy::Decision {
+                technique: Technique::DryCut,
+                confidence: 1.,
+            },
+        }
+        .score(&ctx, &PlannerOptions::default())
+        .unwrap()
+    }
+
+    #[test]
+    fn equally_quiet_windows_rank_below_a_pair_with_one_strong_source() {
+        let quiet = score([0.05, 0.05], 1.);
+        assert!(score([0.05, 0.2], 1.) > quiet + 0.1);
+        assert!(score([0.2, 0.2], 1.) > quiet + 0.1);
+        assert!((score([0.05, 0.05], 0.25) - quiet).abs() < 1e-6);
+        assert!(score([0.0001, 0.0001], 1.) <= quiet);
+    }
+}
 impl Evidence {
     pub fn score(self, ctx: &PlanContext<'_>, options: &PlannerOptions) -> Option<f32> {
         let Self {
@@ -117,6 +182,21 @@ impl Evidence {
             (Some(a), Some(b)) => (1. - (20. * (a / b).log10()).abs() / 18.).clamp(0., 1.),
             _ => 0.5,
         };
+        // Equal RMS is not sufficient: two quiet sections can match perfectly
+        // and still empty the floor. Compare each window with its own track,
+        // so differences between source masters do not bias the choice.
+        let weakness = |track: &TrackAnalysis, rms: Option<f32>| {
+            rms.zip(average_rms(track, 0., track.duration_sec))
+                .filter(|(local, reference)| *local > 0. && *reference > 0.001)
+                .map_or(0., |(local, reference)| {
+                    ((20. * (reference / local).log10() - 3.) / 9.).clamp(0., 1.)
+                })
+        };
+        let quiet_pair = if drop_cut {
+            0.
+        } else {
+            weakness(a, rms_a).min(weakness(b, rms_b))
+        };
         let kick = match (feature(a, end - 0.01), feature(b, bin + 0.01)) {
             (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),
             _ => 0.5,
@@ -136,6 +216,7 @@ impl Evidence {
         let score =
             ((quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 + length_fit
                 - key_shift.abs() * 0.025
+                - quiet_pair * 0.25
                 + if structural { 0.03 } else { 0. })
                 / 1.4)
                 .clamp(0., 1.);

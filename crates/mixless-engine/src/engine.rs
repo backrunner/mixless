@@ -73,7 +73,10 @@ impl Default for EngineConfig {
 struct DeckRt {
     presentation_step: f64,
     cue_sample: [f32; 2],
-    cue_trim: SmoothValue,
+    trim: SmoothValue,
+    limiter_gain: SmoothValue,
+    automix_gain: SmoothValue,
+    limiter: MasterLimiter,
     isolator_l: Isolator,
     isolator_r: Isolator,
     filter_l: ChannelFilter,
@@ -92,7 +95,7 @@ struct DeckRt {
     scratch_speed: f64,
     slip_position: f64,
     amplitude: SmoothValue,
-    gain: SmoothValue,
+    fader: SmoothValue,
     balance_l: SmoothValue,
     balance_r: SmoothValue,
     eq: [SmoothValue; 3],
@@ -121,6 +124,7 @@ pub(crate) struct AudioRt {
     cue_limiter: MasterLimiter,
     decks: [DeckRt; 2],
     master: SmoothValue,
+    master_gain: SmoothValue,
     cross: [SmoothValue; 2],
     sends: [Effect; 2],
     send_levels: [SmoothValue; 2],
@@ -155,10 +159,12 @@ struct DeckSlot {
     rate_micro: AtomicU32,  // rate * 1000000
     pitch_centi: AtomicU32, // (semitones + 24) * 100
     keylock: AtomicBool,
-    fader: AtomicU32,         // 0..1000
-    gain_milli: AtomicU32,    // (db + 96) * 100
-    balance_milli: AtomicU32, // (balance + 1) * 500
-    eq_db: [AtomicU32; 3],    // (db + 96) * 100
+    fader: AtomicU32,              // 0..1000
+    gain_milli: AtomicU32,         // (db + 96) * 100
+    limiter_gain_centi: AtomicU32, // (db + 12) * 100
+    automix_gain_centi: AtomicU32, // temporary positive compensation, db * 100
+    balance_milli: AtomicU32,      // (balance + 1) * 500
+    eq_db: [AtomicU32; 3],         // (db + 96) * 100
     eq_kill: [AtomicBool; 3],
     filter_milli: AtomicU32, // (amount + 1) * 500
     resonance_milli: AtomicU32,
@@ -213,6 +219,7 @@ pub struct Shared {
     xf_curve: AtomicU32,
     xf_reverse: AtomicBool,
     master: AtomicU32,
+    master_gain_centi: AtomicU32,
     master_level: [AtomicU32; 2],
     recorder: recording::Recorder,
     cue_gain: AtomicU32,

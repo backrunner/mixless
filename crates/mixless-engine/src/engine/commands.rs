@@ -19,7 +19,10 @@ impl Engine {
             Command::SetFilter { cutoff_hz, .. } => cutoff_hz.is_finite(),
             Command::SetRate { rate, .. } => rate.is_finite(),
             Command::SetPitchSemitones { semitones, .. } => semitones.is_finite(),
-            Command::SetEq { db, .. } | Command::SetChannelGain { db, .. } => db.is_finite(),
+            Command::SetEq { db, .. }
+            | Command::SetChannelGain { db, .. }
+            | Command::SetDeckLimiterGain { db, .. }
+            | Command::SetMasterGain { db } => db.is_finite(),
             Command::SetCrossfader { value }
             | Command::SetMaster { value }
             | Command::SetChannelFader { value, .. }
@@ -200,6 +203,12 @@ impl Shared {
                     .gain_milli
                     .store(v, Ordering::Relaxed);
             }
+            Command::SetDeckLimiterGain { deck, db } => {
+                let v = ((db.clamp(-12.0, 12.0) + 12.0) * 100.0).round() as u32;
+                self.decks[deck.index()]
+                    .limiter_gain_centi
+                    .store(v, Ordering::Relaxed);
+            }
             Command::SetBalance { deck, value } => {
                 let v = ((value.clamp(-1.0, 1.0) + 1.0) * 500.0).round() as u32;
                 self.decks[deck.index()]
@@ -267,6 +276,12 @@ impl Shared {
                 self.xf_curve.store(v, Ordering::Relaxed);
             }
             Command::SetXfReverse { on } => self.xf_reverse.store(on, Ordering::Relaxed),
+            Command::SetMasterGain { db } => {
+                self.master_gain_centi.store(
+                    ((db.clamp(-12.0, 12.0) + 12.0) * 100.0).round() as u32,
+                    Ordering::Relaxed,
+                );
+            }
             Command::SetMaster { value } => {
                 let v = (value.clamp(0.0, 1.0) * 1000.0) as u32;
                 self.master.store(v, Ordering::Relaxed);

@@ -1,4 +1,4 @@
-//! Per-deck channel strip beside the jog: GAIN mirrors the mixer's TRIM and
+//! Per-deck channel strip beside the jog: GAIN drives the deck limiter and
 //! BALANCE pans the channel's stereo output.
 
 use gpui::{IntoElement, prelude::*, px};
@@ -29,19 +29,36 @@ impl UiState {
             .justify_between()
             .gap(px(10.))
             .py_1()
-            .child(knob(
-                KnobSpec {
-                    ctl: KnobCtl::Gain(deck),
-                    value: d.gain_db,
-                    min: -12.0,
-                    max: 12.0,
-                    diameter,
-                    color: theme::POINTER,
-                    label: "GAIN",
-                    bipolar: true,
-                },
-                cx,
-            ))
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(knob(
+                        KnobSpec {
+                            ctl: KnobCtl::Gain(deck),
+                            value: d.limiter_gain_db,
+                            min: -12.0,
+                            max: 12.0,
+                            diameter,
+                            color: theme::POINTER,
+                            label: "GAIN",
+                            bipolar: true,
+                        },
+                        cx,
+                    ))
+                    .child(
+                        gpui::div()
+                            .h(px(10.))
+                            .text_size(px(7.))
+                            .text_color(theme::LED_GREEN)
+                            .child(if d.automix_gain_db >= 0.05 {
+                                format!("AUTO +{:.1}", d.automix_gain_db)
+                            } else {
+                                String::new()
+                            }),
+                    ),
+            )
             .child(knob(
                 KnobSpec {
                     ctl: KnobCtl::Balance(deck),

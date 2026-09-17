@@ -1,8 +1,10 @@
 //! Shared offline fixtures for behavioral engine tests.
 
 mod allocation;
+mod automix_gain;
 mod cues;
 mod fx;
+mod limiter;
 mod output;
 mod performance;
 mod pitch;

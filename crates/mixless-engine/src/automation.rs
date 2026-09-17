@@ -2,6 +2,8 @@
 //! samples and atomics; replaced buffers are reclaimed by the host.
 use super::*;
 use mixless_protocol::{LaneId, MixPlan, MixPlanSummary, Polyline};
+#[path = "automation/gain.rs"]
+mod gain;
 
 const STEP: usize = 32;
 const XF: u32 = 1;
@@ -18,6 +20,7 @@ pub(super) struct AutomationShared {
     pub(super) paused: AtomicBool,
     pub(super) progress: AtomicU32,
     cancelled: AtomicU32,
+    pub(super) gain_cancelled: AtomicBool,
     skip: AtomicBool,
 }
 impl AutomationShared {
@@ -40,6 +43,7 @@ pub(super) struct AutomationRt {
 struct DeckPoint {
     stems: Option<[u32; 3]>,
     gain: u32,
+    compensation: u32,
     fader: u32,
     eq: [u32; 3],
     filter: u32,
@@ -372,6 +376,7 @@ impl DensePlan {
                             std::array::from_fn(|i| (lines[i].sample(u) * 1000.).round() as u32)
                         }),
                     gain: db(level - attenuation),
+                    compensation: 0,
                     fader: (base_fader * db_to_lin(attenuation) * 1000.).round() as u32,
                     eq: [
                         db(eq.low.sample(u)),
@@ -451,6 +456,12 @@ impl DensePlan {
                 decks,
             });
         }
+        gain::compile(&plan, outgoing, shared, &mut points, sr);
+        if a.playhead_frames() > start_frame + 1.0 {
+            return Err(EngineError::Protocol(
+                "automix start passed during preparation; replan",
+            ));
+        }
         Ok(Self {
             start_frame,
             incoming_start_frames: (plan.clock.sample(plan.incoming_start_bar) * sr as f32).round()
@@ -508,6 +519,11 @@ impl Engine {
         let pair = dense.plan.summary.as_ref().unwrap().pair;
         let a = &self.shared.decks[dense.outgoing];
         let b = &self.shared.decks[1 - dense.outgoing];
+        if a.playhead_frames() > dense.start_frame + 1.0 {
+            return Err(EngineError::Protocol(
+                "automix start passed before publication; replan",
+            ));
+        }
         if a.track_id.load(Ordering::Relaxed) != pair.0 .0 as u64
             || b.track_id.load(Ordering::Relaxed) != pair.1 .0 as u64
             || b.playing.load(Ordering::Relaxed)
@@ -554,6 +570,7 @@ impl Engine {
             retired.push(old);
         }
         shared.cancelled.store(0, Ordering::Release);
+        shared.gain_cancelled.store(false, Ordering::Release);
         shared.progress.store(0.0f32.to_bits(), Ordering::Relaxed);
         shared.skip.store(false, Ordering::Release);
         shared.paused.store(false, Ordering::Release);
@@ -596,6 +613,44 @@ impl Engine {
     }
     pub(super) fn automation_command(&self, cmd: &Command) {
         let auto = &self.shared.automation;
+        if matches!(
+            cmd,
+            Command::SetDeckLimiterGain { .. }
+                | Command::SetChannelGain { .. }
+                | Command::SetChannelFader { .. }
+                | Command::SetCrossfader { .. }
+                | Command::SetXfCurve { .. }
+                | Command::SetXfReverse { .. }
+                | Command::SetStemGain { .. }
+                | Command::SetEq { .. }
+                | Command::SetEqKill { .. }
+                | Command::SetChannelFilter { .. }
+                | Command::SetFilter { .. }
+                | Command::SetFilterResonance { .. }
+                | Command::SetFilterResonanceEnabled { .. }
+                | Command::SetBalance { .. }
+                | Command::SetRate { .. }
+                | Command::SetPitchSemitones { .. }
+                | Command::SetKeyLock { .. }
+                | Command::SetLoop { .. }
+                | Command::SetLoopBeats { .. }
+                | Command::LoopHalve { .. }
+                | Command::LoopDouble { .. }
+                | Command::BeatJump { .. }
+                | Command::Sync { .. }
+                | Command::SetReverse { .. }
+                | Command::SetJogTouch { touching: true, .. }
+                | Command::Jog { .. }
+                | Command::SetFx { .. }
+                | Command::SetFxBypass { .. }
+                | Command::SetFxSend { .. }
+                | Command::StopAutomix
+        ) {
+            auto.gain_cancelled.store(true, Ordering::Release);
+            for deck in &self.shared.decks {
+                deck.automix_gain_centi.store(0, Ordering::Relaxed);
+            }
+        }
         let mask = match *cmd {
             Command::SetCrossfader { .. }
             | Command::SetXfCurve { .. }
@@ -794,6 +849,14 @@ impl Shared {
                 1 - plan.outgoing
             };
             let s = &self.decks[index];
+            s.automix_gain_centi.store(
+                if auto.gain_cancelled.load(Ordering::Acquire) {
+                    0
+                } else {
+                    p.compensation
+                },
+                Ordering::Relaxed,
+            );
             if let Some(stems) = p.stems {
                 for i in 0..3 {
                     if cancelled & bit(index, 7 + i) == 0 {
@@ -1035,6 +1098,36 @@ mod tests {
                 if outgoing == DeckId::A { 1. } else { -1. }
             );
             assert_eq!(snapshot.deck(outgoing).gain_db, -96.);
+        }
+    }
+    #[test]
+    fn a_prepared_mix_cannot_publish_after_its_start_has_passed() {
+        let (engine, plan) = setup(DeckId::A);
+        let prepared = engine.prepare_plan_on(plan, DeckId::A).unwrap();
+        engine.render_offline(36000);
+        assert!(engine.commit_plan(prepared).is_err());
+        assert!(!engine.snapshot().automix_on);
+        assert!(!engine.snapshot().decks[1].playing);
+    }
+
+    #[test]
+    fn deck_limiter_gain_keeps_automix_channel_fades_active() {
+        for outgoing in [DeckId::A, DeckId::B] {
+            let (engine, plan) = setup(outgoing);
+            engine.load_plan_on(plan, outgoing).unwrap();
+            for (deck, db) in [(DeckId::A, 6.0), (DeckId::B, -3.0)] {
+                engine
+                    .dispatch(Command::SetDeckLimiterGain { deck, db })
+                    .unwrap();
+            }
+            assert!(engine.snapshot().automix_on);
+            engine.render_offline(60000);
+            let snapshot = engine.snapshot();
+            assert_eq!(snapshot.automix_progress, 1.0);
+            assert_eq!(snapshot.deck(outgoing).gain_db, -96.0);
+            assert!(snapshot.decks[1 - outgoing.index()].playing);
+            assert_eq!(snapshot.decks[0].limiter_gain_db, 6.0);
+            assert_eq!(snapshot.decks[1].limiter_gain_db, -3.0);
         }
     }
     #[test]

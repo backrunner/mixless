@@ -6,8 +6,9 @@ impl UiState {
         let value = match ctl {
             KnobCtl::Stem(_, _) => 1.,
             KnobCtl::Master => 0.8,
+            KnobCtl::MasterGain => 0.0,
             KnobCtl::Key(_) => 0.0,
-            KnobCtl::Gain(_) => 0.0,
+            KnobCtl::Trim(_) | KnobCtl::Gain(_) => 0.0,
             KnobCtl::Balance(_) => 0.0,
             KnobCtl::Filter(_) => 0.0,
             KnobCtl::Resonance(_) => 0.35,
@@ -270,8 +271,10 @@ impl UiState {
         match ctl {
             KnobCtl::Stem(d, stem) => self.deck(d).stem_gain[stem.index()],
             KnobCtl::Master => self.snapshot.master,
+            KnobCtl::MasterGain => self.snapshot.master_gain_db,
             KnobCtl::Key(d) => self.deck(d).pitch_semitones,
-            KnobCtl::Gain(d) => self.deck(d).gain_db,
+            KnobCtl::Trim(d) => self.deck(d).gain_db,
+            KnobCtl::Gain(d) => self.deck(d).limiter_gain_db,
             KnobCtl::Balance(d) => self.deck(d).balance,
             KnobCtl::Filter(d) => self.deck(d).filter_amount,
             KnobCtl::Resonance(d) => self.deck(d).filter_resonance,
@@ -289,11 +292,13 @@ impl UiState {
                 value: v,
             }),
             KnobCtl::Master => self.dispatch(Command::SetMaster { value: v }),
+            KnobCtl::MasterGain => self.dispatch(Command::SetMasterGain { db: v }),
             KnobCtl::Key(d) => self.dispatch(Command::SetPitchSemitones {
                 deck: d,
                 semitones: v,
             }),
-            KnobCtl::Gain(d) => self.dispatch(Command::SetChannelGain { deck: d, db: v }),
+            KnobCtl::Trim(d) => self.dispatch(Command::SetChannelGain { deck: d, db: v }),
+            KnobCtl::Gain(d) => self.dispatch(Command::SetDeckLimiterGain { deck: d, db: v }),
             KnobCtl::Balance(d) => self.dispatch(Command::SetBalance { deck: d, value: v }),
             KnobCtl::Filter(d) => self.dispatch(Command::SetChannelFilter { deck: d, amount: v }),
             KnobCtl::Resonance(d) => self.dispatch(Command::SetFilterResonance {

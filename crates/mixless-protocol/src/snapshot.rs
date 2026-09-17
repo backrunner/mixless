@@ -33,7 +33,14 @@ pub struct DeckSnapshot {
     pub lp_hz: f32,
     pub hp_hz: f32,
     pub fader: f32,
+    /// Mixer TRIM in dB.
     pub gain_db: f32,
+    /// Input gain of the per-deck limiter in dB, independent of mixer TRIM.
+    #[serde(default)]
+    pub limiter_gain_db: f32,
+    /// Temporary AutoMix compensation added before the deck limiter.
+    #[serde(default)]
+    pub automix_gain_db: f32,
     /// Stereo balance, -1.0 ..= 1.0, 0.0 = center.
     #[serde(default)]
     pub balance: f32,
@@ -106,6 +113,8 @@ impl Default for DeckSnapshot {
             hp_hz: 20.0,
             fader: 1.0,
             gain_db: 0.0,
+            limiter_gain_db: 0.0,
+            automix_gain_db: 0.0,
             balance: 0.0,
             send: 0.0,
             pfl: false,
@@ -165,7 +174,9 @@ pub struct EngineSnapshot {
     pub xf_curve: XfCurve,
     pub xf_reverse: bool,
     pub master: f32,
-    /// Stereo peak hold after master gain and limiting.
+    #[serde(default)]
+    pub master_gain_db: f32,
+    /// Stereo peak hold after master gain, limiting and output level.
     #[serde(default)]
     pub master_level: [f32; 2],
     pub cue_gain: f32,
@@ -190,6 +201,7 @@ impl Default for EngineSnapshot {
             xf_curve: XfCurve::EqualPower,
             xf_reverse: false,
             master: 0.8,
+            master_gain_db: 0.0,
             master_level: [0.; 2],
             cue_gain: 0.8,
             cue_device: None,

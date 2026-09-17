@@ -159,7 +159,6 @@ impl Render for UiState {
         let import_modal = self.render_import_modal(window, cx);
         let fxbar = self.show_fx.then(|| self.render_fxbar(cx, mixer_width));
         let shortcuts = self.show_shortcuts.then(|| self.render_shortcuts(cx));
-        let automix_detail = self.render_automix_detail(cx);
         let fx_editor = self
             .fx_editor
             .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
@@ -214,14 +213,6 @@ impl Render for UiState {
                 if s.confirm_remove_playlist.is_some() {
                     if ev.keystroke.key == "escape" {
                         s.confirm_remove_playlist = None;
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                if s.automix_detail {
-                    if ev.keystroke.key == "escape" {
-                        s.automix_detail = false;
                         cx.notify();
                     }
                     cx.stop_propagation();
@@ -305,7 +296,6 @@ impl Render for UiState {
             .when_some(audio_menu, |el, menu| el.child(menu))
             .when_some(track_menu, |el, menu| el.child(menu))
             .when_some(playlist_menu, |el, menu| el.child(menu))
-            .when_some(automix_detail, |el, detail| el.child(detail))
             .when_some(remove_playlist_confirm, |el, modal| el.child(modal))
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))

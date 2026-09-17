@@ -266,7 +266,9 @@ pub enum DragCtl {
 pub enum KnobCtl {
     Stem(DeckId, mixless_protocol::StemKind),
     Master,
+    MasterGain,
     Key(DeckId),
+    Trim(DeckId),
     Gain(DeckId),
     Balance(DeckId),
     Filter(DeckId),
@@ -287,8 +289,9 @@ impl KnobCtl {
         match self {
             KnobCtl::Stem(_, _) => (0., 1., 0.01),
             KnobCtl::Master => (0.0, 1.0, 0.01),
+            KnobCtl::MasterGain => (-12.0, 12.0, 0.1),
             KnobCtl::Key(_) => (-6.0, 6.0, 0.1),
-            KnobCtl::Gain(_) => (-12.0, 12.0, 0.1),
+            KnobCtl::Trim(_) | KnobCtl::Gain(_) => (-12.0, 12.0, 0.1),
             KnobCtl::Balance(_) => (-1.0, 1.0, 0.01),
             KnobCtl::Filter(_) => (-1.0, 1.0, 0.01),
             KnobCtl::Resonance(_) => (0.0, 1.0, 0.01),
@@ -387,8 +390,6 @@ pub struct UiState {
     pub automix_active: bool,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
-    /// Transition detail popover pinned open from the top-bar chip.
-    pub automix_detail: bool,
     automix_preview_revision: u64,
     pub automix_plan: Option<(DeckId, Arc<mixless_protocol::MixPlan>)>,
     automix_epoch: Arc<AtomicU64>,
@@ -486,7 +487,6 @@ impl UiState {
             automix_active: false,
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
-            automix_detail: false,
             automix_preview_revision: 0,
             automix_plan: None,
             automix_epoch: Arc::new(AtomicU64::new(0)),

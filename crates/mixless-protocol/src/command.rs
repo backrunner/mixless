@@ -127,7 +127,13 @@ pub enum Command {
         deck: DeckId,
         value: f32,
     },
+    /// Mixer TRIM in dB, independent of the deck limiter's input gain.
     SetChannelGain {
+        deck: DeckId,
+        db: f32,
+    },
+    /// Deck GAIN: -12 ..= 12 dB into the per-deck limiter, before the fader.
+    SetDeckLimiterGain {
         deck: DeckId,
         db: f32,
     },
@@ -152,6 +158,10 @@ pub enum Command {
     },
     SetMaster {
         value: f32,
+    },
+    /// Master input gain in dB, before the master limiter and output level.
+    SetMasterGain {
+        db: f32,
     },
     SetPfl {
         deck: DeckId,

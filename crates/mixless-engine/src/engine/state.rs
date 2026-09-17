@@ -19,6 +19,8 @@ impl DeckSlot {
             keylock: AtomicBool::new(true),
             fader: AtomicU32::new(1000),
             gain_milli: AtomicU32::new(9600),
+            limiter_gain_centi: AtomicU32::new(1200),
+            automix_gain_centi: AtomicU32::new(0),
             balance_milli: AtomicU32::new(500),
             eq_db: [
                 AtomicU32::new(9600),
@@ -112,6 +114,7 @@ impl Shared {
             },
             xf_reverse: self.xf_reverse.load(Ordering::Relaxed),
             master: self.master.load(Ordering::Relaxed) as f32 / 1000.0,
+            master_gain_db: self.master_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
             master_level: std::array::from_fn(|i| {
                 f32::from_bits(self.master_level[i].load(Ordering::Relaxed))
             }),
@@ -197,6 +200,8 @@ impl Shared {
                 ),
                 fader: s.fader.load(Ordering::Relaxed) as f32 / 1000.0,
                 gain_db: s.gain_milli.load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
+                limiter_gain_db: s.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
+                automix_gain_db: s.automix_gain_centi.load(Ordering::Relaxed) as f32 / 100.0,
                 balance: s.balance_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0,
                 send: s.send_milli.load(Ordering::Relaxed) as f32 / 1000.0,
                 pfl: s.pfl.load(Ordering::Relaxed),

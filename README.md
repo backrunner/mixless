@@ -105,6 +105,15 @@ Storage tabs.
 - PFL uses a separate pre-fader headphone bus. It remains independent of the
   channel faders and master volume, including with different device sample rates.
   No headphone output disables PFL only; hot cues remain available.
+- Mixer **TRIM** calibrates each channel's level. Deck **GAIN** independently
+  adjusts input gain into that deck's limiter (-12 to +12 dB). Turning it up
+  raises loudness while the limiter bounds sample peaks; channel faders remain
+  after limiting, and PFL monitors the same limited signal before the fader.
+- AutoMix adds up to 6 dB of temporary gain when a sustained overlap loses
+  energy, including sparse stem blends. The deck's `AUTO +…` readout shows the
+  compensation; manual changes take over, and it returns to zero after the mix.
+- Master **GAIN** drives the master limiter; **LEVEL** controls the final output
+  volume after limiting. Both controls are independent of headphone volume.
 - MIDI Mapping selects enabled input devices and supports CC/note mappings,
   learning, editing, deletion and JSON import/export. Learning captures the first
   signal and suppresses performance commands until saved or canceled. Jog uses

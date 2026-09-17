@@ -7,7 +7,10 @@ impl DeckRt {
         Self {
             presentation_step: 0.,
             cue_sample: [0.0; 2],
-            cue_trim: SmoothValue::new(1.0, sr, 0.003),
+            trim: SmoothValue::new(1.0, sr, 0.003),
+            limiter_gain: SmoothValue::new(1.0, sr, 0.003),
+            automix_gain: SmoothValue::new(1.0, sr, 0.15),
+            limiter: MasterLimiter::new(sr),
             isolator_l: Isolator::new(sr),
             isolator_r: Isolator::new(sr),
             filter_l: ChannelFilter::new(sr),
@@ -26,7 +29,7 @@ impl DeckRt {
             scratch_speed: 0.0,
             slip_position: 0.0,
             amplitude: SmoothValue::new(0.0, sr, 0.001),
-            gain: SmoothValue::new(0.8, sr, 0.003),
+            fader: SmoothValue::new(1.0, sr, 0.003),
             balance_l: SmoothValue::new(1.0, sr, 0.003),
             balance_r: SmoothValue::new(1.0, sr, 0.003),
             eq: std::array::from_fn(|_| SmoothValue::new(1.0, sr, 0.005)),
@@ -115,6 +118,7 @@ impl AudioRt {
             cue_limiter: MasterLimiter::new(sample_rate),
             decks: std::array::from_fn(|_| DeckRt::new(sample_rate)),
             master: SmoothValue::new(0.8, sample_rate, 0.005),
+            master_gain: SmoothValue::new(1.0, sample_rate, 0.005),
             cross: std::array::from_fn(|_| {
                 SmoothValue::new(std::f32::consts::FRAC_1_SQRT_2, sample_rate, 0.0005)
             }),
@@ -279,11 +283,20 @@ impl Shared {
         for effect in &mut rt.inserts {
             stereo = effect.process_clocked(stereo, false, fx_beat);
         }
-        let trim = rt.cue_trim.next();
-        rt.cue_sample = [stereo[0] * trim, stereo[1] * trim];
-        let gain = rt.gain.next();
-        l = stereo[0] * gain * rt.balance_l.next();
-        r = stereo[1] * gain * rt.balance_r.next();
+        // TRIM calibrates the channel; GAIN independently drives its limiter.
+        // Both master and PFL hear the same limited signal. Fader and balance
+        // stay downstream so limiting cannot counteract a channel fade.
+        // The two smoothers have different release times. Keep their product
+        // within +12 dB even during a manual takeover of active compensation.
+        let drive = (rt.limiter_gain.next() * rt.automix_gain.next()).min(3.981_071_7);
+        let input_gain = rt.trim.next() * drive;
+        let (left, right) = rt
+            .limiter
+            .process(stereo[0] * input_gain, stereo[1] * input_gain);
+        rt.cue_sample = [left, right];
+        let fader = rt.fader.next();
+        l = left * fader * rt.balance_l.next();
+        r = right * fader * rt.balance_r.next();
         rt.last_l = l;
         rt.last_r = r;
         (l, r)

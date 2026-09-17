@@ -64,6 +64,7 @@ impl Engine {
             xf_curve: AtomicU32::new(1),
             xf_reverse: AtomicBool::new(false),
             master: AtomicU32::new(800),
+            master_gain_centi: AtomicU32::new(1200),
             master_level: std::array::from_fn(|_| AtomicU32::new(0)),
             recorder: recording::Recorder::default(),
             cue_gain: AtomicU32::new(800),
@@ -225,6 +226,7 @@ impl Engine {
         // A new source starts at unity trim, including decks previously faded
         // to silence by an older automation plan. Channel faders retain position.
         slot.gain_milli.store(9600, Ordering::Relaxed);
+        slot.automix_gain_centi.store(0, Ordering::Relaxed);
         slot.jog_touch.store(false, Ordering::Release);
         slot.seek_pending.store(false, Ordering::Release);
         slot.temporary_cue.store(0, Ordering::Relaxed);
