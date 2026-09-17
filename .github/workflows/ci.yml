@@ -11,5 +11,5 @@ jobs:
         run: rustup update stable && rustup default stable
       - name: Test workspace crates
         run: cargo test --locked --workspace --exclude mixless-desktop
-      - name: Check desktop
-        run: cargo check --locked -p mixless-desktop
+      - name: Test desktop and updater
+        run: cargo test --locked -p mixless-desktop

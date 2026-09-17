@@ -17,7 +17,8 @@ The channel is baked into the build (`MIXLESS_CHANNEL`, the
 also ships `mixless-<channel>-latest.json`, a small manifest with the version,
 DMG URL and SHA-256 that the in-app updater polls. Stable builds read the
 asset on `releases/latest`; beta builds list releases through the GitHub API
-and take the newest prerelease carrying the beta manifest.
+and select the highest semantic beta version carrying the beta manifest across
+all release pages. Release creation order does not determine version precedence.
 
 ## Updates
 
@@ -32,11 +33,33 @@ channels only; dev builds skip) and from **Mixless → Check for Updates…**:
   notarization assessment, a bundle `Identifier`/`TeamIdentifier` match with
   the running app, and a `CFBundleShortVersionString` match with the
   manifest.
-- Install replaces the running bundle via the same atomic swap the DMG
-  self-installer uses. The app never restarts itself — a banner asks the
-  user to restart to finish.
+- The complete bundle is copied into a private sibling directory and verified
+  again before activation. macOS atomically exchanges the staged and installed
+  directories; copy or verification failure leaves the installed app untouched.
+  The app never restarts itself — a banner asks the user to restart to finish.
+- Manual checks remain visible even when they join a background check. Once an
+  update is installed, further checks preserve the restart notice instead of
+  downloading again. Both the running version and the installed bundle version
+  are checked to avoid replacing an already newer on-disk app. A per-app
+  installation lock serializes processes, and the installed version is checked
+  again under that lock after downloading and staging.
 
 `MIXLESS_UPDATE_TARGET=<path>` overrides the install destination for tests.
+
+Unit and local HTTP regression tests run in desktop CI. A separate native
+integration check downloads a published, signed DMG and installs it into a
+temporary app directory, exercising codesign, Gatekeeper, stapler and a headless
+executable restart. It requires a local copy of that release's manifest:
+
+```sh
+MIXLESS_TEST_UPDATE_MANIFEST=/absolute/path/mixless-beta-latest.json \
+  cargo test --locked -p mixless-desktop published_package_roundtrip \
+  -- --ignored --nocapture --test-threads=1
+```
+
+This check does not replace `/Applications/Mixless.app` or open a user library.
+Version-upgrade decisions are covered separately by the SemVer/channel tests;
+the native check reinstalls the published package to exercise replacement.
 
 ## Data compatibility
 

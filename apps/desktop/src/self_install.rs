@@ -102,46 +102,6 @@ fn writable(dir: &Path) -> bool {
     }
 }
 
-pub(crate) fn install_bundle(source: &Path, dest: &Path) -> io::Result<()> {
-    let backup = dest.with_file_name(format!(
-        ".{}-replaced-{}",
-        dest.file_name().unwrap_or_default().to_string_lossy(),
-        process::id()
-    ));
-    let replaced = dest.exists();
-    if replaced {
-        fs::rename(dest, &backup)?;
-    }
-    match copy_tree(source, dest) {
-        Ok(()) => {
-            if replaced {
-                let _ = fs::remove_dir_all(&backup);
-            }
-            Ok(())
-        }
-        Err(error) => {
-            let _ = fs::remove_dir_all(dest);
-            if replaced {
-                let _ = fs::rename(&backup, dest);
-            }
-            Err(error)
-        }
-    }
-}
-
-fn copy_tree(source: &Path, dest: &Path) -> io::Result<()> {
-    fs::create_dir_all(dest)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let target = dest.join(entry.file_name());
-        if kind.is_symlink() {
-            std::os::unix::fs::symlink(fs::read_link(entry.path())?, &target)?;
-        } else if kind.is_dir() {
-            copy_tree(&entry.path(), &target)?;
-        } else {
-            fs::copy(entry.path(), &target)?;
-        }
-    }
-    Ok(())
-}
+#[path = "self_install/install.rs"]
+mod install;
+pub(crate) use install::{install_bundle, install_bundle_checked};

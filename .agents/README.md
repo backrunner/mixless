@@ -33,6 +33,7 @@ Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只�
 - [Rust 分轨、音符与正式 AutoMix 接入](reference/native-inference.md)
 - [独立声部实时播放与性能](reference/stem-playback.md)
 - [DSP 与实时性能](reference/AUDIO_DSP.md)
+- [自动更新链路检查与验证](history/2026-09-17-updater.md)
 - [FX 目录](reference/FX_CATALOGUE.md)
 - [对拍参考](reference/BEAT_SYNC.md)
 - [SoundAnalysis 部署边界](reference/ANALYSIS_ENHANCEMENT.md)

@@ -69,10 +69,12 @@ jobs:
             exit 1
           fi
 
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
-          echo "build_number=${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "channel=${channel}"
+            echo "build_number=${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          } >> "${GITHUB_OUTPUT}"
 
   macos-desktop:
     name: macOS desktop
@@ -167,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${APPLE_API_KEY_ID}" ]]; then
+          if [[ -n "${APPLE_API_KEY_ID}" && -n "${APPLE_API_ISSUER}" && -n "${APPLE_API_KEY_BASE64}" ]]; then
             api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
             printf '%s' "${APPLE_API_KEY_BASE64}" | base64 -D > "${api_key_path}"
             chmod 600 "${api_key_path}"
@@ -318,8 +320,8 @@ jobs:
         run: |
           set -euo pipefail
           cd release-artifacts
-          shasum -a 256 *.dmg > SHA256SUMS.txt
-          dmg="$(ls *.dmg | head -1)"
+          dmg="Mixless-macOS-${VERSION}.dmg"
+          shasum -a 256 -- "${dmg}" > SHA256SUMS.txt
           digest="$(awk '{print $1}' SHA256SUMS.txt)"
           url="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${dmg}"
           jq -n \
