@@ -90,7 +90,9 @@ impl UiState {
                     .when(action == 1, |el| {
                         el.tooltip(|_, cx| {
                             cx.new(|_| {
-                                super::PathTip("Reanalyze audio; keep manually placed cues.".into())
+                                crate::views::TextTip(
+                                    "Reanalyze audio; keep manually placed cues.".into(),
+                                )
                             })
                             .into()
                         })

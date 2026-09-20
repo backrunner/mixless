@@ -13,6 +13,10 @@ impl Library {
             "DELETE FROM playlist_items WHERE playlist_id=?1 AND track_id=?2",
             params![playlist.0, track.0],
         )?;
+        tx.execute(
+            "DELETE FROM import_items WHERE playlist_id=?1 AND track_id=?2",
+            params![playlist.0, track.0],
+        )?;
         // Local-folder backfill must not undo an explicit membership edit.
         tx.execute(
             "INSERT OR IGNORE INTO playlist_exclusions(playlist_id,track_id) VALUES (?1,?2)",

@@ -14,9 +14,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tempfile = "3"
 
 [dev-dependencies]
 mixless-mixplan = { workspace = true }
 mixless-analyze = { workspace = true }
-tempfile = "3"
 hound = "3"

@@ -17,6 +17,7 @@ impl UiState {
         changed |= self.poll_library_order();
         changed |= self.poll_library();
         changed |= self.poll_library_actions();
+        changed |= self.poll_import_retries();
         changed |= self.poll_update();
         if self.library_previews.poll() {
             self.library_key = None;
@@ -61,12 +62,9 @@ impl UiState {
             .ok()
             .and_then(|midi| midi.as_ref().map(|hub| hub.drain()))
             .unwrap_or_default();
-        for cmd in midi_commands {
-            match cmd {
-                Command::Sync { deck, .. } => self.sync(deck),
-                Command::JumpCue { deck, index } => self.trigger_cue(deck, index as usize, false),
-                cmd => self.dispatch(cmd),
-            }
+        changed |= !midi_commands.is_empty();
+        for action in super::midi::coalesce(midi_commands) {
+            self.apply_midi(action);
         }
         let snapshot = self.core.engine.snapshot();
         if self.automix_active {
@@ -222,6 +220,10 @@ impl UiState {
             let mut finished = false;
             loop {
                 match rx.try_recv() {
+                    Ok(ImportMsg::PlaylistReady(id)) => {
+                        self.select_playlist(Some(id.0));
+                        changed = true;
+                    }
                     Ok(ImportMsg::LibraryChanged) => {
                         self.refresh_tracks();
                         changed = true;
@@ -264,23 +266,12 @@ impl UiState {
                 self.import_rx = Some(rx);
             }
         }
-        if let Some(rx) = self.artwork_rx.take() {
-            match rx.try_recv() {
-                Ok(Ok(updated)) => {
-                    if updated > 0 {
-                        for artwork in &mut self.deck_artwork {
-                            artwork.invalidate();
-                        }
-                        self.refresh_tracks();
-                        changed = true;
-                    }
-                }
-                Ok(Err(error)) => tracing::warn!("artwork backfill: {error}"),
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    self.artwork_rx = Some(rx);
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        if self.artwork_fetch.poll() > 0 {
+            for artwork in &mut self.deck_artwork {
+                artwork.invalidate();
             }
+            self.refresh_tracks();
+            changed = true;
         }
         changed
     }

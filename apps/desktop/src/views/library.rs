@@ -2,6 +2,7 @@
 //! table, cached cover art, and a secondary import modal.
 
 mod drag;
+pub(crate) mod import_rows;
 mod menu;
 mod playlist_menu;
 mod status;
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 
 use crate::state::UiState;
 use crate::theme;
+use crate::views::{TextTip, ellipsized_text};
 use gpui::prelude::*;
 use gpui::{IntoElement, MouseButton, MouseDownEvent, SharedString, Styled, Window, px};
 use mixless_protocol::{Track, TrackId};
@@ -96,9 +98,26 @@ enum SourceIcon {
     Playlist,
 }
 
-enum SourceEntry {
+pub(crate) enum SourceEntry {
     Group(&'static str, usize),
     Playlist(usize),
+}
+
+pub(crate) fn playlist_sources(playlists: &[mixless_library::PlaylistSummary]) -> Vec<SourceEntry> {
+    let mut sources = Vec::new();
+    for (title, folders) in [("LOCAL FOLDERS", true), ("PLAYLISTS", false)] {
+        let indices: Vec<_> = playlists
+            .iter()
+            .enumerate()
+            .filter(|(_, playlist)| playlist.folder_path.is_some() == folders)
+            .map(|(index, _)| index)
+            .collect();
+        if !indices.is_empty() {
+            sources.push(SourceEntry::Group(title, indices.len()));
+            sources.extend(indices.into_iter().map(SourceEntry::Playlist));
+        }
+    }
+    sources
 }
 
 // Source groups are flat: reserve space for the icon, not an empty tree gutter.
@@ -123,6 +142,7 @@ fn source_row(
         .items_center()
         .gap(px(6.))
         .w_full()
+        .min_w_0()
         .h(px(SOURCE_ROW_HEIGHT))
         .px(px(SOURCE_ROW_PAD))
         .rounded(px(3.))
@@ -171,7 +191,7 @@ fn source_row(
             .flex_none()
             .size(px(12.)),
         )
-        .child(gpui::div().flex_1().min_w_0().truncate().child(name.into()))
+        .child(ellipsized_text(name).flex_1().w_0().min_w_0().h(px(16.)))
         .when_some(count, |el, count| {
             el.child(
                 gpui::div()
@@ -183,20 +203,6 @@ fn source_row(
                     .child(count.to_string()),
             )
         })
-}
-
-struct PathTip(String);
-impl gpui::Render for PathTip {
-    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        gpui::div()
-            .px_2()
-            .py_1()
-            .rounded(px(4.))
-            .bg(theme::PANEL_RAISED)
-            .text_size(px(11.))
-            .text_color(theme::TEXT)
-            .child(self.0.clone())
-    }
 }
 
 // Downloader-created folder IDs are not useful playlist titles. Keep the
@@ -311,19 +317,7 @@ impl UiState {
         let playlists = self.playlists.clone();
         let playlist_sel = self.playlist_sel;
         let playlist_state = cx.entity();
-        let mut sources = Vec::new();
-        for (title, folders) in [("LOCAL FOLDERS", true), ("PLAYLISTS", false)] {
-            let indices: Vec<_> = playlists
-                .iter()
-                .enumerate()
-                .filter(|(_, playlist)| playlist.folder_path.is_some() == folders)
-                .map(|(index, _)| index)
-                .collect();
-            if !indices.is_empty() {
-                sources.push(SourceEntry::Group(title, indices.len()));
-                sources.extend(indices.into_iter().map(SourceEntry::Playlist));
-            }
-        }
+        let sources = playlist_sources(&playlists);
         let playlist_list = gpui::uniform_list(
             "playlist-list",
             sources.len(),
@@ -366,12 +360,11 @@ impl UiState {
                         Some(pl.tracks),
                         selected,
                     );
-                    let row = if let Some(path) = &pl.folder_path {
-                        let path = path.clone();
-                        row.tooltip(move |_, cx| cx.new(|_| PathTip(path.clone())).into())
-                    } else {
-                        row
+                    let tooltip = match &pl.folder_path {
+                        Some(path) => format!("{display_name}\n{path}"),
+                        None => display_name.clone(),
                     };
+                    let row = row.tooltip(move |_, cx| cx.new(|_| TextTip(tooltip.clone())).into());
                     let st = playlist_state.clone();
                     let menu_state = playlist_state.clone();
                     let id = pl.id;
@@ -401,57 +394,12 @@ impl UiState {
                 rows
             },
         )
+        .track_scroll(self.playlist_scroll.clone())
         .flex_1()
+        .w_full()
+        .min_w_0()
         .min_h_0();
 
-        let source_name = self
-            .playlist_sel
-            .and_then(|id| self.playlists.iter().find(|pl| pl.id == id))
-            .map(|pl| folder_name(pl, &self.playlists))
-            .unwrap_or_else(|| "All Tracks".into());
-        let toolbar = gpui::div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_2()
-            .h(px(30.))
-            .px_2()
-            .border_b_1()
-            .border_color(theme::LINE)
-            .child(
-                gpui::div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_size(px(11.))
-                    .text_color(theme::TEXT)
-                    .child(source_name.to_owned()),
-            )
-            .child(
-                gpui::div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .text_color(theme::MUTED)
-                    .child(format!("{} tracks", self.tracks.len())),
-            )
-            .child(self.local_import_button(cx, false, "+ Files"))
-            .child(self.local_import_button(cx, true, "+ Folder"))
-            .child(
-                gpui::div()
-                    .id("library-import")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded(px(3.))
-                    .text_size(px(10.))
-                    .text_color(theme::MUTED)
-                    .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
-                    .child("Spotify")
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        s.show_import_modal = true;
-                        cx.notify();
-                    })),
-            );
         let side = gpui::div()
             .flex()
             .flex_none()
@@ -467,19 +415,40 @@ impl UiState {
                     .flex()
                     .flex_none()
                     .items_center()
+                    .justify_between()
                     .h(px(30.))
                     .px(px(4. + SOURCE_ROW_PAD))
                     .border_b_1()
                     .border_color(theme::LINE)
                     .text_size(px(10.))
                     .text_color(theme::MUTED)
-                    .child("LIBRARY"),
+                    .child("LIBRARY")
+                    .child(
+                        gpui::div()
+                            .id("library-import")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(18.))
+                            .rounded(px(3.))
+                            .cursor_pointer()
+                            .text_size(px(13.))
+                            .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
+                            .child("+")
+                            .tooltip(|_, cx| cx.new(|_| TextTip("Import music".into())).into())
+                            .on_click(cx.listener(|s, _, _, cx| {
+                                s.show_import_modal = true;
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(
                 gpui::div()
                     .flex()
                     .flex_col()
                     .flex_1()
+                    .w_full()
+                    .min_w_0()
                     .min_h_0()
                     .px(px(4.))
                     .py(px(2.))
@@ -499,6 +468,7 @@ impl UiState {
 
         let shown = self.tracks.clone();
         let analysis_statuses = self.core.analysis.statuses();
+        let stem_statuses = self.core.analysis.stem_statuses();
         let loaded_tracks = self.snapshot.decks.each_ref().map(|d| d.track_id);
         let playheads =
             crate::wave::preview::positions(&self.snapshot.decks, self.presentation_frames);
@@ -524,6 +494,12 @@ impl UiState {
         let preview_core = self.core.clone();
         let reorder_end_state = track_state.clone();
         let track_count = shown.len();
+        let imports = self.playlist_imports.clone();
+        let retrying: Vec<_> = imports
+            .iter()
+            .map(|item| self.import_retry_pending(menu_playlist, item))
+            .collect();
+        let display_rows = import_rows::rows(shown.len(), &imports);
 
         let header = gpui::div()
             .flex()
@@ -573,7 +549,7 @@ impl UiState {
                     .child("TIME"),
             );
 
-        let table_body = if shown.is_empty() {
+        let table_body = if display_rows.is_empty() {
             gpui::div()
                 .flex()
                 .flex_1()
@@ -585,204 +561,229 @@ impl UiState {
                 .child("No tracks")
                 .into_any_element()
         } else {
-            gpui::uniform_list("track-table", shown.len(), move |range, _window, _cx| {
-                let mut rows = Vec::new();
-                for ix in range {
-                    let t = &shown[ix];
-                    let selected = track_sel == Some(t.id.0);
-                    let key = t.camelot.clone().or_else(|| t.key.clone());
-                    let key_color = key.as_deref().map(theme::key_color).unwrap_or(theme::MUTED);
-                    let bpm = t
-                        .bpm
-                        .map(|b| format!("{b:.1}"))
-                        .unwrap_or_else(|| "—".into());
-                    let status_overlay = status::overlay(
-                        analysis_statuses
-                            .get(&t.id)
-                            .unwrap_or(&crate::analysis::Status::Queued),
-                    );
-                    let dur = fmt_duration(t.duration_ms as u64);
+            gpui::uniform_list(
+                "track-table",
+                display_rows.len(),
+                move |range, _window, _cx| {
+                    let mut rows = Vec::new();
+                    for row_ix in range {
+                        let ix = match display_rows[row_ix] {
+                            import_rows::Row::Track(ix) => ix,
+                            import_rows::Row::Import(ix) => {
+                                rows.push(import_rows::element(
+                                    &imports[ix],
+                                    row_ix,
+                                    compact,
+                                    menu_playlist,
+                                    retrying[ix],
+                                    track_state.clone(),
+                                ));
+                                continue;
+                            }
+                        };
+                        let t = &shown[ix];
+                        let selected = track_sel == Some(t.id.0);
+                        let key = t.camelot.clone().or_else(|| t.key.clone());
+                        let key_color =
+                            key.as_deref().map(theme::key_color).unwrap_or(theme::MUTED);
+                        let bpm = t
+                            .bpm
+                            .map(|b| format!("{b:.1}"))
+                            .unwrap_or_else(|| "—".into());
+                        let status_overlay = status::overlay(
+                            analysis_statuses
+                                .get(&t.id)
+                                .unwrap_or(&crate::analysis::Status::Queued),
+                        );
+                        let dur = fmt_duration(t.duration_ms as u64);
 
-                    let row = gpui::div()
-                        .id(SharedString::from(format!("track-{}-{ix}", t.id.0)))
-                        .relative()
-                        .overflow_hidden()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .h(px(40.))
-                        .px(px(ROW_PAD))
-                        .gap_2()
-                        .text_size(px(12.))
-                        .when(selected, |el| el.bg(theme::with_alpha(theme::ACCENT, 0.12)))
-                        .when(!selected && ix % 2 == 1, |el| el.bg(gpui::rgb(0x101013)))
-                        .when(!selected, |el| el.hover(|s| s.bg(gpui::rgb(0x1c1c20))))
-                        .child(
-                            gpui::div()
-                                .flex()
-                                .flex_none()
-                                .w(px(28.))
-                                .gap(px(2.))
-                                .children(
-                                    loaded_tracks
-                                        .iter()
-                                        .enumerate()
-                                        .filter(|(_, id)| **id == Some(t.id))
-                                        .map(|(i, _)| {
-                                            gpui::div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .w(px(13.))
-                                                .h(px(17.))
-                                                .rounded(px(2.))
-                                                .bg(theme::PANEL_RAISED)
-                                                .text_size(px(10.))
-                                                .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(theme::deck_color(if i == 0 {
-                                                    mixless_protocol::DeckId::A
-                                                } else {
-                                                    mixless_protocol::DeckId::B
-                                                }))
-                                                .child(if i == 0 { "A" } else { "B" })
-                                        }),
-                                ),
-                        )
-                        .child(track_cover(t))
-                        .child(
-                            gpui::div()
-                                .flex_none()
-                                .w(px(COL_TITLE))
-                                .text_color(theme::TEXT)
-                                .truncate()
-                                .child(t.title.clone()),
-                        )
-                        .child(crate::wave::preview::element(
-                            previews.get(t, &preview_core),
-                            mix_overlays.get(ix).copied().unwrap_or_default(),
-                            std::array::from_fn(|i| {
-                                (loaded_tracks[i] == Some(t.id))
-                                    .then_some(playheads[i])
-                                    .flatten()
-                            }),
-                        ))
-                        .child(
-                            gpui::div()
-                                .flex_none()
-                                .w(px(COL_ARTIST))
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_color(theme::TEXT)
-                                .child(t.artist.clone()),
-                        )
-                        .when(!compact, |el| {
-                            el.child(
+                        let row = gpui::div()
+                            .id(SharedString::from(format!("track-{}-{ix}", t.id.0)))
+                            .relative()
+                            .overflow_hidden()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .h(px(40.))
+                            .px(px(ROW_PAD))
+                            .gap_2()
+                            .text_size(px(12.))
+                            .when(selected, |el| el.bg(theme::with_alpha(theme::ACCENT, 0.12)))
+                            .when(!selected && row_ix % 2 == 1, |el| {
+                                el.bg(gpui::rgb(0x101013))
+                            })
+                            .when(!selected, |el| el.hover(|s| s.bg(gpui::rgb(0x1c1c20))))
+                            .child(
+                                gpui::div()
+                                    .flex()
+                                    .flex_none()
+                                    .w(px(28.))
+                                    .gap(px(2.))
+                                    .children(
+                                        loaded_tracks
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, id)| **id == Some(t.id))
+                                            .map(|(i, _)| {
+                                                gpui::div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .w(px(13.))
+                                                    .h(px(17.))
+                                                    .rounded(px(2.))
+                                                    .bg(theme::PANEL_RAISED)
+                                                    .text_size(px(10.))
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme::deck_color(if i == 0 {
+                                                        mixless_protocol::DeckId::A
+                                                    } else {
+                                                        mixless_protocol::DeckId::B
+                                                    }))
+                                                    .child(if i == 0 { "A" } else { "B" })
+                                            }),
+                                    ),
+                            )
+                            .child(track_cover(t))
+                            .child(
                                 gpui::div()
                                     .flex_none()
-                                    .w(px(COL_ALBUM))
+                                    .w(px(COL_TITLE))
+                                    .text_color(theme::TEXT)
+                                    .truncate()
+                                    .child(t.title.clone()),
+                            )
+                            .child(crate::wave::preview::element(
+                                previews.get(t, &preview_core),
+                                mix_overlays.get(ix).copied().unwrap_or_default(),
+                                std::array::from_fn(|i| {
+                                    (loaded_tracks[i] == Some(t.id))
+                                        .then_some(playheads[i])
+                                        .flatten()
+                                }),
+                            ))
+                            .child(
+                                gpui::div()
+                                    .flex_none()
+                                    .w(px(COL_ARTIST))
                                     .min_w_0()
                                     .overflow_hidden()
-                                    .text_color(theme::MUTED)
-                                    .child(t.album.clone().unwrap_or_else(|| "—".into())),
+                                    .text_color(theme::TEXT)
+                                    .child(t.artist.clone()),
                             )
-                        })
-                        .child(
-                            gpui::div()
-                                .flex()
-                                .flex_none()
-                                .justify_end()
-                                .w(px(COL_BPM))
-                                .text_size(px(11.))
-                                .text_color(theme::MUTED)
-                                .child(bpm),
-                        )
-                        .child(
-                            gpui::div()
-                                .flex()
-                                .flex_none()
-                                .justify_center()
-                                .w(px(COL_KEY))
-                                .child(
+                            .when(!compact, |el| {
+                                el.child(
                                     gpui::div()
-                                        .when(key.is_some(), |el| {
-                                            el.px_2()
-                                                .rounded(px(9.))
-                                                .bg(theme::with_alpha(key_color, 0.12))
-                                                .border_1()
-                                                .border_color(theme::with_alpha(key_color, 0.35))
-                                                .text_size(px(10.))
-                                                .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(key_color)
-                                        })
-                                        .child(key.unwrap_or_else(|| "—".into())),
-                                ),
-                        )
-                        .child(
-                            gpui::div()
-                                .flex()
-                                .flex_none()
-                                .justify_end()
-                                .w(px(COL_TIME))
-                                .text_size(px(11.))
-                                .text_color(theme::MUTED)
-                                .child(dur),
-                        )
-                        .children(status_overlay)
-                        .children([false, true].map(|after| {
-                            drag::drop_target(
-                                track_state.clone(),
-                                shown.clone(),
-                                menu_playlist,
-                                ix,
-                                after,
+                                        .flex_none()
+                                        .w(px(COL_ALBUM))
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_color(theme::MUTED)
+                                        .child(t.album.clone().unwrap_or_else(|| "—".into())),
+                                )
+                            })
+                            .child(
+                                gpui::div()
+                                    .flex()
+                                    .flex_none()
+                                    .justify_end()
+                                    .w(px(COL_BPM))
+                                    .text_size(px(11.))
+                                    .text_color(theme::MUTED)
+                                    .child(bpm),
                             )
-                        }));
+                            .child(
+                                gpui::div()
+                                    .flex()
+                                    .flex_none()
+                                    .justify_center()
+                                    .w(px(COL_KEY))
+                                    .child(
+                                        gpui::div()
+                                            .when(key.is_some(), |el| {
+                                                el.px_2()
+                                                    .rounded(px(9.))
+                                                    .bg(theme::with_alpha(key_color, 0.12))
+                                                    .border_1()
+                                                    .border_color(theme::with_alpha(
+                                                        key_color, 0.35,
+                                                    ))
+                                                    .text_size(px(10.))
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(key_color)
+                                            })
+                                            .child(key.unwrap_or_else(|| "—".into())),
+                                    ),
+                            )
+                            .child(
+                                gpui::div()
+                                    .flex()
+                                    .flex_none()
+                                    .justify_end()
+                                    .w(px(COL_TIME))
+                                    .text_size(px(11.))
+                                    .text_color(theme::MUTED)
+                                    .child(dur),
+                            )
+                            .children(status_overlay)
+                            .children(status::stem_badge(stem_statuses.get(&t.id)))
+                            .children([false, true].map(|after| {
+                                drag::drop_target(
+                                    track_state.clone(),
+                                    shown.clone(),
+                                    menu_playlist,
+                                    ix,
+                                    after,
+                                )
+                            }));
 
-                    let st = track_state.clone();
-                    let menu_state = track_state.clone();
-                    let track_id = t.id;
-                    let menu_title = t.title.clone();
-                    rows.push(
-                        row.on_mouse_down(MouseButton::Right, move |ev, _, cx| {
-                            cx.stop_propagation();
-                            menu_state.update(cx, |s, cx| {
-                                s.track_sel = Some(track_id.0);
-                                s.track_menu = Some(TrackMenu {
-                                    track: track_id,
-                                    playlist: menu_playlist,
-                                    title: menu_title.clone(),
-                                    position: ev.position,
-                                });
-                                cx.notify();
-                            });
-                        })
-                        .cursor_move()
-                        .on_drag(
-                            TrackDrag {
-                                id: track_id,
-                                title: t.title.clone(),
-                                playlist: menu_playlist,
-                                index: ix,
-                                tracks: shown.clone(),
-                            },
-                            |drag, _, _, cx| cx.new(|_| drag.clone()),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            move |ev: &MouseDownEvent, _window, cx| {
-                                st.update(cx, |s, cx| {
+                        let st = track_state.clone();
+                        let menu_state = track_state.clone();
+                        let track_id = t.id;
+                        let menu_title = t.title.clone();
+                        rows.push(
+                            row.on_mouse_down(MouseButton::Right, move |ev, _, cx| {
+                                cx.stop_propagation();
+                                menu_state.update(cx, |s, cx| {
                                     s.track_sel = Some(track_id.0);
-                                    if ev.click_count >= 2 {
-                                        s.load_deck(focus_deck, track_id);
-                                    }
+                                    s.track_menu = Some(TrackMenu {
+                                        track: track_id,
+                                        playlist: menu_playlist,
+                                        title: menu_title.clone(),
+                                        position: ev.position,
+                                    });
                                     cx.notify();
                                 });
-                            },
-                        ),
-                    );
-                }
-                rows
-            })
+                            })
+                            .cursor_move()
+                            .on_drag(
+                                TrackDrag {
+                                    id: track_id,
+                                    title: t.title.clone(),
+                                    playlist: menu_playlist,
+                                    index: ix,
+                                    tracks: shown.clone(),
+                                },
+                                |drag, _, _, cx| cx.new(|_| drag.clone()),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                move |ev: &MouseDownEvent, _window, cx| {
+                                    st.update(cx, |s, cx| {
+                                        s.track_sel = Some(track_id.0);
+                                        if ev.click_count >= 2 {
+                                            s.load_deck(focus_deck, track_id);
+                                        }
+                                        cx.notify();
+                                    });
+                                },
+                            )
+                            .into_any_element(),
+                        );
+                    }
+                    rows
+                },
+            )
             .track_scroll(self.track_scroll.clone())
             .on_drop(move |drag: &TrackDrag, _, cx| {
                 // Rows consume their own drops; unused space below the rows
@@ -811,33 +812,7 @@ impl UiState {
             .min_w_0()
             .flex_col()
             .overflow_hidden()
-            .child(toolbar)
             .child(header)
-            .when(!self.playlist_issues.is_empty(), |el| {
-                el.child(
-                    gpui::div()
-                        .id("playlist-import-issues")
-                        .flex_none()
-                        .max_h(px(72.))
-                        .overflow_y_scroll()
-                        .px_2()
-                        .py_1()
-                        .text_size(px(10.))
-                        .text_color(theme::MUTED)
-                        .children(self.playlist_issues.iter().map(|item| {
-                            gpui::div().child(format!(
-                                "{} · {} — {} [{}] {}",
-                                item.position + 1,
-                                item.artist,
-                                item.title,
-                                item.status,
-                                item.error
-                                    .as_deref()
-                                    .unwrap_or("Waiting for a local recording")
-                            ))
-                        })),
-                )
-            })
             .child(table_body);
 
         gpui::div()
@@ -860,18 +835,6 @@ impl UiState {
                     .child(side)
                     .child(main_col),
             )
-            .when(!self.acquire.is_empty(), |el| {
-                el.child(
-                    gpui::div()
-                        .flex_none()
-                        .h(px(18.))
-                        .px_2()
-                        .text_size(px(9.))
-                        .text_color(theme::MUTED)
-                        .overflow_hidden()
-                        .child(self.import_status()),
-                )
-            })
             .into_any_element()
     }
 
@@ -984,11 +947,12 @@ impl UiState {
                 el.cursor_pointer().hover(|s| s.bg(theme::LINE))
             })
             .child("Import")
-            .on_click(move |_ev, _window, cx| {
+            .on_click(move |_ev, window, cx| {
                 if can_import_spotify {
                     spotify_state.update(cx, |s, cx| {
                         if !s.url.trim().is_empty() {
                             s.import_spotify(s.url.trim().to_string());
+                            s.keyboard_focus.focus(window);
                             cx.notify();
                         }
                     });
@@ -1037,12 +1001,6 @@ impl UiState {
             )
             .child(
                 gpui::div()
-                    .text_size(px(10.))
-                    .text_color(theme::MUTED)
-                    .child("Includes subfolders. Existing tracks are skipped."),
-            )
-            .child(
-                gpui::div()
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -1080,16 +1038,10 @@ impl UiState {
                                     .text_color(theme::TEXT)
                                     .child(download_label)
                                     .tooltip(move |_, cx| {
-                                        cx.new(|_| PathTip(download_path.clone())).into()
+                                        cx.new(|_| TextTip(download_path.clone())).into()
                                     }),
                             )
                             .child(self.download_dir_button(cx)),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_size(px(10.))
-                            .text_color(theme::MUTED)
-                            .child("Public playlists only. Matches local audio first."),
                     ),
             )
             .when(!self.import_details.is_empty(), |el| {
@@ -1164,6 +1116,7 @@ mod tests {
                 name: "unused".into(),
                 tracks: 0,
                 folder_path: Some((*path).into()),
+                failed_imports: 0,
             })
             .collect();
         let names: Vec<_> = folders
@@ -1193,6 +1146,7 @@ mod folder_display_tests {
             name: path.into(),
             tracks: 14,
             folder_path: Some(path.into()),
+            failed_imports: 0,
         };
         let a = item(1, "/music/North/playlist_G7SAZ_DnB_");
         assert_eq!(folder_name(&a, std::slice::from_ref(&a)), "DnB");

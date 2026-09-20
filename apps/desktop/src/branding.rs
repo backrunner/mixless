@@ -1,6 +1,16 @@
 //! Embedded brand assets work in bundles and source-tree development launches.
-use gpui::{Image, ImageFormat};
+use gpui::{HighlightStyle, Image, ImageFormat, StyledText};
 use std::sync::{Arc, OnceLock};
+
+pub fn wordmark() -> StyledText {
+    StyledText::new("MIXLESS.").with_highlights([(
+        7..8,
+        HighlightStyle {
+            color: Some(crate::theme::BRAND_YELLOW.into()),
+            ..Default::default()
+        },
+    )])
+}
 
 pub fn icon() -> Arc<Image> {
     static ICON: OnceLock<Arc<Image>> = OnceLock::new();

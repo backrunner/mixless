@@ -1,6 +1,6 @@
 //! Read candidate metadata first; download only a recording that passes DJ
 //! identity/duration gates. Child processes have one bounded job deadline.
-use mixless_acquire::{candidate_score, AcquireError, ResolveJob};
+use mixless_acquire::{candidate_score, primary_artist, AcquireError, ResolveJob};
 use serde_json::Value;
 use std::{
     ffi::OsString,
@@ -68,26 +68,129 @@ impl YoutubeMusicAcquire {
         if final_path.is_file() && fs::metadata(&final_path).is_ok_and(|m| m.len() > 0) {
             return Ok(final_path);
         }
-        let deadline = Instant::now() + Duration::from_secs(90);
-        let mut candidates = self.music_search(job).unwrap_or_default();
-        if candidates.iter().all(|c| c.score < 0.72) {
-            candidates.extend(self.youtube_search(job, deadline)?);
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let search_deadline = Instant::now() + Duration::from_secs(35);
+        // Search both catalogs concurrently. A good metadata match can still be
+        // unplayable (removed/region restricted), so retain several alternatives.
+        let (music, youtube) = std::thread::scope(|scope| {
+            let music = scope.spawn(|| self.music_search(job));
+            let youtube = self.youtube_search(job, search_deadline);
+            (
+                music
+                    .join()
+                    .unwrap_or_else(|_| Err(err("Music search stopped"))),
+                youtube,
+            )
+        });
+        let mut candidates = Vec::new();
+        let mut errors = Vec::new();
+        for result in [music, youtube] {
+            match result {
+                Ok(found) => candidates.extend(found),
+                Err(error) => errors.push(error.to_string()),
+            }
         }
-        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
-        let chosen=candidates.into_iter().find(|c|c.score>=0.72).ok_or_else(||err("no candidate matches artist, recording version and duration; link a local file or retry"))?;
+        rank_candidates(&mut candidates);
+        let mut attempted = std::collections::HashSet::new();
+        for pass in 0..2 {
+            if let Some(path) = try_candidates(&candidates, &mut attempted, &mut errors, |chosen| {
+                let attempt_deadline = deadline.min(Instant::now() + Duration::from_secs(45));
+                self.download(job, chosen, &dest, &final_path, attempt_deadline)
+            }) {
+                return Ok(path);
+            }
+            if pass == 0 && Instant::now() < deadline {
+                // A simpler query recovers songs obscured by collaborator
+                // credits and ranking of official/lyric uploads.
+                let query = format!("{} {}", primary_artist(&job.artist), job.title);
+                match self.youtube_search_query(
+                    job,
+                    &query,
+                    deadline.min(Instant::now() + Duration::from_secs(25)),
+                ) {
+                    Ok(found) => candidates = found,
+                    Err(error) => {
+                        candidates.clear();
+                        errors.push(error.to_string());
+                    }
+                }
+                rank_candidates(&mut candidates);
+            }
+        }
+        if attempted.is_empty() {
+            Err(err(if errors.is_empty() {
+                "No matching audio found for this artist, version and duration".into()
+            } else {
+                format!("Audio search failed: {}", errors.join("; "))
+            }))
+        } else {
+            Err(err(format!(
+                "Matching audio could not be downloaded: {}",
+                errors.join("; ")
+            )))
+        }
+    }
+
+    fn download(
+        &self,
+        job: &ResolveJob,
+        chosen: &Candidate,
+        dest: &Path,
+        final_path: &Path,
+        deadline: Instant,
+    ) -> Result<PathBuf, AcquireError> {
+        let mut errors = Vec::new();
+        // A recording can have an unavailable AAC rendition while its Opus or
+        // HLS audio is healthy. Try those before abandoning the recording.
+        for format in [
+            "bestaudio[ext=m4a]/bestaudio",
+            "bestaudio[ext=webm]",
+            "bestaudio[protocol=m3u8_native]",
+        ] {
+            if Instant::now() >= deadline {
+                break;
+            }
+            match self.download_format(job, chosen, dest, final_path, format, deadline) {
+                Ok(path) => return Ok(path),
+                Err(error) => errors.push(error.to_string()),
+            }
+        }
+        Err(err(if errors.is_empty() {
+            "Audio download timed out".into()
+        } else {
+            errors.join("; ")
+        }))
+    }
+
+    fn download_format(
+        &self,
+        job: &ResolveJob,
+        chosen: &Candidate,
+        dest: &Path,
+        final_path: &Path,
+        format: &str,
+        deadline: Instant,
+    ) -> Result<PathBuf, AcquireError> {
         let staging = tempfile::Builder::new()
             .prefix(".mixless-")
             .tempdir_in(&dest)
             .map_err(|e| err(e.to_string()))?;
-        let template = staging.path().join("audio.%(ext)s");
         let mut args = self.base_args();
         args.extend(
             [
                 "--no-playlist",
                 "--no-progress",
                 "--no-warnings",
+                "--socket-timeout",
+                "12",
+                "--retries",
+                "2",
+                "--fragment-retries",
+                "2",
+                "--concurrent-fragments",
+                "4",
                 "-f",
-                "bestaudio[ext=m4a]/bestaudio",
+                format,
                 "-x",
                 "--audio-format",
                 "m4a",
@@ -97,9 +200,11 @@ impl YoutubeMusicAcquire {
         );
         args.push(self.ffmpeg.clone().into_os_string());
         args.extend(["--print", "after_move:filepath", "-o"].map(OsString::from));
-        args.push(template.into_os_string());
+        // Keep playlist names out of yt-dlp's template/environment expansion.
+        // Names such as "100%", "%(title)s" and "$HOME" stay literal folders.
+        args.push("audio.%(ext)s".into());
         args.push(format!("https://www.youtube.com/watch?v={}", chosen.id).into());
-        let output = self.run(&args, deadline)?;
+        let output = self.run_in(&args, deadline, Some(staging.path()))?;
         let printed = String::from_utf8_lossy(&output);
         let path = printed
             .lines()
@@ -107,7 +212,9 @@ impl YoutubeMusicAcquire {
             .find(|line| !line.trim().is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| err("downloader returned no audio path"))?;
-        let path = path
+        let path = staging
+            .path()
+            .join(path)
             .canonicalize()
             .map_err(|_| err("downloader did not create the reported file"))?;
         let root = staging
@@ -132,7 +239,7 @@ impl YoutubeMusicAcquire {
             dest.join(format!("{}.json", job.spotify_id)),
             provenance.to_string(),
         );
-        Ok(final_path)
+        Ok(final_path.to_path_buf())
     }
     fn base_args(&self) -> Vec<OsString> {
         let mut args = vec![OsString::from("--ignore-config")];
@@ -147,6 +254,18 @@ impl YoutubeMusicAcquire {
         job: &ResolveJob,
         deadline: Instant,
     ) -> Result<Vec<Candidate>, AcquireError> {
+        self.youtube_search_query(
+            job,
+            &format!("{} {} official audio", job.artist, job.title),
+            deadline,
+        )
+    }
+    fn youtube_search_query(
+        &self,
+        job: &ResolveJob,
+        query: &str,
+        deadline: Instant,
+    ) -> Result<Vec<Candidate>, AcquireError> {
         let mut args = self.base_args();
         args.extend(
             [
@@ -157,7 +276,7 @@ impl YoutubeMusicAcquire {
             ]
             .map(OsString::from),
         );
-        args.push(format!("ytsearch5:{} {}", job.artist, job.title).into());
+        args.push(format!("ytsearch10:{query}").into());
         let bytes = self.run(&args, deadline)?;
         let data: Value = serde_json::from_slice(&bytes)
             .map_err(|e| err(format!("invalid search metadata: {e}")))?;
@@ -165,7 +284,7 @@ impl YoutubeMusicAcquire {
     }
     fn music_search(&self, job: &ResolveJob) -> Result<Vec<Candidate>, AcquireError> {
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(12))
             .build();
         let response=agent.post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false")
             .send_json(serde_json::json!({"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20260819.01.00","hl":"en"}},"query":format!("{} {}",job.artist,job.title),"params":"EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"}))
@@ -176,9 +295,23 @@ impl YoutubeMusicAcquire {
         Ok(result)
     }
     fn run(&self, args: &[OsString], deadline: Instant) -> Result<Vec<u8>, AcquireError> {
+        self.run_in(args, deadline, None)
+    }
+    fn run_in(
+        &self,
+        args: &[OsString],
+        deadline: Instant,
+        working_dir: Option<&Path>,
+    ) -> Result<Vec<u8>, AcquireError> {
+        if Instant::now() >= deadline {
+            return Err(err("Audio search/download timed out"));
+        }
         let mut stdout = tempfile::tempfile().map_err(|e| err(e.to_string()))?;
         let mut stderr = tempfile::tempfile().map_err(|e| err(e.to_string()))?;
         let mut command = Command::new(&self.ytdlp);
+        if let Some(dir) = working_dir {
+            command.current_dir(dir);
+        }
         command
             .args(args)
             .stdin(Stdio::null())
@@ -235,6 +368,46 @@ impl YoutubeMusicAcquire {
         Ok(bytes)
     }
 }
+fn try_candidates(
+    candidates: &[Candidate],
+    attempted: &mut std::collections::HashSet<String>,
+    errors: &mut Vec<String>,
+    mut download: impl FnMut(&Candidate) -> Result<PathBuf, AcquireError>,
+) -> Option<PathBuf> {
+    let choices: Vec<_> = candidates
+        .iter()
+        .filter(|c| c.score >= 0.72 && !attempted.contains(&c.id))
+        .take(3)
+        .collect();
+    for chosen in choices {
+        attempted.insert(chosen.id.clone());
+        match download(chosen) {
+            Ok(path) => return Some(path),
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+    None
+}
+
+fn rank_candidates(candidates: &mut Vec<Candidate>) {
+    candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|c| seen.insert(c.id.clone()));
+}
+
+fn find_duration(value: &Value) -> Option<u32> {
+    if let Some(text) = value["text"].as_str() {
+        if let Some(ms) = duration(text.trim()) {
+            return Some(ms);
+        }
+    }
+    match value {
+        Value::Object(object) => object.values().find_map(find_duration),
+        Value::Array(array) => array.iter().find_map(find_duration),
+        _ => None,
+    }
+}
+
 fn terminate(child: &mut std::process::Child) {
     #[cfg(unix)]
     unsafe {
@@ -326,8 +499,14 @@ fn parse_music(job: &ResolveJob, value: &Value, result: &mut Vec<Candidate>) {
                 .map(|c| text(c).join(""))
                 .unwrap_or_default();
             let subtitle = columns.get(1).map(text).unwrap_or_default();
-            let artist = subtitle.first().map(String::as_str).unwrap_or("");
-            let length = subtitle.iter().find_map(|s| duration(s));
+            // Collaborators can occupy several runs. Durations sometimes live
+            // in fixedColumns instead of the second flex column.
+            let credits = subtitle.join("");
+            let artist = credits.split('•').next().unwrap_or("").trim();
+            let length = subtitle
+                .iter()
+                .find_map(|s| duration(s.trim()))
+                .or_else(|| find_duration(&row["fixedColumns"]));
             if let (Some(id), Some(ms)) = (find_video(row), length) {
                 if let Some(c) = candidate(job, id, &title, artist, ms) {
                     result.push(c);
@@ -426,6 +605,235 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].id, "bbbbbbbbbbb");
     }
+    #[test]
+    fn failed_downloads_try_another_candidate_and_expanded_search_skips_attempted_ids() {
+        let candidates: Vec<_> = (0..5)
+            .map(|i| Candidate {
+                id: format!("{i:011}"),
+                title: "Song".into(),
+                artist: "Artist".into(),
+                duration_ms: 180000,
+                score: 1.0,
+            })
+            .collect();
+        let mut attempted = std::collections::HashSet::new();
+        let mut errors = Vec::new();
+        let first = try_candidates(&candidates, &mut attempted, &mut errors, |_| {
+            Err(err("source unavailable"))
+        });
+        assert!(first.is_none());
+        assert_eq!(errors.len(), 3);
+        let mut calls = Vec::new();
+        let next = try_candidates(&candidates, &mut attempted, &mut errors, |c| {
+            calls.push(c.id.clone());
+            if c.id.ends_with('3') {
+                Err(err("download failed"))
+            } else {
+                Ok("audio.m4a".into())
+            }
+        });
+        assert_eq!(next, Some(PathBuf::from("audio.m4a")));
+        assert_eq!(calls, ["00000000003", "00000000004"]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unavailable_aac_uses_an_alternate_format_and_cleans_staging() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-yt-dlp");
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -f) shift; format="$1" ;;
+        -o) shift; template="$1" ;;
+    esac
+    shift
+done
+printf '%s\n' "$format" >> "$(dirname "$0")/formats"
+case "$format" in
+    *m4a*) echo 'HTTP Error 403: Forbidden' >&2; exit 1 ;;
+esac
+path="${template%.*}.m4a"
+[ "$template" = 'audio.%(ext)s' ] || exit 2
+printf 'fixture audio' > "$path"
+printf '%s\n' "$path"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let provider = YoutubeMusicAcquire {
+            ytdlp: script,
+            ffmpeg: "unused".into(),
+            deno: None,
+        };
+        let job = &reported_jobs()[2];
+        let chosen = Candidate {
+            id: "aaaaaaaaaaa".into(),
+            title: job.title.clone(),
+            artist: job.artist.clone(),
+            duration_ms: job.duration_ms,
+            score: 1.0,
+        };
+        let dest = mixless_acquire::playlist_download_dir(dir.path(), "夜行 100% %(title)s $HOME");
+        fs::create_dir_all(&dest).unwrap();
+        let final_path = dest.join(format!("{}.m4a", job.spotify_id));
+        let path = provider
+            .download(
+                job,
+                &chosen,
+                &dest,
+                &final_path,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
+        assert_eq!(path, final_path);
+        assert_eq!(fs::read(&path).unwrap(), b"fixture audio");
+        assert!(dest.join(format!("{}.json", job.spotify_id)).is_file());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("formats"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["bestaudio[ext=m4a]/bestaudio", "bestaudio[ext=webm]"]
+        );
+        assert!(fs::read_dir(&dest).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".mixless-")));
+    }
+
+    fn reported_jobs() -> Vec<ResolveJob> {
+        [
+            ("2QWGkc7Tnz6672asv4BtLi", "Moments", "MitiS, Adara", 278400),
+            (
+                "6AoG52kxfptY0QBQnjuQOe",
+                "Hollow",
+                "Dabin, Kai Wachi, Lø Spirit",
+                240000,
+            ),
+            (
+                "2XaNNKsCnNokevsz9EkYvY",
+                "Day Cycle",
+                "Last Checkpoint",
+                179514,
+            ),
+            (
+                "0gsAxRNic7xofkxG93H5Ha",
+                "Idle World",
+                "Last Checkpoint",
+                191760,
+            ),
+        ]
+        .into_iter()
+        .map(|(id, title, artist, duration_ms)| ResolveJob {
+            spotify_id: id.into(),
+            title: title.into(),
+            artist: artist.into(),
+            duration_ms,
+            isrc: None,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn music_search_reads_all_credited_artists_and_fixed_duration_columns() {
+        let job = &reported_jobs()[2];
+        let row = serde_json::json!({"musicResponsiveListItemRenderer": {
+            "playlistItemData": {"videoId": "aaaaaaaaaaa"},
+            "flexColumns": [
+                {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Day Cycle"}]}}},
+                {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
+                    {"text": "Memory Machine"}, {"text": ", "}, {"text": "Last Checkpoint"},
+                    {"text": " & "}, {"text": "Full Circle Avenue"}, {"text": " • "}, {"text": "Outer Reach"}
+                ]}}}
+            ],
+            "fixedColumns": [{"musicResponsiveListItemFixedColumnRenderer": {"text": {"runs": [{"text": "3:00"}]}}}]
+        }});
+        let mut found = vec![];
+        parse_music(job, &row, &mut found);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].artist,
+            "Memory Machine, Last Checkpoint & Full Circle Avenue"
+        );
+        assert_eq!(found[0].duration_ms, 180000);
+        let mut wrong = job.clone();
+        wrong.artist = "Outer Reach".into();
+        found.clear();
+        parse_music(&wrong, &row, &mut found);
+        assert!(
+            found.is_empty(),
+            "album names must not count as artist credits"
+        );
+    }
+
+    #[test]
+    #[ignore = "live searches and downloads for the four reported missing tracks; temporary files only"]
+    fn live_reported_tracks_download() {
+        let provider = YoutubeMusicAcquire::detect().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = reported_jobs();
+        std::thread::scope(|scope| {
+            for job in &jobs {
+                let provider = &provider;
+                let dest = dir.path();
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    let path = provider
+                        .fetch(job, dest)
+                        .unwrap_or_else(|e| panic!("{}: {e}", job.title));
+                    let probe = Command::new(provider.ffmpeg.with_file_name("ffprobe"))
+                        .args([
+                            "-v",
+                            "error",
+                            "-show_entries",
+                            "format=duration",
+                            "-of",
+                            "default=nw=1:nk=1",
+                        ])
+                        .arg(&path)
+                        .output()
+                        .unwrap();
+                    assert!(probe.status.success());
+                    let seconds: f64 = String::from_utf8_lossy(&probe.stdout)
+                        .trim()
+                        .parse()
+                        .unwrap();
+                    assert!(
+                        mixless_acquire::duration_ok(
+                            (seconds * 1000.).round() as u32,
+                            job.duration_ms
+                        ),
+                        "{}: {seconds}s",
+                        job.title
+                    );
+                    let decode = Command::new(&provider.ffmpeg)
+                        .args(["-v", "error", "-nostdin", "-i"])
+                        .arg(&path)
+                        .args(["-f", "null", "-"])
+                        .output()
+                        .unwrap();
+                    assert!(
+                        decode.status.success(),
+                        "{}: {}",
+                        job.title,
+                        String::from_utf8_lossy(&decode.stderr)
+                    );
+                    eprintln!(
+                        "{}: downloaded and decoded {:.2}s in {:.1}s",
+                        job.title,
+                        seconds,
+                        started.elapsed().as_secs_f64()
+                    );
+                });
+            }
+        });
+    }
+
     #[test]
     fn unsafe_ids_are_rejected_before_writing() {
         let provider = YoutubeMusicAcquire {

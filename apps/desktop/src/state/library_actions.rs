@@ -5,9 +5,24 @@ use super::*;
 pub(super) enum PlaylistAction {
     Duplicated,
     Removed(i64),
+    ImportItemRemoved,
 }
 
 impl UiState {
+    pub fn remove_import_item(&mut self, playlist: i64, position: usize) {
+        let core = self.core.clone();
+        let (tx, rx) = channel();
+        self.playlist_actions.push(rx);
+        std::thread::spawn(move || {
+            let result = core
+                .library
+                .remove_import_item(PlaylistId(playlist), position)
+                .map(|_| PlaylistAction::ImportItemRemoved)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
     pub fn remove_playlist_track(&mut self, playlist: i64, track: TrackId) {
         let core = self.core.clone();
         let (tx, rx) = channel();
@@ -71,7 +86,7 @@ impl UiState {
         let playlist_actions = std::mem::take(&mut self.playlist_actions);
         for rx in playlist_actions {
             match rx.try_recv() {
-                Ok(Ok(PlaylistAction::Duplicated)) => {
+                Ok(Ok(PlaylistAction::Duplicated | PlaylistAction::ImportItemRemoved)) => {
                     self.refresh_playlists();
                     changed = true;
                 }

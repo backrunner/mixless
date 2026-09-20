@@ -23,13 +23,13 @@ fn busy(error: Error) -> Error {
     }
 }
 
-/// One inference job per processor. Waiting workers do not decode or allocate models.
+/// A bounded pool of independent model sessions; waiting jobs do not decode PCM.
 pub struct Processor {
     models: PathBuf,
     cache: PathBuf,
     #[cfg_attr(not(stems_ort), allow(dead_code))]
     download: bool,
-    state: Mutex<State>,
+    states: Vec<Mutex<State>>,
 }
 #[derive(Default)]
 struct State {
@@ -44,9 +44,15 @@ impl Processor {
             models,
             cache,
             download,
-            state: Mutex::new(State::default()),
+            states: (0..mixless_protocol::BackgroundWorkers::detected().stems)
+                .map(|_| Mutex::new(State::default()))
+                .collect(),
         }
     }
+    pub fn parallelism(&self) -> usize {
+        self.states.len()
+    }
+
     pub fn cache_path(&self, content_hash: &str) -> PathBuf {
         self.cache.join(cache::key(content_hash))
     }
@@ -78,21 +84,37 @@ impl Processor {
         progress: &mut impl FnMut(Progress),
         active: &impl Fn() -> bool,
     ) -> Result<StemAnalysis> {
-        let mut state = loop {
-            check(active)?;
-            match self.state.try_lock() {
-                Ok(s) => break s,
-                Err(std::sync::TryLockError::WouldBlock) => {
-                    std::thread::sleep(std::time::Duration::from_millis(25))
-                }
-                Err(_) => return Err(Error::Model("Model worker lock poisoned".into())),
-            }
-        };
         std::fs::create_dir_all(&self.cache)?;
-        let _process = crate::lock::acquire(&self.cache.join(".analysis.lock"), active)?;
+        // Different content can run concurrently. Same-content jobs coalesce
+        // across workers/processes, and cache cleanup waits for all publishers.
+        let _process = crate::lock::acquire_shared(&self.cache.join(".analysis.lock"), active)?;
+        let _content = crate::lock::acquire(
+            &self
+                .cache
+                .join(format!(".{}.lock", cache::key(content_hash))),
+            active,
+        )?;
         if let Some(a) = self.cached(content_hash, duration)? {
             return Ok(a);
         }
+        let mut state = loop {
+            check(active)?;
+            let mut available = None;
+            for slot in &self.states {
+                match slot.try_lock() {
+                    Ok(state) => {
+                        available = Some(state);
+                        break;
+                    }
+                    Err(std::sync::TryLockError::WouldBlock) => {}
+                    Err(_) => return Err(Error::Model("Model worker lock poisoned".into())),
+                }
+            }
+            if let Some(state) = available {
+                break state;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
         if let Some((at, error)) = &state.failed {
             if at.elapsed().as_secs() < 60 {
                 return Err(Error::Model(error.clone()));
@@ -119,13 +141,15 @@ impl Processor {
             }
         }
         check(active)?;
+        let inference = state.inference.as_mut().unwrap();
+        let _cpu = mixless_protocol::BackgroundWorkers::acquire_cpu(inference.threads, active)
+            .ok_or(Error::Cancelled)?;
         let audio = load()?;
         if (audio.frames as f64 / audio.sample_rate.max(1) as f64 - duration as f64).abs() > 0.05 {
             return Err(Error::Model(
                 "Audio duration changed before separation".into(),
             ));
         }
-        let inference = state.inference.as_mut().unwrap();
         let stems = inference.separate(&audio.samples, audio.sample_rate, progress, active)?;
         drop(audio);
         let mut notes = Vec::new();
@@ -235,31 +259,31 @@ impl Processor {
     }
 
     pub fn invalidate(&self, content_hash: &str) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| Error::Model("Model worker lock poisoned".into()))?;
         std::fs::create_dir_all(&self.cache)?;
         let _process = crate::lock::acquire(&self.cache.join(".analysis.lock"), &|| true)?;
         let path = self.cache_path(content_hash);
         if path.exists() {
             std::fs::remove_dir_all(path)?;
         }
-        state.failed = None;
+        self.retry();
         Ok(())
     }
     pub fn model_dir(&self) -> &Path {
         &self.models
     }
     pub fn retry(&self) {
-        if let Ok(mut state) = self.state.try_lock() {
-            state.failed = None;
+        for slot in &self.states {
+            if let Ok(mut state) = slot.try_lock() {
+                state.failed = None;
+            }
         }
     }
     pub fn release_models(&self) {
         #[cfg(stems_ort)]
-        if let Ok(mut state) = self.state.try_lock() {
-            state.inference = None;
+        for slot in &self.states {
+            if let Ok(mut state) = slot.try_lock() {
+                state.inference = None;
+            }
         }
     }
 }

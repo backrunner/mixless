@@ -86,6 +86,15 @@ pub struct DeckSnapshot {
     pub level: [f32; 2],
 }
 
+impl DeckSnapshot {
+    /// Current deck GAIN target, including temporary AutoMix compensation.
+    /// Use this for both the knob position and the starting value of a manual
+    /// gesture, which replaces that compensation with a manual setting.
+    pub fn effective_limiter_gain_db(&self) -> f32 {
+        (self.limiter_gain_db + self.automix_gain_db).clamp(-12., 12.)
+    }
+}
+
 impl Default for DeckSnapshot {
     fn default() -> Self {
         Self {
@@ -228,4 +237,27 @@ fn default_loop_beats() -> f32 {
 
 fn default_resonance_enabled() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_deck_gain_combines_manual_and_auto_with_the_audio_limit() {
+        for (manual, auto, expected) in [
+            (-12., 0., -12.),
+            (-3., 4., 1.),
+            (2., 0., 2.),
+            (10., 6., 12.),
+        ] {
+            let deck = DeckSnapshot {
+                gain_db: -20., // Mixer TRIM is independent of the deck GAIN.
+                limiter_gain_db: manual,
+                automix_gain_db: auto,
+                ..Default::default()
+            };
+            assert_eq!(deck.effective_limiter_gain_db(), expected);
+        }
+    }
 }

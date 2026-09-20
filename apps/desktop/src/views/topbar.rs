@@ -208,7 +208,7 @@ impl UiState {
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::TEXT)
-                            .child("MIXLESS"),
+                            .child(crate::branding::wordmark()),
                     )
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -256,6 +256,14 @@ impl UiState {
                 led_chip("QUANTIZE", self.snapshot.quantize, theme::LED_GREEN)
                     .id("quantize-toggle")
                     .cursor_pointer()
+                    .tooltip(|_, cx| {
+                        cx.new(|_| {
+                            crate::views::TextTip(
+                                "Snap cues, loops and beat jumps to the beat grid.".into(),
+                            )
+                        })
+                        .into()
+                    })
                     .on_click(cx.listener(|s, _, _, cx| {
                         let on = !s.snapshot.quantize;
                         if let Err(error) = s.core.settings.update(|p| p.quantize = on) {

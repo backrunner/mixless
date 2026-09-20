@@ -1,11 +1,23 @@
 //! Import orchestration runs on a host worker. A row is ready only after the
 //! engine's decoder and offline analysis have accepted the actual local file.
-use crate::{could_match, duration_ok, job_key, local_match, track_key, AcquireError, ResolveJob};
+mod recording;
+mod retry;
+use crate::{duration_ok, AcquireError, ResolveJob};
 use mixless_analyze::{Analyzer, ANALYSIS_VERSION};
 use mixless_library::{content_hash, ImportItem, Library};
 use mixless_protocol::{PlaylistId, TrackId};
 use mixless_spotify::SpotifyPlaylistMeta;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    mpsc,
+};
+
+#[derive(Debug)]
+pub enum ImportProgress {
+    PlaylistReady(PlaylistId),
+    Changed(PlaylistId, String),
+}
 
 #[derive(Debug, Default)]
 pub struct ImportReport {
@@ -21,11 +33,9 @@ pub struct ImportReport {
 impl ImportReport {
     pub fn summary(&self) -> String {
         let mut parts = vec![format!("Added {} tracks", self.local + self.acquired)];
-        if self.failed > 0 {
-            parts.push(format!("{} failed", self.failed));
-        }
-        if self.suspect > 0 {
-            parts.push(format!("{} need review", self.suspect));
+        let failed = self.failed + self.suspect;
+        if failed > 0 {
+            parts.push(format!("{failed} failed"));
         }
         parts.join(" · ")
     }
@@ -53,10 +63,9 @@ impl ImportService<'_> {
         let hash = content_hash(&canon).map_err(|e| e.to_string())?;
         let existing = self
             .library
-            .list_tracks()
+            .track_at_path(&canon)
             .map_err(|e| e.to_string())?
-            .into_iter()
-            .find(|t| Path::new(&t.path) == canon && t.content_hash == hash);
+            .filter(|t| t.content_hash == hash);
         let mut analysis = if let Some(t) = &existing {
             self.library
                 .load_analysis(t.id, ANALYSIS_VERSION)
@@ -144,19 +153,15 @@ impl ImportService<'_> {
     pub fn spotify_playlist(
         &self,
         playlist: &SpotifyPlaylistMeta,
-        mut fetch: impl FnMut(&ResolveJob) -> Result<PathBuf, AcquireError>,
-        mut progress: impl FnMut(String),
+        fetch: impl Fn(&ResolveJob) -> Result<PathBuf, AcquireError> + Sync,
+        mut progress: impl FnMut(ImportProgress),
     ) -> Result<ImportReport, String> {
         let pid = self
             .library
             .external_playlist("spotify", &playlist.id, &playlist.name)
             .map_err(|e| e.to_string())?;
         let previous = self.library.import_items(pid).map_err(|e| e.to_string())?;
-        let mut tracks = self.library.list_tracks().map_err(|e| e.to_string())?;
-        // Normalize each track's identity once up front; `could_match` then
-        // skips non-candidates so `local_match` does not re-normalize the whole
-        // library for every playlist row.
-        let mut keys: Vec<_> = tracks.iter().map(track_key).collect();
+        let local = recording::LocalRecordings::read(self.library)?;
         let mut rows: Vec<_> = playlist
             .tracks
             .iter()
@@ -181,134 +186,136 @@ impl ImportService<'_> {
         self.library
             .save_import_items(pid, &rows)
             .map_err(|e| e.to_string())?;
-        for index in 0..rows.len() {
-            let t = &playlist.tracks[index];
-            let job = ResolveJob {
-                spotify_id: t.id.clone(),
-                title: t.title.clone(),
-                artist: t.artist.clone(),
-                duration_ms: t.duration_ms,
-                isrc: t.isrc.clone(),
-            };
-            progress(format!(
-                "{} / {} · {} — {}",
-                index + 1,
-                rows.len(),
-                t.artist,
-                t.title
-            ));
-            let row = &mut rows[index];
-            let result = (|| -> Result<(TrackId, bool), AudioFailure> {
-                if job.spotify_id.len() != 22
-                    || !job.spotify_id.bytes().all(|c| c.is_ascii_alphanumeric())
-                    || job.duration_ms == 0
-                {
-                    return Err("unavailable track or missing recording metadata"
-                        .to_string()
-                        .into());
-                }
-                let linked = previous
-                    .iter()
-                    .find(|p| {
-                        p.external_id == job.spotify_id
-                            && matches!(p.status.as_str(), "local" | "acquired")
-                    })
-                    .and_then(|p| p.track_id)
-                    .or(self
-                        .library
-                        .linked_import_track(&job.spotify_id)
-                        .map_err(|e| e.to_string())?);
-                let local = linked
-                    .and_then(|id| {
-                        tracks
+        progress(ImportProgress::PlaylistReady(pid));
+
+        // One job per recording; repeated playlist entries share download and
+        // analysis, but keep separate rows. Four workers overlap network waits.
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut identities = std::collections::HashMap::new();
+        for (index, t) in playlist.tracks.iter().enumerate() {
+            let key = (&t.id, &t.title, &t.artist, t.duration_ms, &t.isrc);
+            let group = *identities.entry(key).or_insert_with(|| {
+                groups.push(Vec::new());
+                groups.len() - 1
+            });
+            groups[group].push(index);
+        }
+        enum WorkerMsg {
+            Stage(usize, &'static str),
+            Done(usize, Result<(TrackId, bool), AudioFailure>),
+        }
+        let next = AtomicUsize::new(0);
+        // Analyzer shares its CPU budget with library and AutoMix preparation;
+        // downloads can keep progressing independently of those analysis slots.
+        let result = std::thread::scope(|scope| -> Result<(), String> {
+            let (tx, rx) = mpsc::channel();
+            for _ in 0..groups.len().min(4) {
+                let tx = tx.clone();
+                let groups = &groups;
+                let next = &next;
+                let fetch = &fetch;
+                let previous = &previous;
+                let local = &local;
+                scope.spawn(move || loop {
+                    let group = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(indices) = groups.get(group) else {
+                        break;
+                    };
+                    let t = &playlist.tracks[indices[0]];
+                    let job = ResolveJob {
+                        spotify_id: t.id.clone(),
+                        title: t.title.clone(),
+                        artist: t.artist.clone(),
+                        duration_ms: t.duration_ms,
+                        isrc: t.isrc.clone(),
+                    };
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let previous = previous
                             .iter()
-                            .find(|t| t.id == id && Path::new(&t.path).is_file())
-                    })
-                    .or_else(|| {
-                        let want = job_key(&job);
-                        tracks
-                            .iter()
-                            .zip(&keys)
-                            .find(|&(t, key)| {
-                                could_match(&want, key)
-                                    && local_match(&job, t)
-                                    && Path::new(&t.path).is_file()
-                            })
-                            .map(|(t, _)| t)
+                            .find(|p| p.external_id == job.spotify_id && p.is_ready())
+                            .and_then(|p| p.track_id);
+                        self.recording(&job, previous, local, fetch, |status| {
+                            let _ = tx.send(WorkerMsg::Stage(group, status));
+                            Ok(())
+                        })
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err("Import worker stopped unexpectedly".to_string().into())
                     });
-                if let Some(track) = local {
-                    if let Ok(id) = self.audio(Path::new(&track.path), Some(job.duration_ms)) {
-                        return Ok((id, true));
-                    }
-                    // Missing/stale/corrupt matches may be replaced by the provider.
-                }
-                let path = fetch(&job).map_err(|e| e.to_string())?;
-                let id = match self.audio(&path, Some(job.duration_ms)) {
-                    Ok(id) => id,
-                    Err(error) => {
-                        // Provider downloads are named `<spotify id>.<ext>`;
-                        // only those are removed so a rejected download cannot
-                        // satisfy the provider's reuse check on the next retry.
-                        if path
-                            .file_stem()
-                            .is_some_and(|s| s == job.spotify_id.as_str())
-                        {
-                            let _ = std::fs::remove_file(&path);
-                            let _ = std::fs::remove_file(path.with_extension("json"));
+                    let _ = tx.send(WorkerMsg::Done(group, result));
+                });
+            }
+            drop(tx);
+            let mut completed = 0;
+            for message in rx {
+                let (group, status, id, error) = match message {
+                    WorkerMsg::Stage(group, status) => (group, status, None, None),
+                    WorkerMsg::Done(group, result) => {
+                        let count = groups[group].len();
+                        completed += count;
+                        match result {
+                            Ok((id, local)) => {
+                                if local {
+                                    report.local += count;
+                                } else {
+                                    report.acquired += count;
+                                }
+                                (
+                                    group,
+                                    if local { "local" } else { "acquired" },
+                                    Some(id),
+                                    None,
+                                )
+                            }
+                            Err(error) => {
+                                if error.suspect {
+                                    report.suspect += count;
+                                } else {
+                                    report.failed += count;
+                                }
+                                let t = &playlist.tracks[groups[group][0]];
+                                report
+                                    .errors
+                                    .push(format!("{} — {}: {}", t.artist, t.title, error.message));
+                                (
+                                    group,
+                                    if error.suspect { "suspect" } else { "missing" },
+                                    None,
+                                    Some(error.message),
+                                )
+                            }
                         }
-                        return Err(error);
                     }
                 };
+                let updates: Vec<_> = groups[group]
+                    .iter()
+                    .map(|&index| {
+                        let row = &mut rows[index];
+                        row.status = status.into();
+                        row.track_id = id;
+                        row.error = error.clone();
+                        row.clone()
+                    })
+                    .collect();
                 self.library
-                    .set_recording_metadata(id, &job.title, &job.artist, job.isrc.as_deref())
+                    .update_import_items(pid, &updates)
                     .map_err(|e| e.to_string())?;
-                Ok((id, false))
-            })();
-            match result {
-                Ok((id, local)) => {
-                    row.track_id = Some(id);
-                    row.status = if local {
-                        report.local += 1;
-                        "local"
-                    } else {
-                        report.acquired += 1;
-                        "acquired"
-                    }
-                    .into();
-                    if let Ok(track) = self.library.get_track(id) {
-                        if let Some(pos) = tracks.iter().position(|t| t.id == id) {
-                            tracks.remove(pos);
-                            keys.remove(pos);
-                        }
-                        keys.push(track_key(&track));
-                        tracks.push(track);
-                    }
-                }
-                Err(error) => {
-                    row.status = if error.suspect {
-                        report.suspect += 1;
-                        "suspect"
-                    } else {
-                        report.failed += 1;
-                        "missing"
-                    }
-                    .into();
-                    report
-                        .errors
-                        .push(format!("{} — {}: {}", t.artist, t.title, error.message));
-                    row.error = Some(error.message);
+                progress(ImportProgress::Changed(
+                    pid,
+                    format!("Importing · {completed} / {} complete", rows.len()),
+                ));
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            for row in &mut rows {
+                if row.is_pending() {
+                    row.status = "missing".into();
+                    row.error = Some(error.clone());
                 }
             }
-            progress(format!(
-                "{} / {} · {} [{}]",
-                index + 1,
-                playlist.tracks.len(),
-                t.title,
-                row.status
-            ));
-            self.library
-                .save_import_items(pid, &rows)
-                .map_err(|e| e.to_string())?;
+            let _ = self.library.update_import_items(pid, &rows);
+            return Err(error);
         }
         Ok(report)
     }
@@ -400,7 +407,7 @@ mod tests {
             eprintln!("{extension}: import, analysis cache and deck playback passed");
         }
     }
-    fn wav(path: &Path, seconds: u32, bits: u16) {
+    pub(super) fn wav(path: &Path, seconds: u32, bits: u16) {
         let mut w = hound::WavWriter::create(
             path,
             hound::WavSpec {
@@ -420,7 +427,7 @@ mod tests {
         }
         w.finalize().unwrap();
     }
-    fn remote(id: char, title: &str, seconds: u32) -> SpotifyTrackMeta {
+    pub(super) fn remote(id: char, title: &str, seconds: u32) -> SpotifyTrackMeta {
         SpotifyTrackMeta {
             id: id.to_string().repeat(22),
             title: title.into(),
@@ -429,7 +436,7 @@ mod tests {
             isrc: None,
         }
     }
-    fn playlist(id: &str, tracks: Vec<SpotifyTrackMeta>) -> SpotifyPlaylistMeta {
+    pub(super) fn playlist(id: &str, tracks: Vec<SpotifyTrackMeta>) -> SpotifyPlaylistMeta {
         SpotifyPlaylistMeta {
             id: id.into(),
             name: "Same display name".into(),
@@ -439,6 +446,106 @@ mod tests {
             warning: Some("Public preview".into()),
         }
     }
+    #[test]
+    fn spotify_downloads_use_playlist_folder_and_reimports_reuse_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Downloads");
+        let lib = Library::open(&dir.path().join("lib.db")).unwrap();
+        let analyzer = Analyzer::new();
+        let service = ImportService {
+            library: &lib,
+            analyzer: &analyzer,
+        };
+        let mut playlist = playlist("folders", vec![remote('a', "A", 2), remote('b', "B", 3)]);
+        playlist.name = "夜行 / Drum & Bass".into();
+        let dest = crate::playlist_download_dir(&root, &playlist.name);
+        let report = service
+            .spotify_playlist(
+                &playlist,
+                |job| {
+                    std::fs::create_dir_all(&dest).unwrap();
+                    let path = dest.join(format!("{}.wav", job.spotify_id));
+                    wav(&path, job.duration_ms / 1000, 16);
+                    Ok(path)
+                },
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!((report.acquired, report.failed), (2, 0));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        let tracks = lib.playlist_tracks(report.playlist.unwrap()).unwrap();
+        assert_eq!(tracks.len(), 2);
+        for track in tracks {
+            assert_eq!(
+                Path::new(&track.path).parent(),
+                Some(dest.canonicalize().unwrap().as_path())
+            );
+        }
+        let retry = service
+            .spotify_playlist(
+                &playlist,
+                |_| panic!("existing playlist audio must be reused"),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!((retry.local, retry.acquired, retry.failed), (2, 0, 0));
+    }
+
+    #[test]
+    fn spotify_publishes_all_rows_before_parallel_work_and_deduplicates_downloads() {
+        use std::sync::atomic::AtomicUsize;
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(&dir.path().join("lib.db")).unwrap();
+        let analyzer = Analyzer::new();
+        let service = ImportService {
+            library: &lib,
+            analyzer: &analyzer,
+        };
+        let p = playlist(
+            "parallel",
+            vec![
+                remote('a', "A", 8),
+                remote('b', "B", 8),
+                remote('a', "A", 8),
+            ],
+        );
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let calls = AtomicUsize::new(0);
+        let published = std::sync::atomic::AtomicBool::new(false);
+        let result = service
+            .spotify_playlist(
+                &p,
+                |_| {
+                    assert!(published.load(Ordering::Acquire));
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    let running = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(running, Ordering::SeqCst);
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    while peak.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    Err(AcquireError::Msg("fixture failure".into()))
+                },
+                |event| {
+                    if let ImportProgress::PlaylistReady(pid) = event {
+                        assert_eq!(lib.import_items(pid).unwrap().len(), 3);
+                        assert!(lib.playlist_tracks(pid).unwrap().is_empty());
+                        published.store(true, Ordering::Release);
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+        assert_eq!(result.failed, 3);
+        let rows = lib.import_items(result.playlist.unwrap()).unwrap();
+        assert!(rows
+            .iter()
+            .all(|r| r.status == "missing" && r.track_id.is_none()));
+    }
+
     #[test]
     fn recursive_local_import_keeps_folder_playlists_separate_and_reimports_incrementally() {
         let dir = tempfile::tempdir().unwrap();

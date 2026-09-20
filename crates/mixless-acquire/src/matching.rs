@@ -125,7 +125,10 @@ pub fn candidate_score(
         return None;
     }
     let want_title = normalize(&job.title);
-    let want_artist = normalize(&job.artist);
+    // Spotify credits every collaborator, while Topic channels commonly credit
+    // only the lead artist. Keep a lead-artist gate instead of demanding the
+    // entire comma-separated credit string verbatim.
+    let want_artist = normalize(primary_artist(&job.artist));
     let got_title = normalize(title);
     let got_artist = normalize(artist.trim_end_matches(" - Topic"));
     if want_title.is_empty() || want_artist.is_empty() || want_artist == "unknown" {
@@ -134,6 +137,11 @@ pub fn candidate_score(
     let padded = format!(" {got_title} ");
     let title_ok = got_title == want_title || padded.contains(&format!(" {want_title} "));
     let artist_ok = got_artist == want_artist
+        || artist
+            .replace(" x ", ",")
+            .replace(" X ", ",")
+            .split([',', ';', '&'])
+            .any(|credit| normalize(credit.trim().trim_end_matches(" - Topic")) == want_artist)
         || got_artist
             .strip_suffix("vevo")
             .is_some_and(|a| a.trim() == want_artist)
@@ -143,6 +151,10 @@ pub fn candidate_score(
     }
     let difference = duration_ms.abs_diff(job.duration_ms) as f32 / job.duration_ms as f32;
     Some(0.45 + 0.25 + 0.30 * (1. - (difference / 0.06).min(1.)))
+}
+
+pub fn primary_artist(artist: &str) -> &str {
+    artist.split([',', ';']).next().unwrap_or(artist).trim()
 }
 
 #[cfg(test)]
@@ -182,5 +194,33 @@ mod tests {
         assert_eq!(normalize("Ｆｕｌｌ－Ｗｉｄｔｈ (feat. X)"), "full width");
         assert_eq!(normalize("夜曲【】"), "夜曲");
         assert_ne!(versions("Song (Live)"), versions("Song"));
+    }
+
+    #[test]
+    fn collaboration_credits_match_lead_artist_without_accepting_other_recordings() {
+        let mut j = job();
+        j.title = "Moments".into();
+        j.artist = "MitiS,\u{a0}Adara".into();
+        assert!(candidate_score(&j, "Moments (feat. ADARA)", "MitiS - Topic", 240000).is_some());
+        assert!(candidate_score(
+            &j,
+            "MitiS - Moments (Lyrics) ft. Adara",
+            "Music channel",
+            240000
+        )
+        .is_some());
+        assert!(candidate_score(&j, "Moments", "Adara", 240000).is_none());
+        assert!(candidate_score(&j, "Moments (Remix)", "MitiS", 240000).is_none());
+        j.title = "Hollow".into();
+        j.artist = "Dabin, Kai Wachi, Lø Spirit".into();
+        assert!(candidate_score(&j, "Hollow", "Dabin & Kai Wachi", 240000).is_some());
+        assert!(candidate_score(
+            &j,
+            "Dabin x Kai Wachi - Hollow (feat. Lø Spirit)",
+            "Label",
+            240000
+        )
+        .is_some());
+        assert!(candidate_score(&j, "Hollow (Live)", "Dabin", 240000).is_none());
     }
 }

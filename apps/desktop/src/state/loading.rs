@@ -13,7 +13,9 @@ impl UiState {
             self.error = error.into();
         }
         self.track_sel = None;
+        self.midi_track_cursor = None;
         self.tracks = Arc::new(Vec::new());
+        self.playlist_imports.clear();
         self.track_scroll
             .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
         self.refresh_tracks();

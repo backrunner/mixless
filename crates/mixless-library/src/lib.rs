@@ -7,11 +7,13 @@ mod hash;
 mod imports;
 mod ordering;
 mod schema;
+mod spotify_artwork;
 mod storage;
 mod verification;
 mod waveform;
 pub use imports::ImportItem;
 pub use schema::SCHEMA_VERSION;
+pub use spotify_artwork::SpotifyArtworkTarget;
 pub use storage::CacheUsage;
 
 use std::fs;
@@ -34,6 +36,7 @@ pub struct PlaylistSummary {
     pub name: String,
     pub tracks: u32,
     pub folder_path: Option<String>,
+    pub failed_imports: u32,
 }
 
 #[derive(Debug, Error)]
@@ -231,7 +234,9 @@ impl Library {
             "INSERT INTO tracks (path, artwork_path, title, artist, album, duration_ms, isrc, content_hash, mtime)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(path) DO UPDATE SET
-                artwork_path=excluded.artwork_path,
+                artwork_path=CASE
+                    WHEN tracks.content_hash=excluded.content_hash AND excluded.artwork_path=''
+                    THEN tracks.artwork_path ELSE excluded.artwork_path END,
                 title=excluded.title,
                 artist=excluded.artist,
                 album=excluded.album,
@@ -285,6 +290,15 @@ impl Library {
         )?;
         let rows = stmt.query_map([], row_to_track)?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn track_at_path(&self, path: &Path) -> Result<Option<Track>, LibraryError> {
+        let conn = self.conn.lock().expect("library mutex");
+        Ok(conn.query_row(
+            "SELECT id,path,artwork_path,title,artist,album,duration_ms,isrc,bpm,key,camelot,analyzed,content_hash
+             FROM tracks WHERE path=?1",
+            [path.to_string_lossy().as_ref()], row_to_track,
+        ).optional()?)
     }
 
     pub fn set_cue(
@@ -422,8 +436,12 @@ impl Library {
     pub fn list_playlists(&self) -> Result<Vec<PlaylistSummary>, LibraryError> {
         let conn = self.conn.lock().expect("library mutex");
         let mut stmt = conn.prepare(
-            "SELECT p.id, p.name, COUNT(i.track_id) AS n,
-                    CASE WHEN e.source='folder' THEN e.external_id END AS folder_path
+            "SELECT p.id, p.name, COUNT(i.track_id) +
+                    (SELECT COUNT(*) FROM import_items missing WHERE missing.playlist_id=p.id
+                     AND (missing.status NOT IN ('local','acquired') OR missing.track_id IS NULL)) AS n,
+                    CASE WHEN e.source='folder' THEN e.external_id END AS folder_path,
+                    (SELECT COUNT(*) FROM import_items failed WHERE failed.playlist_id=p.id
+                     AND e.source='spotify' AND failed.status IN ('missing','suspect'))
              FROM playlists p
              LEFT JOIN playlist_items i ON i.playlist_id = p.id
              LEFT JOIN external_playlists e ON e.playlist_id = p.id
@@ -436,6 +454,7 @@ impl Library {
                 name: r.get(1)?,
                 tracks: r.get::<_, i64>(2)? as u32,
                 folder_path: r.get(3)?,
+                failed_imports: r.get::<_, i64>(4)? as u32,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -508,11 +527,12 @@ impl Library {
                 .cache_artwork(&hash, meta.artwork.as_ref())?
                 .unwrap_or_default();
             let conn = self.conn.lock().expect("library mutex");
-            conn.execute(
-                "UPDATE tracks SET artwork_path = ?1 WHERE id = ?2",
-                params![artwork_path, id],
+            let changed = conn.execute(
+                "UPDATE tracks SET artwork_path = ?1 WHERE id = ?2 AND content_hash=?3
+                 AND artwork_path IS NULL",
+                params![artwork_path, id, hash],
             )?;
-            updated += usize::from(!artwork_path.is_empty());
+            updated += changed * usize::from(!artwork_path.is_empty());
         }
         Ok(updated)
     }
@@ -530,7 +550,14 @@ impl Library {
             .artwork_dir
             .join(format!("{content_hash}.{}", artwork.extension));
         if !path.exists() {
-            fs::write(&path, &artwork.data)?;
+            use std::io::Write;
+            let mut pending = tempfile::NamedTempFile::new_in(&self.artwork_dir)?;
+            pending.write_all(&artwork.data)?;
+            if let Err(error) = pending.persist_noclobber(&path) {
+                if error.error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(error.error.into());
+                }
+            }
         }
         Ok(Some(path.to_string_lossy().into_owned()))
     }

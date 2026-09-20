@@ -76,6 +76,7 @@ pub(crate) fn check(active: &impl Fn() -> bool) -> Result<()> {
 pub struct Inference {
     separator: ort::session::Session,
     notes: ort::session::Session,
+    threads: usize,
 }
 
 pub struct Stems {
@@ -94,26 +95,31 @@ impl Inference {
     ) -> Result<Self> {
         let paths = models::ensure(model_dir, download, progress, active)?;
         progress(Progress::Loading);
-        // Default keeps at least two cores free for the audio callback and UI;
-        // the env override exists for throughput benchmarking.
-        let detected = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
+        // Each pooled session gets a share of the same CPU budget as basic
+        // analysis; the override remains available for throughput benchmarks.
         let intra = std::env::var("MIXLESS_ORT_THREADS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(detected.saturating_sub(2).min(4).max(1))
+            .unwrap_or(mixless_protocol::BackgroundWorkers::detected().inference_threads)
             .clamp(1, 16);
+        tracing::info!(threads = intra, "Loading stem inference sessions");
         let session = |path| -> Result<_> {
             Ok(ort::session::Session::builder()?
                 .with_intra_threads(intra)?
                 .with_inter_threads(1)?
+                .with_parallel_execution(false)?
+                .with_intra_op_spinning(false)?
+                .with_inter_op_spinning(false)?
                 .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
                 .commit_from_file(path)?)
         };
         let separator = session(&paths.separator)?;
         check(active)?;
         let notes = session(&paths.notes)?;
-        Ok(Self { separator, notes })
+        Ok(Self {
+            separator,
+            notes,
+            threads: intra,
+        })
     }
 }

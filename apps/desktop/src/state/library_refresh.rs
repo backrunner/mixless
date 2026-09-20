@@ -6,7 +6,7 @@ struct LibraryRows {
     order_revision: u64,
     tracks: Vec<Track>,
     playlists: Vec<mixless_library::PlaylistSummary>,
-    issues: Vec<mixless_library::ImportItem>,
+    imports: Vec<mixless_library::ImportItem>,
 }
 
 pub(super) struct LibraryRefresh {
@@ -30,6 +30,7 @@ impl UiState {
     }
 
     pub fn refresh_tracks(&mut self) {
+        self.artwork_fetch.refresh();
         if self.library_refresh.rx.is_some() {
             self.library_refresh.again = true;
             return;
@@ -42,23 +43,20 @@ impl UiState {
         std::thread::spawn(move || {
             let result = (|| {
                 let playlists = core.library.list_playlists().map_err(|e| e.to_string())?;
-                let tracks = match selection {
-                    Some(id) => core.library.playlist_tracks(PlaylistId(id)),
-                    None => core.library.list_tracks(),
+                let (tracks, imports) = match selection {
+                    Some(id) => core.library.playlist_content(PlaylistId(id)),
+                    None => core
+                        .library
+                        .list_tracks()
+                        .map(|tracks| (tracks, Vec::new())),
                 }
                 .map_err(|e| e.to_string())?;
-                let issues = selection
-                    .and_then(|id| core.library.import_items(PlaylistId(id)).ok())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|item| !matches!(item.status.as_str(), "local" | "acquired"))
-                    .collect();
                 Ok(LibraryRows {
                     selection,
                     order_revision,
                     tracks,
                     playlists,
-                    issues,
+                    imports,
                 })
             })();
             let _ = tx.send(result);
@@ -109,7 +107,7 @@ impl UiState {
                         rows.tracks.iter().map(|t| t.id).collect(),
                     );
                     self.tracks = Arc::new(rows.tracks);
-                    self.playlist_issues = rows.issues;
+                    self.playlist_imports = rows.imports;
                 } else {
                     self.library_refresh.again = true;
                 }

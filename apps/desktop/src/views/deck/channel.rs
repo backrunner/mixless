@@ -37,7 +37,7 @@ impl UiState {
                     .child(knob(
                         KnobSpec {
                             ctl: KnobCtl::Gain(deck),
-                            value: d.limiter_gain_db,
+                            value: d.effective_limiter_gain_db(),
                             min: -12.0,
                             max: 12.0,
                             diameter,

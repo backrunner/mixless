@@ -2,12 +2,15 @@
 //! background threads can import and load tracks without blocking the UI.
 
 mod artwork;
+mod artwork_fetch;
 mod audio;
 mod automix;
 mod controls;
 mod cues;
+mod import_retries;
 mod imports;
 mod loading;
+mod midi;
 mod playback;
 mod poll;
 mod transport;
@@ -58,8 +61,8 @@ pub struct AppCore {
 }
 
 impl AppCore {
-    /// Downloaded audio goes to the user's chosen folder, falling back to the
-    /// managed `acquired` directory inside the app data dir.
+    /// Download root; Spotify imports use a playlist-named child folder.
+    /// Falls back to the managed `acquired` directory inside the app data dir.
     pub fn download_dir(&self) -> PathBuf {
         self.settings
             .get()
@@ -95,6 +98,7 @@ pub fn display_dir(path: &std::path::Path) -> String {
 pub enum ImportMsg {
     Progress(String),
     LibraryChanged,
+    PlaylistReady(PlaylistId),
     Done(Result<ImportReport, String>),
 }
 
@@ -302,6 +306,8 @@ pub struct UiState {
     library_refresh: library_refresh::LibraryRefresh,
     library_order: library_order::LibraryOrder,
     pub track_scroll: gpui::UniformListScrollHandle,
+    pub playlist_scroll: gpui::UniformListScrollHandle,
+    midi_track_cursor: Option<(usize, TrackId)>,
     pub track_scroll_active: std::rc::Rc<std::cell::Cell<bool>>,
     settings_revision: u64,
     pub analysis_revision: u64,
@@ -332,7 +338,7 @@ pub struct UiState {
     update_notice_at: Option<std::time::Instant>,
     pub acquire: SharedString,
     pub import_details: Vec<String>,
-    pub playlist_issues: Vec<mixless_library::ImportItem>,
+    pub playlist_imports: Vec<mixless_library::ImportItem>,
     pub busy: bool,
     pub picker_open: bool,
     pub show_fx: bool,
@@ -364,7 +370,8 @@ pub struct UiState {
     momentary_fx: Option<(DeckId, usize, bool)>,
     import_rx: Option<Receiver<ImportMsg>>,
     import_queue: std::collections::VecDeque<ImportRequest>,
-    artwork_rx: Option<Receiver<Result<usize, String>>>,
+    import_retries: import_retries::Retries,
+    artwork_fetch: artwork_fetch::ArtworkFetch,
     pub automix_active: bool,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
@@ -383,15 +390,7 @@ impl UiState {
             async {}
         })
         .detach();
-        let (artwork_tx, artwork_rx) = channel();
-        let artwork_core = core.clone();
-        std::thread::spawn(move || {
-            let result = artwork_core
-                .library
-                .backfill_artwork()
-                .map_err(|error| error.to_string());
-            let _ = artwork_tx.send(result);
-        });
+        let artwork_fetch = artwork_fetch::ArtworkFetch::start(core.clone());
         let owner = cx.entity().downgrade();
         let library_view = cx.new(|_| crate::views::library::LibraryView { owner });
         Self {
@@ -399,6 +398,8 @@ impl UiState {
             library_key: None,
             library_order: library_order::LibraryOrder::default(),
             track_scroll: gpui::UniformListScrollHandle::new(),
+            playlist_scroll: gpui::UniformListScrollHandle::new(),
+            midi_track_cursor: None,
             track_scroll_active: Default::default(),
             library_previews: Default::default(),
             library_refresh: library_refresh::LibraryRefresh::default(),
@@ -430,7 +431,7 @@ impl UiState {
             update_notice_at: None,
             acquire: "".into(),
             import_details: Vec::new(),
-            playlist_issues: Vec::new(),
+            playlist_imports: Vec::new(),
             busy: false,
             picker_open: false,
             show_fx: true,
@@ -461,7 +462,8 @@ impl UiState {
             momentary_fx: None,
             import_rx: None,
             import_queue: Default::default(),
-            artwork_rx: Some(artwork_rx),
+            import_retries: Default::default(),
+            artwork_fetch,
             automix_active: false,
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),

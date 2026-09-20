@@ -31,13 +31,14 @@ impl UiState {
                     .text_color(theme::MUTED)
                     .child("MASTER"),
             );
-        for (ctl, value, min, max, label, readout) in [
+        for (ctl, value, min, max, label, readout_width, readout) in [
             (
                 KnobCtl::MasterGain,
                 self.snapshot.master_gain_db,
                 -12.,
                 12.,
                 "GAIN",
+                43.,
                 format!("{:+.1} dB", self.snapshot.master_gain_db),
             ),
             (
@@ -46,6 +47,7 @@ impl UiState {
                 0.,
                 1.,
                 "LEVEL",
+                30.,
                 format!("{:.0}%", self.snapshot.master.clamp(0., 1.) * 100.),
             ),
         ] {
@@ -57,7 +59,7 @@ impl UiState {
                     .gap_1()
                     .child(
                         gpui::div()
-                            .w(px(43.))
+                            .w(px(readout_width))
                             .flex_col()
                             .flex()
                             .gap(px(1.))

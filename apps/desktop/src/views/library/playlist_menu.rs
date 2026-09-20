@@ -1,4 +1,8 @@
-use crate::{state::UiState, theme};
+use crate::{
+    state::UiState,
+    theme,
+    views::{TextTip, ellipsized_text},
+};
 use gpui::{AnyElement, MouseButton, Pixels, Point, Window, div, prelude::*, px};
 
 #[derive(Clone)]
@@ -15,14 +19,24 @@ impl UiState {
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
         let menu = self.playlist_menu.clone()?;
-        let width = 160.;
-        let height = 20. + 2. * 5. + 2. * theme::MENU_ROW_HEIGHT + 8.;
+        let failed = self
+            .playlists
+            .iter()
+            .any(|playlist| playlist.id == menu.id && playlist.failed_imports > 0);
+        let mut actions = vec![(0, "Duplicate", false)];
+        if failed {
+            actions.push((2, "Retry all failed tracks", false));
+        }
+        actions.push((1, "Remove playlist", true));
+        let width = 180.;
+        let height = 20. + actions.len() as f32 * (5. + theme::MENU_ROW_HEIGHT) + 8.;
         let x = f32::from(menu.position.x)
             .min(f32::from(window.viewport_size().width) - width - 8.)
             .max(8.);
         let y = f32::from(menu.position.y)
             .min(f32::from(window.viewport_size().height) - height - 8.)
             .max(8.);
+        let tooltip = menu.name.clone();
         let mut panel = div()
             .absolute()
             .left(px(x))
@@ -41,15 +55,18 @@ impl UiState {
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
+                    .id("playlist-menu-title")
+                    .w_full()
+                    .min_w_0()
                     .px(px(7.))
                     .h(px(20.))
                     .line_height(px(20.))
-                    .truncate()
                     .text_size(px(10.))
                     .text_color(theme::MUTED)
-                    .child(menu.name.clone()),
+                    .child(ellipsized_text(menu.name.clone()).size_full())
+                    .tooltip(move |_, cx| cx.new(|_| TextTip(tooltip.clone())).into()),
             );
-        for (action, label, danger) in [(0, "Duplicate", false), (1, "Remove playlist", true)] {
+        for (action, label, danger) in actions {
             panel = panel.child(div().h(px(1.)).my(px(2.)).mx(px(4.)).bg(theme::LINE));
             let id = menu.id;
             let name = menu.name.clone();
@@ -71,10 +88,10 @@ impl UiState {
                         window.prevent_default();
                         cx.stop_propagation();
                         s.playlist_menu = None;
-                        if action == 0 {
-                            s.duplicate_playlist(id);
-                        } else {
-                            s.confirm_remove_playlist = Some((id, name.clone()));
+                        match action {
+                            0 => s.duplicate_playlist(id),
+                            2 => s.retry_failed_imports(id),
+                            _ => s.confirm_remove_playlist = Some((id, name.clone())),
                         }
                         cx.notify();
                     })),

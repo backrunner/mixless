@@ -1,6 +1,8 @@
 //! Offline analysis. Must not open audio devices.
 
+mod concurrency;
 mod cues;
+pub use concurrency::workers as analysis_workers;
 pub use cues::automatic_cues;
 mod features;
 mod regions;
@@ -119,16 +121,26 @@ impl Analyzer {
         id: TrackId,
         path: &Path,
     ) -> Result<(TrackAnalysis, AnalysisReport), AnalyzeError> {
+        let _permit = concurrency::acquire();
         let start = Instant::now();
         let buf = decode_file(path).map_err(|e| AnalyzeError::Decode(e.to_string()))?;
         let decode_time = start.elapsed();
-        let (analysis, mut report) = self.analyze_buffer(id, &buf);
+        let (analysis, mut report) = self.analyze_buffer_inner(id, &buf);
         report.decode_time = decode_time;
         Ok((analysis, report))
     }
 
     /// Reuse the same decoded samples for features, spectral waveform and playback.
     pub fn analyze_buffer(
+        &self,
+        id: TrackId,
+        buf: &mixless_engine::AudioBuffer,
+    ) -> (TrackAnalysis, AnalysisReport) {
+        let _permit = concurrency::acquire();
+        self.analyze_buffer_inner(id, buf)
+    }
+
+    fn analyze_buffer_inner(
         &self,
         id: TrackId,
         buf: &mixless_engine::AudioBuffer,

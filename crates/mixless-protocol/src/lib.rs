@@ -21,3 +21,6 @@ pub use mixplan::*;
 pub use snapshot::*;
 pub use stems::*;
 pub use tonal::estimate_key;
+
+mod workers;
+pub use workers::{BackgroundCpuPermit, BackgroundWorkers};

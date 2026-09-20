@@ -27,6 +27,7 @@ pub const POPUP_RADIUS: f32 = 3.;
 pub const DIALOG_RADIUS: f32 = 4.;
 
 pub const ACCENT: Rgba = c(0xffb224);
+pub const BRAND_YELLOW: Rgba = c(0xf5d90a);
 pub const DECK_A: Rgba = c(0xffb224);
 pub const DECK_B: Rgba = c(0xff5238);
 pub const DANGER: Rgba = c(0xff3b30);

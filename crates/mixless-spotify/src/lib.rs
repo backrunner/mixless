@@ -3,12 +3,17 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod artwork;
+pub use artwork::ArtworkClient;
+
 #[derive(Debug, Error)]
 pub enum SpotifyError {
     #[error("Use a Spotify playlist URL, spotify:playlist: URI, or 22-character playlist ID")]
     Url,
     #[error("Spotify request failed: {0}")]
     Http(String),
+    #[error("Spotify rate limited; retry after {0} seconds")]
+    RateLimited(u64),
     #[error("Spotify playlist unavailable: {0}")]
     Parse(String),
 }
@@ -86,10 +91,14 @@ fn http_error(error: ureq::Error) -> SpotifyError {
         ureq::Error::Status(403 | 404, _) => {
             "playlist is private, unavailable, or not accessible to this account".into()
         }
-        ureq::Error::Status(429, response) => format!(
-            "rate limited; retry after {} seconds",
-            response.header("Retry-After").unwrap_or("30")
-        ),
+        ureq::Error::Status(429, response) => {
+            return SpotifyError::RateLimited(
+                response
+                    .header("Retry-After")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(60),
+            );
+        }
         other => other.to_string(),
     };
     SpotifyError::Http(message)

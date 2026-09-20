@@ -274,7 +274,7 @@ impl UiState {
             KnobCtl::MasterGain => self.snapshot.master_gain_db,
             KnobCtl::Key(d) => self.deck(d).pitch_semitones,
             KnobCtl::Trim(d) => self.deck(d).gain_db,
-            KnobCtl::Gain(d) => self.deck(d).limiter_gain_db,
+            KnobCtl::Gain(d) => self.deck(d).effective_limiter_gain_db(),
             KnobCtl::Balance(d) => self.deck(d).balance,
             KnobCtl::Filter(d) => self.deck(d).filter_amount,
             KnobCtl::Resonance(d) => self.deck(d).filter_resonance,

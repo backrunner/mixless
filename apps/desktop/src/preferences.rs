@@ -7,7 +7,10 @@ use gpui::{
     WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use mixless_engine::{AudioConfig, AudioDevice};
-use mixless_midi::{MidiBinding, MidiConfig, MidiMessage, MidiPort, MidiSourceKind, MidiTarget};
+use mixless_midi::{
+    MidiBinding, MidiConfig, MidiControlMode, MidiGroup, MidiMessage, MidiPort, MidiSourceKind,
+    MidiTarget,
+};
 use mixless_protocol::{Command, DeckId, XfCurve};
 
 use crate::{
@@ -16,6 +19,8 @@ use crate::{
     storage::{self, ClearKind, StorageReport},
     theme,
 };
+
+mod midi;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
@@ -31,8 +36,10 @@ enum Selector {
     Cue,
     Rate,
     Buffer,
-    Target,
     Source,
+    MidiChannel,
+    MidiNumber,
+    MidiMode,
 }
 
 enum JobResult {
@@ -60,6 +67,9 @@ pub struct Preferences {
     bindings: Vec<MidiBinding>,
     binding: MidiBinding,
     editing: Option<usize>,
+    midi_group: Option<MidiGroup>,
+    midi_inputs_open: bool,
+    midi_scroll: gpui::UniformListScrollHandle,
     learning: bool,
     last: Option<MidiMessage>,
     job: Option<mpsc::Receiver<JobResult>>,
@@ -89,8 +99,12 @@ impl Preferences {
                 channel: 0,
                 number: 0,
                 target: MidiTarget::Xfader,
+                mode: MidiControlMode::Auto,
             },
             editing: None,
+            midi_group: None,
+            midi_inputs_open: false,
+            midi_scroll: gpui::UniformListScrollHandle::new(),
             learning: false,
             last: None,
             job: None,
@@ -198,11 +212,21 @@ impl Preferences {
                 }
             }
         }
-        if let Some(hub) = self.core.midi.lock().expect("MIDI").as_ref() {
-            self.bindings = hub.bindings();
-            self.last = hub.last_message();
+        let midi = self
+            .core
+            .midi
+            .lock()
+            .expect("MIDI")
+            .as_ref()
+            .map(|hub| (hub.bindings(), hub.last_message(), hub.learned()));
+        if let Some((bindings, last, learned)) = midi {
+            if self.bindings != bindings {
+                self.bindings = bindings;
+                self.select_midi_target(self.binding.target.clone());
+            }
+            self.last = last;
             if self.learning {
-                if let Some(message) = hub.learned() {
+                if let Some(message) = learned {
                     self.binding.device_id = Some(message.device_id);
                     self.binding.kind = message.kind;
                     self.binding.channel = message.channel;
@@ -371,7 +395,6 @@ impl Preferences {
         };
         if result.is_ok() {
             self.cancel_learn();
-            self.editing = None;
         }
         self.result(result, "MIDI mapping saved");
         self.poll();
@@ -382,7 +405,6 @@ impl Preferences {
             return;
         }
         self.cancel_learn();
-        self.editing = None;
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
         let core = self.core.clone();
@@ -957,6 +979,10 @@ impl Preferences {
             "Location",
             crate::state::display_dir(&self.core.download_dir()),
         ))
+        .child(info(
+            "Spotify playlists",
+            "New downloads are saved in a subfolder named after the playlist.".into(),
+        ))
         .into_any_element()
     }
 
@@ -1107,384 +1133,6 @@ impl Preferences {
             .into_any_element()
     }
 
-    fn midi_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
-        let busy = self.job.is_some();
-        let midi_ready = self.core.midi.lock().expect("MIDI").is_some();
-        let mut page = div()
-            .flex()
-            .flex_col()
-            .child(section("MIDI inputs"))
-            .child(row(
-                "Enable MIDI",
-                self.toggle(
-                    "midi-enabled",
-                    self.midi.enabled,
-                    |s| s.midi.enabled = !s.midi.enabled,
-                    cx,
-                ),
-            ))
-            .child(row(
-                "All input devices",
-                self.toggle(
-                    "midi-all",
-                    self.midi.input_ids.is_none(),
-                    |s| {
-                        s.midi.input_ids = if s.midi.input_ids.is_none() {
-                            Some(Vec::new())
-                        } else {
-                            None
-                        };
-                    },
-                    cx,
-                ),
-            ));
-        for port in &self.ports {
-            let id = port.id.clone();
-            let selected = self
-                .midi
-                .input_ids
-                .as_ref()
-                .is_none_or(|ids| ids.contains(&id));
-            let toggle = self
-                .button(
-                    format!("port-{id}"),
-                    if selected { "\u{2713}" } else { " " },
-                    !busy,
-                    move |s, _, _| {
-                        let ids = s
-                            .midi
-                            .input_ids
-                            .get_or_insert_with(|| s.ports.iter().map(|p| p.id.clone()).collect());
-                        if ids.contains(&id) {
-                            ids.retain(|p| p != &id);
-                        } else {
-                            ids.push(id.clone());
-                        }
-                    },
-                    cx,
-                )
-                .into_any_element();
-            page = page.child(row(&port.name, toggle));
-        }
-        if let Some(ids) = &self.midi.input_ids {
-            for id in ids
-                .iter()
-                .filter(|id| !self.ports.iter().any(|p| &p.id == *id))
-            {
-                let id = id.clone();
-                page = page.child(row(
-                    &format!("Disconnected input: {id}"),
-                    self.button(
-                        format!("missing-{id}"),
-                        "Remove",
-                        !busy,
-                        move |s, _, _| {
-                            if let Some(ids) = &mut s.midi.input_ids {
-                                ids.retain(|p| p != &id);
-                            }
-                        },
-                        cx,
-                    )
-                    .into_any_element(),
-                ));
-            }
-        }
-        page = page
-            .when(self.ports.is_empty(), |el| {
-                el.child(info("Inputs", "No MIDI devices connected".into()))
-            })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .py_3()
-                    .child(self.button(
-                        "refresh-midi",
-                        "Refresh devices",
-                        !busy,
-                        |s, _, _| s.refresh(),
-                        cx,
-                    ))
-                    .child(
-                        self.button(
-                            "apply-midi",
-                            "Apply inputs",
-                            !busy,
-                            |s, _, _| s.apply_midi(),
-                            cx,
-                        )
-                        .text_color(theme::ACCENT),
-                    ),
-            )
-            .child(section(if self.editing.is_some() {
-                "Edit mapping"
-            } else {
-                "New mapping"
-            }))
-            .child(row(
-                "Action",
-                self.select(Selector::Target, self.binding.target.label(), cx),
-            ))
-            .child(row(
-                "Source device",
-                self.select(
-                    Selector::Source,
-                    self.binding
-                        .device_id
-                        .as_ref()
-                        .map_or("Any enabled input".into(), |id| self.port_name(id)),
-                    cx,
-                ),
-            ))
-            .child(row(
-                "Message",
-                div()
-                    .flex()
-                    .gap_2()
-                    .children(
-                        [(MidiSourceKind::Cc, "CC"), (MidiSourceKind::Note, "Note")].map(
-                            |(kind, label)| {
-                                self.button(
-                                    format!("kind-{label}"),
-                                    label,
-                                    !busy && !self.learning,
-                                    move |s, _, _| s.binding.kind = kind,
-                                    cx,
-                                )
-                                .text_color(
-                                    if self.binding.kind == kind {
-                                        theme::ACCENT
-                                    } else {
-                                        theme::MUTED
-                                    },
-                                )
-                            },
-                        ),
-                    )
-                    .into_any_element(),
-            ))
-            .child(row(
-                "Channel",
-                self.number_stepper("channel", self.binding.channel + 1, 1, 16, cx),
-            ))
-            .child(row(
-                "Controller / note",
-                self.number_stepper("number", self.binding.number, 0, 127, cx),
-            ))
-            .child(info(
-                "Last signal",
-                self.last.as_ref().map_or("No signal".into(), |m| {
-                    format!(
-                        "{} / {:?} {} / Ch {} / {}",
-                        self.port_name(&m.device_id),
-                        m.kind,
-                        m.number,
-                        m.channel + 1,
-                        m.value
-                    )
-                }),
-            ))
-            .when(self.learning, |el| {
-                el.child(
-                    div().py_2().text_color(theme::ACCENT).child(
-                        if self
-                            .core
-                            .midi
-                            .lock()
-                            .expect("MIDI")
-                            .as_ref()
-                            .and_then(|h| h.learned())
-                            .is_some()
-                        {
-                            "Signal captured"
-                        } else {
-                            "Waiting for MIDI..."
-                        },
-                    ),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .py_3()
-                    .child(self.button(
-                        "learn",
-                        if self.learning {
-                            "Cancel learn"
-                        } else {
-                            "Learn"
-                        },
-                        midi_ready && !busy,
-                        |s, _, _| s.toggle_learn(),
-                        cx,
-                    ))
-                    .when(self.editing.is_some(), |el| {
-                        el.child(self.button(
-                            "cancel-edit",
-                            "Cancel edit",
-                            !busy,
-                            |s, _, _| {
-                                s.cancel_learn();
-                                s.editing = None;
-                            },
-                            cx,
-                        ))
-                    })
-                    .child(
-                        self.button(
-                            "save-binding",
-                            "Save mapping",
-                            midi_ready && !busy,
-                            |s, _, _| s.save_binding(),
-                            cx,
-                        )
-                        .text_color(theme::ACCENT),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .pt_4()
-                    .pb_2()
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .child(format!("Mappings ({})", self.bindings.len())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(self.button(
-                                "import-map",
-                                "Import...",
-                                midi_ready && !busy,
-                                |s, _, cx| s.file_dialog(false, cx),
-                                cx,
-                            ))
-                            .child(self.button(
-                                "export-map",
-                                "Export...",
-                                midi_ready && !busy,
-                                |s, _, cx| s.file_dialog(true, cx),
-                                cx,
-                            )),
-                    ),
-            );
-        for (index, binding) in self.bindings.iter().enumerate() {
-            page = page.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(theme::LINE)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_size(px(12.)).child(binding.target.label()))
-                            .child(div().text_size(px(11.)).text_color(theme::MUTED).child(
-                                format!(
-                                        "{} / {:?} {} / Ch {}",
-                                        binding
-                                            .device_id
-                                            .as_ref()
-                                            .map_or("Any input".into(), |id| self.port_name(id)),
-                                        binding.kind,
-                                        binding.number,
-                                        binding.channel + 1
-                                    ),
-                            )),
-                    )
-                    .child(self.button(
-                        format!("edit-{index}"),
-                        "Edit",
-                        !busy,
-                        move |s, _, _| {
-                            s.cancel_learn();
-                            s.binding = s.bindings[index].clone();
-                            s.editing = Some(index);
-                        },
-                        cx,
-                    ))
-                    .child(self.button(
-                        format!("delete-{index}"),
-                        "Delete",
-                        !busy,
-                        move |s, _, _| {
-                            s.cancel_learn();
-                            s.editing = None;
-                            let result = s
-                                .core
-                                .midi
-                                .lock()
-                                .expect("MIDI")
-                                .as_ref()
-                                .unwrap()
-                                .remove(index)
-                                .map_err(|e| e.to_string());
-                            s.result(result, "Mapping deleted");
-                            s.poll();
-                        },
-                        cx,
-                    )),
-            );
-        }
-        if self.bindings.is_empty() {
-            page = page.child(info("Mappings", "No mappings".into()));
-        }
-        if let Some(error) = self.core.midi_error.lock().expect("MIDI error").as_ref() {
-            page = page.child(div().py_3().text_color(theme::DANGER).child(error.clone()));
-        }
-        page.into_any_element()
-    }
-
-    fn number_stepper(
-        &self,
-        field: &'static str,
-        value: u8,
-        min: u8,
-        max: u8,
-        cx: &Context<Self>,
-    ) -> gpui::AnyElement {
-        let step = |delta: i16, label: &'static str| {
-            self.button(
-                format!("{field}-{label}"),
-                label,
-                !self.learning
-                    && self.job.is_none()
-                    && if delta < 0 { value > min } else { value < max },
-                move |s, _, _| {
-                    let value = (value as i16 + delta).clamp(min as i16, max as i16) as u8;
-                    if field == "channel" {
-                        s.binding.channel = value - 1;
-                    } else {
-                        s.binding.number = value;
-                    }
-                },
-                cx,
-            )
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .child(step(-1, "-"))
-            .child(div().w(px(36.)).text_center().child(value.to_string()))
-            .child(step(1, "+"))
-            .into_any_element()
-    }
-
     fn port_name(&self, id: &str) -> String {
         self.ports
             .iter()
@@ -1544,10 +1192,14 @@ impl Preferences {
                 );
                 options
             }
-            Selector::Target => MidiTarget::all()
+            Selector::MidiChannel => (1..=16)
+                .map(|n| (n.to_string(), format!("Channel {n}")))
+                .collect(),
+            Selector::MidiNumber => (0..=127).map(|n| (n.to_string(), n.to_string())).collect(),
+            Selector::MidiMode => MidiControlMode::ALL
                 .into_iter()
                 .enumerate()
-                .map(|(i, t)| (i.to_string(), t.label()))
+                .map(|(i, mode)| (i.to_string(), mode.label().into()))
                 .collect(),
             Selector::Source => {
                 let mut options = vec![(String::new(), "Any enabled input".into())];
@@ -1570,11 +1222,23 @@ impl Preferences {
             Selector::Cue => self.audio.cue_device = optional,
             Selector::Rate => self.audio.sample_rate = value.parse().ok(),
             Selector::Buffer => self.audio.buffer_frames = value.parse().ok(),
-            Selector::Target => {
-                if let Ok(index) = value.parse::<usize>() {
-                    if let Some(target) = MidiTarget::all().get(index) {
-                        self.binding.target = target.clone();
-                    }
+            Selector::MidiChannel => {
+                if let Ok(n @ 1..=16) = value.parse::<u8>() {
+                    self.binding.channel = n - 1;
+                }
+            }
+            Selector::MidiNumber => {
+                if let Ok(n @ 0..=127) = value.parse::<u8>() {
+                    self.binding.number = n;
+                }
+            }
+            Selector::MidiMode => {
+                if let Some(mode) = value
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| MidiControlMode::ALL.get(i))
+                {
+                    self.binding.mode = *mode;
                 }
             }
             Selector::Source => self.binding.device_id = optional,
@@ -1686,9 +1350,13 @@ impl Render for Preferences {
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap_2()
-                    .px_6()
+                    // The transparent macOS titlebar overlays this row. Keep
+                    // the tabs clear of the native traffic-light controls.
+                    .pl(px(96.))
+                    .pr_6()
                     .py_3()
                     .border_b_1()
                     .border_color(theme::LINE)

@@ -181,20 +181,26 @@ impl UiState {
     }
 
     pub fn import_spotify(&mut self, url: String) {
+        self.show_import_modal = false;
+        self.import_details.clear();
         self.import_queue.push_back(ImportRequest::Spotify(url));
         self.start_next_import();
     }
 
     pub fn import_status(&self) -> SharedString {
-        if self.import_queue.is_empty() {
-            return self.acquire.clone();
+        let mut parts = vec![self.acquire.to_string()];
+        if !self.import_queue.is_empty() {
+            parts.push(format!("{} imports queued", self.import_queue.len()));
         }
-        format!(
-            "{} · {} imports queued",
-            self.acquire,
-            self.import_queue.len()
-        )
-        .into()
+        if let Some(status) = self.import_retries.status() {
+            parts.push(status);
+        }
+        parts
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ")
+            .into()
     }
 
     pub(super) fn start_next_import(&mut self) {
@@ -290,21 +296,63 @@ fn import_spotify_blocking(core: &AppCore, url: &str, tx: &Sender<ImportMsg>) {
             library: &core.library,
             analyzer: &core.analyzer,
         };
-        let dest = core.download_dir();
-        let mut provider = None;
+        let dest = mixless_acquire::playlist_download_dir(&core.download_dir(), &playlist.name);
+        let provider = std::sync::OnceLock::new();
         service.spotify_playlist(
             &playlist,
             |job| {
                 // Local-only imports work even if no downloader is installed.
-                if provider.is_none() {
-                    provider = Some(YoutubeMusicAcquire::detect()?);
+                match provider.get_or_init(YoutubeMusicAcquire::detect) {
+                    Ok(provider) => provider.fetch(job, &dest),
+                    Err(error) => Err(mixless_acquire::AcquireError::Msg(error.to_string())),
                 }
-                provider.as_ref().unwrap().fetch(job, &dest)
             },
-            |message| {
-                let _ = tx.send(ImportMsg::Progress(message));
-            },
+            |event| publish_import_progress(tx, event),
         )
     })();
     let _ = tx.send(ImportMsg::Done(result));
+}
+
+pub(super) fn retry_spotify_blocking(
+    core: &AppCore,
+    playlist: PlaylistId,
+    position: usize,
+    external_id: &str,
+    tx: &Sender<ImportMsg>,
+) {
+    let service = ImportService {
+        library: &core.library,
+        analyzer: &core.analyzer,
+    };
+    let provider = std::sync::OnceLock::new();
+    let result = service.retry_spotify_item(
+        playlist,
+        position,
+        external_id,
+        |job, name| {
+            let dest = mixless_acquire::playlist_download_dir(&core.download_dir(), name);
+            match provider.get_or_init(YoutubeMusicAcquire::detect) {
+                Ok(provider) => provider.fetch(job, &dest),
+                Err(error) => Err(mixless_acquire::AcquireError::Msg(error.to_string())),
+            }
+        },
+        |event| publish_import_progress(tx, event),
+    );
+    let _ = tx.send(ImportMsg::Done(result));
+}
+
+fn publish_import_progress(
+    tx: &Sender<ImportMsg>,
+    event: mixless_acquire::imports::ImportProgress,
+) {
+    use mixless_acquire::imports::ImportProgress;
+    match event {
+        ImportProgress::PlaylistReady(id) => {
+            let _ = tx.send(ImportMsg::PlaylistReady(id));
+        }
+        ImportProgress::Changed(_, message) => {
+            let _ = tx.send(ImportMsg::Progress(message));
+            let _ = tx.send(ImportMsg::LibraryChanged);
+        }
+    }
 }

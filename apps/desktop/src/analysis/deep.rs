@@ -15,7 +15,7 @@ pub(super) struct Jobs {
 impl Jobs {
     /// Queue `id` at the back, or move it to the front when `priority` is set.
     /// Returns false only when the worker is already running this track.
-    fn enqueue(&self, id: TrackId, priority: bool) -> bool {
+    fn enqueue(&self, id: TrackId, priority: bool, queued: impl FnOnce()) -> bool {
         let mut queue = self.queue.lock().expect("deep queue");
         if let Some(pos) = queue.iter().position(|queued| *queued == id) {
             if priority && pos > 0 {
@@ -32,6 +32,7 @@ impl Jobs {
         } else {
             queue.push_back(id);
         }
+        queued();
         true
     }
 
@@ -40,8 +41,16 @@ impl Jobs {
             .sender
             .get_or_init(|| {
                 let (tx, rx) = channel::<()>();
-                let weak = Arc::downgrade(core);
-                std::thread::spawn(move || worker(weak, rx));
+                let rx = Arc::new(Mutex::new(rx));
+                let workers = core
+                    .stems
+                    .as_ref()
+                    .map_or(1, |processor| processor.parallelism());
+                for _ in 0..workers {
+                    let weak = Arc::downgrade(core);
+                    let rx = rx.clone();
+                    std::thread::spawn(move || worker(weak, rx));
+                }
                 tx
             })
             .send(());
@@ -58,12 +67,15 @@ impl Jobs {
     }
 }
 
-fn worker(weak: std::sync::Weak<AppCore>, rx: Receiver<()>) {
+fn worker(weak: std::sync::Weak<AppCore>, rx: Arc<Mutex<Receiver<()>>>) {
     // Releasing the 165 MB model set on every idle gap makes the next queued
     // track pay a full reload. Only drop it after a sustained quiet spell.
     const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(30);
     loop {
-        match rx.recv_timeout(IDLE_RELEASE) {
+        // Release the receiver lock before processing; independent workers
+        // must be able to receive the next queued recording during inference.
+        let message = rx.lock().expect("deep wakeups").recv_timeout(IDLE_RELEASE);
+        match message {
             Ok(()) => {}
             Err(RecvTimeoutError::Timeout) => {
                 let Some(core) = weak.upgrade() else { break };
@@ -84,15 +96,14 @@ fn worker(weak: std::sync::Weak<AppCore>, rx: Receiver<()>) {
             Err(RecvTimeoutError::Disconnected) => break,
         }
         let Some(core) = weak.upgrade() else { break };
-        loop {
-            let id = {
-                let mut queue = core.analysis.deep_jobs.queue.lock().expect("deep queue");
-                // A send always follows its push under this lock, so stale
-                // wake-ups drained here can never hide a queued track.
-                for _ in rx.try_iter() {}
-                queue.pop_front()
-            };
-            let Some(id) = id else { break };
+        let id = core
+            .analysis
+            .deep_jobs
+            .queue
+            .lock()
+            .expect("deep queue")
+            .pop_front();
+        if let Some(id) = id {
             job(&core, id);
         }
     }
@@ -101,7 +112,7 @@ fn worker(weak: std::sync::Weak<AppCore>, rx: Receiver<()>) {
 fn job(core: &Arc<AppCore>, id: TrackId) {
     let revision = core.analysis.content_revision.load(Ordering::Acquire);
     let generation = core.analysis.epoch(id).load(Ordering::Acquire);
-    let result = run(core, id);
+    let result = run(core, id, generation);
     if let Ok(prepared) = &result {
         for deck in [DeckId::A, DeckId::B] {
             stems::attach_stems(core, deck, id, &prepared.track.content_hash);
@@ -124,14 +135,18 @@ fn job(core: &Arc<AppCore>, id: TrackId) {
             .expect("deep completion")
             .insert(id, generation);
         match result {
-            Ok(prepared) => core.analysis.set(id, ready_status(&prepared)),
-            Err(error) => {
-                let status = match core.library.get_track(id) {
-                    Ok(track) if track.analyzed => Status::Basic(track.content_hash, error),
-                    _ => Status::Failed(error),
-                };
-                core.analysis.set(id, status);
+            Ok(prepared) if prepared.analysis.stems.is_some() => {
+                core.analysis.set_stems(id, StemStatus::Ready)
             }
+            Ok(_) => {
+                core.analysis
+                    .stem_states
+                    .lock()
+                    .expect("stem states")
+                    .remove(&id);
+                core.analysis.revision.fetch_add(1, Ordering::Release);
+            }
+            Err(error) => core.analysis.set_stems(id, StemStatus::Failed(error)),
         }
     } else {
         schedule(core, id);
@@ -158,7 +173,9 @@ pub fn schedule(core: &Arc<AppCore>, id: TrackId) {
     if !queueable(core, id) {
         return;
     }
-    if core.analysis.deep_jobs.enqueue(id, false) {
+    if core.analysis.deep_jobs.enqueue(id, false, || {
+        core.analysis.set_stems(id, StemStatus::Queued)
+    }) {
         core.analysis.deep_jobs.notify(core);
     }
 }
@@ -169,7 +186,11 @@ pub fn promote(core: &Arc<AppCore>, id: TrackId) {
     if !queueable(core, id) {
         return;
     }
-    if core.analysis.deep_jobs.enqueue(id, true) {
+    if core
+        .analysis
+        .deep_jobs
+        .enqueue(id, true, || core.analysis.set_stems(id, StemStatus::Queued))
+    {
         core.analysis.deep_jobs.notify(core);
     }
 }
@@ -187,14 +208,16 @@ pub(super) fn retry_for_playback(core: &Arc<AppCore>, id: TrackId) {
     promote(core, id);
 }
 
-pub(super) fn ready_status(prepared: &PreparedTrack) -> Status {
-    match &prepared.warning {
-        Some(warning) => Status::Basic(prepared.track.content_hash.clone(), warning.clone()),
-        None => Status::Ready(prepared.track.content_hash.clone()),
+fn run(core: &AppCore, id: TrackId, generation: u64) -> Result<PreparedTrack, String> {
+    let epoch = core.analysis.epoch(id);
+    let active = || {
+        !core.shutting_down.load(Ordering::Acquire)
+            && core.settings.get().deep_analysis
+            && epoch.load(Ordering::Acquire) == generation
+    };
+    if !active() {
+        return Err("Stem separation cancelled".into());
     }
-}
-
-fn run(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
     let prepared = prepare(core, id)?;
     let Some(processor) = core
         .stems
@@ -212,21 +235,15 @@ fn run(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
             .cached(&prepared.track.content_hash, prepared.analysis.duration_sec)
             .is_ok_and(|s| s.is_some())
     {
-        core.analysis.set(id, ready_status(&prepared));
+        core.analysis.set_stems(id, StemStatus::Ready);
         return Ok(prepared);
     }
     let track = &prepared.track;
-    let epoch = core.analysis.epoch(id);
-    let generation = epoch.load(Ordering::Acquire);
-    core.analysis.set(
-        track.id,
-        Status::Enhancing("Waiting for stem analysis".into()),
-    );
-    let active = || {
-        !core.shutting_down.load(Ordering::Acquire)
-            && core.settings.get().deep_analysis
-            && epoch.load(Ordering::Acquire) == generation
-    };
+    if !active() {
+        return Err("Stem separation cancelled".into());
+    }
+    core.analysis
+        .set_stems(track.id, StemStatus::Running("Stems · Waiting".into()));
     let result = processor.analyze(
         &track.content_hash,
         prepared.analysis.duration_sec,
@@ -234,14 +251,15 @@ fn run(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         &mut |progress| {
             use mixless_stems::Progress::*;
             let label = match progress {
-                Downloading { percent, .. } => format!("Downloading analysis model · {percent}%"),
-                Loading => "Loading analysis models".into(),
-                Separating(p) => format!("Separating stems · {p}%"),
-                Notes { stem, percent } => format!("Analyzing {stem} notes · {percent}%"),
-                Saving => "Saving stem analysis".into(),
+                Downloading { percent, .. } => format!("Stems · Downloading model · {percent}%"),
+                Loading => "Stems · Loading models".into(),
+                Separating(p) => format!("Stems · Separating · {p}%"),
+                Notes { stem, percent } => format!("Stems · {stem} notes · {percent}%"),
+                Saving => "Stems · Saving".into(),
             };
             if active() {
-                core.analysis.set(track.id, Status::Enhancing(label));
+                core.analysis
+                    .set_stems(track.id, StemStatus::Running(label));
             }
         },
         &active,
@@ -260,17 +278,7 @@ fn run(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
     if !active() {
         return Ok(prepared);
     }
-    let evidence = match result {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!(track=?track.id,error=%e,"Deep analysis unavailable; retaining basic analysis");
-            let mut fallback = prepared;
-            fallback.warning = Some(e.to_string());
-            core.analysis.set(id, ready_status(&fallback));
-            replace_cached(core, &fallback);
-            return Ok(fallback);
-        }
-    };
+    let evidence = result.map_err(|error| error.to_string())?;
     if core
         .library
         .verified_content_hash(Path::new(&track.path))
@@ -304,7 +312,6 @@ fn run(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         track: core.library.get_track(id).map_err(|e| e.to_string())?,
         analysis: Arc::new(analysis),
         wave: prepared.wave,
-        warning: None,
     };
     replace_cached(core, &enhanced);
     reanalysis::update_loaded(core, &enhanced, false)?;
@@ -318,7 +325,7 @@ fn run(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         .lock()
         .expect("analysis metadata")
         .insert(id, enhanced.track.clone());
-    core.analysis.set(id, ready_status(&enhanced));
+    core.analysis.set_stems(id, StemStatus::Ready);
     core.analysis
         .content_revision
         .fetch_add(1, Ordering::AcqRel);
@@ -337,6 +344,77 @@ fn replace_cached(core: &AppCore, prepared: &PreparedTrack) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_stem_workers_do_not_block_fresh_basic_analysis() {
+        let (dir, mut core, tracks) = crate::automix::tests::fixture();
+        let cache = dir.path().join("stems");
+        std::fs::create_dir(&cache).unwrap();
+        let lock = std::fs::File::create(cache.join(".analysis.lock")).unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        Arc::get_mut(&mut core).unwrap().stems = Some(mixless_stems::Processor::new(
+            dir.path().join("missing-models"),
+            cache,
+            false,
+        ));
+        let workers = core.stems.as_ref().unwrap().parallelism();
+        for id in tracks.iter().take(workers) {
+            schedule(&core, *id);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let running = core
+                .analysis
+                .stem_statuses()
+                .values()
+                .filter(|status| matches!(status, StemStatus::Running(_)))
+                .count();
+            if running == workers {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "independent stem workers did not start"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let id = tracks[0];
+        core.library.reset_analysis(id, false).unwrap();
+        core.analysis
+            .prepared
+            .lock()
+            .unwrap()
+            .retain(|p| p.track.id != id);
+        core.analysis.set(id, Status::Queued);
+        let worker = core.clone();
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(prepare(&worker, id));
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(5));
+        // Release the fixture lock even if the regression times out.
+        drop(lock);
+        let prepared = result
+            .expect("basic analysis waited for stem workers")
+            .unwrap();
+        assert!(prepared.track.analyzed);
+        assert!(matches!(
+            core.analysis.status(&prepared.track),
+            Status::Ready(_)
+        ));
+        core.shutting_down.store(true, Ordering::Release);
+    }
+
+    #[test]
+    fn obsolete_stem_job_cannot_restore_status_after_reanalysis() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        let generation = core.analysis.epoch(id).load(Ordering::Acquire);
+        core.analysis.forget(id);
+        assert!(run(&core, id, generation).is_err());
+        assert!(!core.analysis.stem_statuses().contains_key(&id));
+    }
+
     #[test]
     fn absent_models_keep_manual_audio_and_basic_analysis_usable() {
         let (dir, mut core, tracks) = crate::automix::tests::fixture();
@@ -347,12 +425,16 @@ mod tests {
         ));
         let id = tracks[0];
         core.analysis.forget(id);
-        let prepared = run(&core, id).unwrap();
+        job(&core, id);
+        let prepared = prepare(&core, id).unwrap();
         assert!(prepared.analysis.stems.is_none());
-        assert!(prepared.warning.is_some());
         assert!(matches!(
             core.analysis.status(&prepared.track),
-            Status::Basic(_, _)
+            Status::Ready(_)
+        ));
+        assert!(matches!(
+            core.analysis.stem_statuses().get(&id),
+            Some(StemStatus::Failed(_))
         ));
         load_manual(&core, DeckId::A, id, || true).unwrap();
         assert_eq!(core.engine.snapshot().decks[0].track_id, Some(id));
@@ -419,7 +501,10 @@ mod tests {
             timings.len()
         );
         assert!(p99 < 2.667);
-        assert!(prepared.warning.is_none(), "{:?}", prepared.warning);
+        assert_eq!(
+            core.analysis.stem_statuses().get(&id),
+            Some(&StemStatus::Ready)
+        );
         assert!(
             core.engine.stems_ready(DeckId::A),
             "Default model queue must attach playable stems"
@@ -507,19 +592,19 @@ mod tests {
     fn promote_moves_queued_tracks_to_the_front() {
         let jobs = Jobs::default();
         for i in [1, 2, 3] {
-            assert!(jobs.enqueue(TrackId(i), false));
+            assert!(jobs.enqueue(TrackId(i), false, || {}));
         }
         assert_eq!(jobs.queued(), [TrackId(1), TrackId(2), TrackId(3)]);
-        assert!(jobs.enqueue(TrackId(3), true));
+        assert!(jobs.enqueue(TrackId(3), true, || {}));
         assert_eq!(jobs.queued(), [TrackId(3), TrackId(1), TrackId(2)]);
         // A duplicate schedule does not reorder or duplicate the entry.
-        assert!(jobs.enqueue(TrackId(1), false));
+        assert!(jobs.enqueue(TrackId(1), false, || {}));
         assert_eq!(jobs.queued(), [TrackId(3), TrackId(1), TrackId(2)]);
         // The job the worker popped is still pending but no longer queued;
         // promoting it must not requeue it.
         let running = jobs.queue.lock().unwrap().pop_front().unwrap();
         assert_eq!(running, TrackId(3));
-        assert!(!jobs.enqueue(TrackId(3), true));
+        assert!(!jobs.enqueue(TrackId(3), true, || {}));
         assert_eq!(jobs.queued(), [TrackId(1), TrackId(2)]);
     }
 }

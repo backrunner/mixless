@@ -79,11 +79,11 @@ impl UiState {
         let recording = &self.audio.recording;
         let seconds = recording.seconds as u64;
         let label = if self.audio.pending {
-            "WAIT…".into()
+            "WAIT…"
         } else if recording.active {
-            format!("■ {:02}:{:02}", seconds / 60, seconds % 60)
+            "■ REC"
         } else {
-            "● REC".into()
+            "● REC"
         };
         div()
             .id("record-master")
@@ -92,6 +92,7 @@ impl UiState {
             .px_2()
             .flex()
             .items_center()
+            .gap(px(6.))
             .rounded(px(5.))
             .border_1()
             .border_color(theme::with_alpha(theme::LED_RED, 0.4))
@@ -103,6 +104,24 @@ impl UiState {
             .text_color(theme::LED_RED)
             .cursor_pointer()
             .child(label)
+            .when(recording.active, |el| {
+                let timecode = if seconds >= 3600 {
+                    format!(
+                        "{:02}:{:02}:{:02}",
+                        seconds / 3600,
+                        seconds / 60 % 60,
+                        seconds % 60
+                    )
+                } else {
+                    format!("{:02}:{:02}", seconds / 60, seconds % 60)
+                };
+                el.child(
+                    div()
+                        .font_family("Menlo")
+                        .text_size(px(10.))
+                        .child(timecode),
+                )
+            })
             .on_mouse_down(MouseButton::Left, |_, window, cx| {
                 window.prevent_default();
                 cx.stop_propagation();

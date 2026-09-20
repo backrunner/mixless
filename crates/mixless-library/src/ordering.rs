@@ -50,6 +50,7 @@ impl Library {
             for (position, id) in ordered.iter().enumerate() {
                 insert.execute(params![playlist.0, position as i64, id.0])?;
             }
+            super::imports::align_import_order(&tx, playlist, ordered)?;
         } else {
             tx.execute("DELETE FROM library_order", [])?;
             let mut insert =

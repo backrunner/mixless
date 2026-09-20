@@ -1,11 +1,15 @@
 //! MIDI input and learning stay outside the realtime audio thread.
 
+#[cfg(test)]
+mod mapping_tests;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use midir::{Ignore, MidiInput, MidiInputConnection};
-use mixless_protocol::{Command, DeckId, EqBand};
+#[cfg(test)]
+use mixless_protocol::DeckId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -62,70 +66,10 @@ pub enum MidiSourceKind {
     Note,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum MidiTarget {
-    Xfader,
-    Master,
-    CueGain,
-    Fader { deck: DeckId },
-    Gain { deck: DeckId },
-    Balance { deck: DeckId },
-    Eq { deck: DeckId, band: EqBand },
-    Filter { deck: DeckId },
-    Resonance { deck: DeckId },
-    Tempo { deck: DeckId },
-    Pitch { deck: DeckId },
-    Play { deck: DeckId },
-    Cue { deck: DeckId, index: u8 },
-    Jog { deck: DeckId },
-    Sync { deck: DeckId },
-}
-
-impl MidiTarget {
-    pub fn label(&self) -> String {
-        match self {
-            Self::Xfader => "Crossfader".into(),
-            Self::Master => "Master volume".into(),
-            Self::CueGain => "Headphone volume".into(),
-            Self::Fader { deck } => format!("Deck {deck:?} / Channel fader"),
-            Self::Gain { deck } => format!("Deck {deck:?} / Trim"),
-            Self::Balance { deck } => format!("Deck {deck:?} / Balance"),
-            Self::Eq { deck, band } => format!("Deck {deck:?} / EQ {band:?}"),
-            Self::Filter { deck } => format!("Deck {deck:?} / Filter"),
-            Self::Resonance { deck } => format!("Deck {deck:?} / Resonance"),
-            Self::Tempo { deck } => format!("Deck {deck:?} / Tempo"),
-            Self::Pitch { deck } => format!("Deck {deck:?} / Key"),
-            Self::Play { deck } => format!("Deck {deck:?} / Play / pause"),
-            Self::Cue { deck, index } => format!("Deck {deck:?} / Hot cue {}", index + 1),
-            Self::Jog { deck } => format!("Deck {deck:?} / Jog (relative CC)"),
-            Self::Sync { deck } => format!("Deck {deck:?} / Sync"),
-        }
-    }
-
-    pub fn all() -> Vec<Self> {
-        let mut targets = vec![Self::Xfader, Self::Master, Self::CueGain];
-        for deck in [DeckId::A, DeckId::B] {
-            targets.extend([
-                Self::Play { deck },
-                Self::Sync { deck },
-                Self::Fader { deck },
-                Self::Gain { deck },
-                Self::Balance { deck },
-                Self::Filter { deck },
-                Self::Resonance { deck },
-                Self::Tempo { deck },
-                Self::Pitch { deck },
-                Self::Jog { deck },
-            ]);
-            targets.extend(
-                [EqBand::Low, EqBand::Mid, EqBand::High].map(|band| Self::Eq { deck, band }),
-            );
-            targets.extend((0..8).map(|index| Self::Cue { deck, index }));
-        }
-        targets
-    }
-}
+mod control;
+mod targets;
+pub use control::{MidiAction, MidiControlMode, MidiValue};
+pub use targets::{ControlKind, MidiGroup, MidiTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MidiBinding {
@@ -136,6 +80,8 @@ pub struct MidiBinding {
     pub channel: u8,
     pub number: u8,
     pub target: MidiTarget,
+    #[serde(default)]
+    pub mode: MidiControlMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -157,10 +103,19 @@ struct InputState {
     learning: bool,
     learned: Option<MidiMessage>,
     last: Option<MidiMessage>,
-    queued: Vec<Command>,
+    queued: Vec<MidiAction>,
+    held: Vec<(MidiMessage, MidiTarget)>,
 }
 
 impl InputState {
+    fn release_held(&mut self) {
+        for (_, target) in self.held.drain(..) {
+            self.queued.push(MidiAction {
+                target,
+                value: MidiValue::Release,
+            });
+        }
+    }
     fn receive(&mut self, bindings: &[MidiBinding], device_id: &str, msg: &[u8]) {
         let Some((kind, channel, number, value)) = parse_msg(msg) else {
             return;
@@ -180,6 +135,28 @@ impl InputState {
             return;
         }
         if let Some(cmd) = resolve(bindings, device_id, msg) {
+            if cmd.target.kind() == ControlKind::Momentary {
+                let same = |(held, _): &(MidiMessage, MidiTarget)| {
+                    held.device_id == device_id
+                        && held.kind == kind
+                        && held.channel == channel
+                        && held.number == number
+                };
+                if cmd.value == MidiValue::Press {
+                    if self.held.iter().any(same) {
+                        return;
+                    }
+                    if self.queued.len() >= 1024 {
+                        return;
+                    }
+                    self.held.push((message, cmd.target.clone()));
+                } else {
+                    self.held.retain(|entry| !same(entry));
+                    if self.queued.len() >= 1024 {
+                        self.queued.remove(0);
+                    }
+                }
+            }
             // Keep pathological controllers from growing the queue without bound.
             if self.queued.len() < 1024 {
                 self.queued.push(cmd);
@@ -265,7 +242,13 @@ impl MidiHub {
         }
         conns.clear();
         self.set_learn(false);
-        self.input.lock().expect("MIDI input").queued.clear();
+        {
+            let mut input = self.input.lock().expect("MIDI input");
+            input
+                .queued
+                .retain(|action| action.value == MidiValue::Release);
+            input.release_held();
+        }
         *conns = next;
         active.store(true, std::sync::atomic::Ordering::Release);
         *self.config.lock().expect("MIDI config") = config;
@@ -274,9 +257,15 @@ impl MidiHub {
 
     pub fn set_learn(&self, on: bool) {
         let mut input = self.input.lock().expect("MIDI input");
+        if input.learning == on {
+            return;
+        }
         input.learning = on;
         input.learned = None;
-        input.queued.clear();
+        input
+            .queued
+            .retain(|action| action.value == MidiValue::Release);
+        input.release_held();
     }
 
     pub fn learned(&self) -> Option<MidiMessage> {
@@ -300,6 +289,7 @@ impl MidiHub {
             kind: message.kind,
             channel: message.channel,
             number: message.number,
+            mode: MidiControlMode::Auto,
             target,
         })?;
         self.set_learn(false);
@@ -338,6 +328,13 @@ impl MidiHub {
         let mut next = current.clone();
         edit(&mut next);
         save_map(&self.path, &next)?;
+        // A remapped source may no longer deliver the release for its old
+        // target. Release held controls before replacing the routing table.
+        let mut input = self.input.lock().expect("MIDI input");
+        input
+            .queued
+            .retain(|action| action.value == MidiValue::Release);
+        input.release_held();
         *current = next;
         Ok(())
     }
@@ -353,7 +350,7 @@ impl MidiHub {
     pub fn bindings(&self) -> Vec<MidiBinding> {
         self.bindings.lock().expect("MIDI map").clone()
     }
-    pub fn drain(&self) -> Vec<Command> {
+    pub fn drain(&self) -> Vec<MidiAction> {
         self.input
             .lock()
             .expect("MIDI input")
@@ -361,10 +358,10 @@ impl MidiHub {
             .drain(..)
             .collect()
     }
-    pub fn map_message(&self, msg: &[u8]) -> Option<Command> {
+    pub fn map_message(&self, msg: &[u8]) -> Option<MidiAction> {
         resolve(&self.bindings.lock().ok()?, "", msg)
     }
-    pub fn poll_and_apply<F: FnMut(Command)>(&self, raw: &[u8], mut apply: F) {
+    pub fn poll_and_apply<F: FnMut(MidiAction)>(&self, raw: &[u8], mut apply: F) {
         if let Some(cmd) = self.map_message(raw) {
             apply(cmd);
         }
@@ -381,20 +378,27 @@ fn validate(binding: &MidiBinding) -> Result<(), MidiError> {
             "channel must be 1-16 and controller / note must be 0-127",
         ));
     }
-    if matches!(binding.target, MidiTarget::Cue { index: 8.., .. }) {
-        return Err(error("hot cue must be 1-8"));
+    if !MidiTarget::all().contains(&binding.target) {
+        return Err(error("unknown MIDI control or out-of-range cue / FX slot"));
     }
-    if matches!(binding.target, MidiTarget::Jog { .. }) && binding.kind != MidiSourceKind::Cc {
-        return Err(error("jog requires a relative CC controller"));
+    let relative = binding.mode.relative(&binding.target);
+    if binding.target.kind() == ControlKind::Encoder && !relative {
+        return Err(error("jog and browse encoders require a relative CC mode"));
+    }
+    if relative
+        && (binding.kind != MidiSourceKind::Cc
+            || matches!(
+                binding.target.kind(),
+                ControlKind::Button | ControlKind::Momentary
+            ))
+    {
+        return Err(error("relative mode requires a CC knob or encoder"));
     }
     Ok(())
 }
 
-fn resolve(bindings: &[MidiBinding], device_id: &str, msg: &[u8]) -> Option<Command> {
+fn resolve(bindings: &[MidiBinding], device_id: &str, msg: &[u8]) -> Option<MidiAction> {
     let (kind, ch, num, val) = parse_msg(msg)?;
-    if kind == MidiSourceKind::Note && val == 0 {
-        return None;
-    }
     let binding = bindings
         .iter()
         .filter(|b| b.kind == kind && b.channel == ch && b.number == num)
@@ -404,14 +408,38 @@ fn resolve(bindings: &[MidiBinding], device_id: &str, msg: &[u8]) -> Option<Comm
                 b.kind == kind && b.channel == ch && b.number == num && b.device_id.is_none()
             })
         })?;
-    if matches!(
-        binding.target,
-        MidiTarget::Play { .. } | MidiTarget::Cue { .. } | MidiTarget::Sync { .. }
-    ) && val == 0
-    {
-        return None;
-    }
-    Some(target_to_cmd(&binding.target, val))
+    let value = match binding.target.kind() {
+        ControlKind::Momentary => {
+            if val == 0 {
+                MidiValue::Release
+            } else {
+                MidiValue::Press
+            }
+        }
+        ControlKind::Button => {
+            if val == 0 {
+                return None;
+            }
+            MidiValue::Press
+        }
+        _ if binding.mode.relative(&binding.target) => {
+            let delta = binding.mode.delta(val);
+            if delta == 0 {
+                return None;
+            }
+            MidiValue::Relative(delta)
+        }
+        _ => {
+            if kind == MidiSourceKind::Note && val == 0 {
+                return None;
+            }
+            MidiValue::Absolute(val)
+        }
+    };
+    Some(MidiAction {
+        target: binding.target.clone(),
+        value,
+    })
 }
 
 fn parse_msg(msg: &[u8]) -> Option<(MidiSourceKind, u8, u8, u8)> {
@@ -424,59 +452,6 @@ fn parse_msg(msg: &[u8]) -> Option<(MidiSourceKind, u8, u8, u8)> {
         0x80 => Some((MidiSourceKind::Note, ch, msg[1], 0)),
         0xb0 => Some((MidiSourceKind::Cc, ch, msg[1], msg[2])),
         _ => None,
-    }
-}
-
-fn target_to_cmd(target: &MidiTarget, val: u8) -> Command {
-    let n = val as f32 / 127.0;
-    match *target {
-        MidiTarget::Xfader => Command::SetCrossfader {
-            value: n * 2.0 - 1.0,
-        },
-        MidiTarget::Master => Command::SetMaster { value: n },
-        MidiTarget::CueGain => Command::SetCueGain { value: n },
-        MidiTarget::Fader { deck } => Command::SetChannelFader { deck, value: n },
-        MidiTarget::Gain { deck } => Command::SetChannelGain {
-            deck,
-            db: n * 24.0 - 12.0,
-        },
-        MidiTarget::Balance { deck } => Command::SetBalance {
-            deck,
-            value: n * 2.0 - 1.0,
-        },
-        MidiTarget::Eq { deck, band } => Command::SetEq {
-            deck,
-            band,
-            db: n * 24.0 - 12.0,
-        },
-        MidiTarget::Filter { deck } => Command::SetChannelFilter {
-            deck,
-            amount: n * 2.0 - 1.0,
-        },
-        MidiTarget::Resonance { deck } => Command::SetFilterResonance { deck, resonance: n },
-        MidiTarget::Tempo { deck } => Command::SetRate {
-            deck,
-            rate: 0.88 + n * 0.24,
-        },
-        MidiTarget::Pitch { deck } => Command::SetPitchSemitones {
-            deck,
-            semitones: n * 12.0 - 6.0,
-        },
-        MidiTarget::Play { deck } => Command::PlayPause { deck },
-        MidiTarget::Cue { deck, index } => Command::JumpCue { deck, index },
-        // Two's complement relative CC: 1..63 forward, 65..127 backward, 0/64 idle.
-        MidiTarget::Jog { deck } => Command::Jog {
-            deck,
-            delta_frames: match val {
-                0 | 64 => 0.0,
-                1..=63 => val as f32 * 16.0,
-                _ => (val as i16 - 128) as f32 * 16.0,
-            },
-        },
-        MidiTarget::Sync { deck } => Command::Sync {
-            deck,
-            keylock: true,
-        },
     }
 }
 
@@ -519,6 +494,7 @@ mod tests {
             channel: 0,
             number: 60,
             target: MidiTarget::Play { deck: DeckId::A },
+            mode: MidiControlMode::Auto,
         }
     }
 
@@ -527,7 +503,10 @@ mod tests {
         let map = [binding()];
         assert!(matches!(
             resolve(&map, "one", &[0x90, 60, 127]),
-            Some(Command::PlayPause { .. })
+            Some(MidiAction {
+                target: MidiTarget::Play { .. },
+                ..
+            })
         ));
         for msg in [
             &[0x90, 60, 0][..],
@@ -571,11 +550,17 @@ mod tests {
         ];
         assert!(matches!(
             resolve(&map, "one", &[0x90, 60, 1]),
-            Some(Command::PlayPause { deck: DeckId::A })
+            Some(MidiAction {
+                target: MidiTarget::Play { deck: DeckId::A },
+                ..
+            })
         ));
         assert!(matches!(
             resolve(&map, "two", &[0x90, 60, 1]),
-            Some(Command::PlayPause { deck: DeckId::B })
+            Some(MidiAction {
+                target: MidiTarget::Play { deck: DeckId::B },
+                ..
+            })
         ));
         assert!(validate(&MidiBinding {
             channel: 16,
@@ -590,18 +575,6 @@ mod tests {
             ..binding()
         })
         .is_err());
-    }
-
-    #[test]
-    fn relative_jog_has_neutral_and_symmetric_steps() {
-        for (value, expected) in [(0, 0.0), (64, 0.0), (1, 16.0), (127, -16.0)] {
-            let Command::Jog { delta_frames, .. } =
-                target_to_cmd(&MidiTarget::Jog { deck: DeckId::A }, value)
-            else {
-                panic!()
-            };
-            assert_eq!(delta_frames, expected);
-        }
     }
 
     #[test]
@@ -687,7 +660,10 @@ mod tests {
         }
         assert!(matches!(
             commands.as_slice(),
-            [Command::SetMaster { value: 1.0 }]
+            [MidiAction {
+                target: MidiTarget::Master,
+                value: MidiValue::Absolute(127)
+            }]
         ));
         hub.configure(MidiConfig {
             enabled: false,

@@ -5,10 +5,11 @@ impl AnalysisJobs {
     pub fn queue_reanalysis(&self, id: TrackId) {
         self.epoch(id).fetch_add(1, Ordering::AcqRel);
         self.set(id, Status::Queued);
+        self.stem_states.lock().expect("stem states").remove(&id);
     }
 }
 
-pub fn reanalyze(core: &AppCore, id: TrackId, clear_cues: bool) -> Result<(), String> {
+pub fn reanalyze(core: &Arc<AppCore>, id: TrackId, clear_cues: bool) -> Result<(), String> {
     let lock = core
         .analysis
         .locks
@@ -48,8 +49,11 @@ pub fn reanalyze(core: &AppCore, id: TrackId, clear_cues: bool) -> Result<(), St
         .lock()
         .expect("metadata updates")
         .insert(id, prepared.track.clone());
-    core.analysis.set(id, super::deep::ready_status(&prepared));
-    update_loaded(core, &prepared, true)
+    core.analysis
+        .set(id, Status::Ready(prepared.track.content_hash.clone()));
+    update_loaded(core, &prepared, true)?;
+    super::deep::schedule(core, id);
+    Ok(())
 }
 
 // Refresh cue metadata without seeking or changing a running transition. Stem

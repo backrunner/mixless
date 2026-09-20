@@ -250,6 +250,53 @@ fn automix_gain_pause_resume_skip_and_manual_takeover_are_bounded() {
 }
 
 #[test]
+fn automix_gain_knob_target_tracks_compensation_and_manual_takeover() {
+    for outgoing in [DeckId::A, DeckId::B] {
+        for controlled in [DeckId::A, DeckId::B] {
+            let engine = fixture(true, None, true, outgoing);
+            assert_eq!(
+                engine
+                    .snapshot()
+                    .deck(controlled)
+                    .effective_limiter_gain_db(),
+                0.
+            );
+            engine.render_offline(4 * SR as usize);
+            let automatic = engine
+                .snapshot()
+                .deck(controlled)
+                .effective_limiter_gain_db();
+            assert!(automatic > 1. && automatic <= 6.);
+            // The UI starts dragging at the displayed effective value. The
+            // manual command replaces AUTO, so this must preserve the target.
+            engine
+                .dispatch(Command::SetDeckLimiterGain {
+                    deck: controlled,
+                    db: automatic,
+                })
+                .unwrap();
+            engine.render_offline(256);
+            let snapshot = engine.snapshot();
+            assert!(snapshot.automix_on);
+            assert!(snapshot.decks.iter().all(|d| d.automix_gain_db == 0.));
+            assert!(
+                (snapshot.deck(controlled).effective_limiter_gain_db() - automatic).abs() < 0.011
+            );
+        }
+        let engine = fixture(true, None, true, outgoing);
+        engine.render_offline(4 * SR as usize);
+        assert!(engine.snapshot().deck(outgoing).effective_limiter_gain_db() > 1.);
+        engine.dispatch(Command::StopAutomix).unwrap();
+        engine.render_offline(SR as usize);
+        assert!(engine
+            .snapshot()
+            .decks
+            .iter()
+            .all(|d| d.effective_limiter_gain_db() == 0.));
+    }
+}
+
+#[test]
 fn automix_gain_manual_takeover_cannot_overshoot_the_deck_gain_range() {
     let engine = fixture(false, Some(0.4), true, DeckId::A);
     engine.render_offline(4 * SR as usize);

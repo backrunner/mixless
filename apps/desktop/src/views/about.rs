@@ -37,28 +37,13 @@ impl Render for About {
             .child(
                 gpui::img(crate::branding::icon())
                     .size(px(88.))
-                    .rounded(px(20.))
-                    .border_1()
-                    .border_color(theme::LINE),
+                    .rounded(px(20.)),
             )
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(24.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("MIXLESS"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(theme::MUTED)
-                            .child("Local music. Seamless mixing."),
-                    ),
+                    .text_size(px(24.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(crate::branding::wordmark()),
             )
             .child(div().w(px(28.)).h(px(2.)).rounded_full().bg(theme::ACCENT))
             .child(
@@ -86,9 +71,26 @@ impl Render for About {
             )
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .text_size(px(11.))
                     .text_color(theme::MUTED)
-                    .child("MPL-2.0 · BackRunner"),
+                    .child("MPL-2.0 · BackRunner")
+                    .child("·")
+                    .child(
+                        div()
+                            .id("about-github")
+                            .cursor_pointer()
+                            .text_color(theme::ACCENT)
+                            .hover(|s| s.underline())
+                            .child("GitHub")
+                            .tooltip(|_, cx| {
+                                cx.new(|_| super::TextTip(env!("CARGO_PKG_REPOSITORY").into()))
+                                    .into()
+                            })
+                            .on_click(|_, _, cx| cx.open_url(env!("CARGO_PKG_REPOSITORY"))),
+                    ),
             )
     }
 }

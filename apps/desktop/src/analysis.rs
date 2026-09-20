@@ -26,9 +26,16 @@ pub enum Status {
     Queued,
     Checking,
     Analyzing,
-    Enhancing(String),
     Ready(String),
-    Basic(String, String),
+    Failed(String),
+}
+
+/// Optional source separation never changes basic analysis readiness.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StemStatus {
+    Queued,
+    Running(String),
+    Ready,
     Failed(String),
 }
 
@@ -37,12 +44,12 @@ pub struct PreparedTrack {
     pub track: Track,
     pub analysis: Arc<TrackAnalysis>,
     pub wave: Arc<mixless_protocol::Waveform>,
-    pub warning: Option<String>,
 }
 
 #[derive(Default)]
 pub struct AnalysisJobs {
     states: Mutex<HashMap<TrackId, Status>>,
+    stem_states: Mutex<HashMap<TrackId, StemStatus>>,
     locks: Mutex<HashMap<TrackId, Arc<Mutex<()>>>>,
     audio_locks: Mutex<HashMap<TrackId, Arc<Mutex<()>>>>,
     epochs: Mutex<HashMap<TrackId, Arc<AtomicU64>>>,
@@ -63,12 +70,7 @@ impl AnalysisJobs {
         let states = self.states.lock().expect("analysis states");
         let ready = states
             .values()
-            .filter(|s| {
-                matches!(
-                    s,
-                    Status::Ready(_) | Status::Basic(_, _) | Status::Enhancing(_)
-                )
-            })
+            .filter(|s| matches!(s, Status::Ready(_)))
             .count();
         let failed = states
             .values()
@@ -86,16 +88,20 @@ impl AnalysisJobs {
         if failed > 0 {
             text.push_str(&format!(" · {failed} failed"));
         }
-        let basic = states
+        let stems = self.stem_states.lock().expect("stem states");
+        let stem_pending = stems
             .values()
-            .filter(|s| matches!(s, Status::Basic(_, _)))
+            .filter(|s| matches!(s, StemStatus::Queued | StemStatus::Running(_)))
             .count();
-        if basic > 0 {
-            text.push_str(&format!(" · {basic} using basic analysis"));
+        let stem_failed = stems
+            .values()
+            .filter(|s| matches!(s, StemStatus::Failed(_)))
+            .count();
+        if stem_pending > 0 {
+            text.push_str(&format!(" · Stems: {stem_pending} remaining"));
         }
-        let deep = self.deep_jobs.pending.lock().expect("deep jobs").len();
-        if deep > 0 {
-            text.push_str(&format!(" · {deep} stem analyses queued / running"));
+        if stem_failed > 0 {
+            text.push_str(&format!(" · Stems: {stem_failed} unavailable"));
         }
         text
     }
@@ -117,11 +123,21 @@ impl AnalysisJobs {
         self.states.lock().expect("analysis states").clone()
     }
 
+    pub fn stem_statuses(&self) -> HashMap<TrackId, StemStatus> {
+        self.stem_states.lock().expect("stem states").clone()
+    }
+
+    fn set_stems(&self, id: TrackId, status: StemStatus) {
+        let mut states = self.stem_states.lock().expect("stem states");
+        if states.get(&id) != Some(&status) {
+            states.insert(id, status);
+            self.revision.fetch_add(1, Ordering::Release);
+        }
+    }
+
     pub fn status(&self, track: &Track) -> Status {
         match self.states.lock().expect("analysis states").get(&track.id) {
-            Some(Status::Ready(hash) | Status::Basic(hash, _))
-                if !track.analyzed || *hash != track.content_hash =>
-            {
+            Some(Status::Ready(hash)) if !track.analyzed || *hash != track.content_hash => {
                 Status::Checking
             }
             Some(status) => status.clone(),
@@ -144,6 +160,7 @@ impl AnalysisJobs {
             .expect("prepared cache")
             .retain(|p| p.track.id != id);
         self.states.lock().expect("analysis states").remove(&id);
+        self.stem_states.lock().expect("stem states").remove(&id);
         self.latest.lock().expect("analysis metadata").remove(&id);
         self.updates.lock().expect("analysis updates").remove(&id);
         self.revision.fetch_add(1, Ordering::Release);
@@ -164,7 +181,7 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
     let mut states = core.analysis.states.lock().expect("analysis states");
     let mut pending = Vec::new();
     for track in tracks {
-        let stale = matches!(states.get(&track.id), Some(Status::Ready(hash) | Status::Basic(hash, _))
+        let stale = matches!(states.get(&track.id), Some(Status::Ready(hash))
             if !track.analyzed || hash != &track.content_hash);
         if !states.contains_key(&track.id) || stale {
             states.insert(track.id, Status::Queued);
@@ -178,12 +195,8 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
     let sender = core.analysis.sender.get_or_init(|| {
         let (tx, rx) = channel();
         let rx = Arc::new(Mutex::new(rx));
-        // Keep one core available for the audio callback/UI while allowing
-        // several independent tracks to decode and analyze at once.
-        let workers = std::thread::available_parallelism()
-            .map_or(2, usize::from)
-            .saturating_sub(1)
-            .clamp(1, 4);
+        let workers = mixless_analyze::analysis_workers();
+        tracing::info!(?workers, budget = ?mixless_protocol::BackgroundWorkers::detected(), "Starting CPU-sized analysis pool");
         for _ in 0..workers {
             let rx = rx.clone();
             let core = Arc::downgrade(core);
@@ -234,17 +247,8 @@ pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
                     .expect("analysis updates")
                     .insert(id, prepared.track.clone());
             }
-            if !core
-                .analysis
-                .deep_jobs
-                .pending
-                .lock()
-                .expect("deep jobs")
-                .contains(&id)
-                && !matches!(core.analysis.status(&prepared.track), Status::Basic(_, _))
-            {
-                core.analysis.set(id, deep::ready_status(prepared));
-            }
+            core.analysis
+                .set(id, Status::Ready(prepared.track.content_hash.clone()));
         }
         Err(error) => core.analysis.set(id, Status::Failed(error.clone())),
     }
@@ -352,7 +356,6 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         track,
         analysis: Arc::new(analysis),
         wave,
-        warning: None,
     };
     let mut cache = core.analysis.prepared.lock().expect("prepared cache");
     cache.retain(|p| p.track.id != id);
@@ -454,6 +457,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn basic_completion_is_published_while_stems_remain_pending() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        core.analysis.deep_jobs.pending.lock().unwrap().insert(id);
+        core.analysis.set(id, Status::Analyzing);
+        core.analysis
+            .set_stems(id, StemStatus::Running("Stems · Separating · 20%".into()));
+        let prepared = prepare(&core, id).unwrap();
+        assert_eq!(
+            core.analysis.status(&prepared.track),
+            Status::Ready(prepared.track.content_hash)
+        );
+        assert!(matches!(
+            core.analysis.stem_statuses().get(&id),
+            Some(StemStatus::Running(_))
+        ));
+        let summary = core.analysis.summary();
+        assert!(summary.starts_with("3 analyzed"), "{summary}");
+        assert!(summary.contains("Stems: 1 remaining"), "{summary}");
+    }
+
+    #[test]
     fn cache_hit_revalidation_does_not_flicker_ready_status() {
         let (_dir, core, tracks) = crate::automix::tests::fixture();
         let id = tracks[0];
@@ -473,12 +498,12 @@ mod tests {
     }
 
     #[test]
-    fn cache_hit_revalidation_keeps_basic_status() {
+    fn stem_failure_does_not_change_or_repeat_basic_analysis() {
         let (_dir, core, tracks) = crate::automix::tests::fixture();
         let id = tracks[0];
         let hash = core.library.get_track(id).unwrap().content_hash;
         core.analysis
-            .set(id, Status::Basic(hash, "stem analysis failed".into()));
+            .set_stems(id, StemStatus::Failed("separation failed".into()));
         core.analysis
             .prepared
             .lock()
@@ -487,7 +512,11 @@ mod tests {
         prepare(&core, id).unwrap();
         assert!(matches!(
             core.analysis.status(&core.library.get_track(id).unwrap()),
-            Status::Basic(_, _)
+            Status::Ready(current) if current == hash
+        ));
+        assert!(matches!(
+            core.analysis.stem_statuses().get(&id),
+            Some(StemStatus::Failed(_))
         ));
     }
 
