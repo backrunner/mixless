@@ -13,12 +13,12 @@ analytics, tracking, or crash reporting** of any kind.
 - Imported and acquired audio stays on your disk. Its use remains subject to
   the rights you hold in it.
 
-## What leaves your device, and only when you ask
+## Network activity
 
-- **Spotify sign-in and playlists.** If you choose to connect Spotify, the app
-  talks to the Spotify Web API for OAuth and playlist metadata. Credentials
-  and tokens are stored locally; Mixless never receives audio from Spotify and
-  sends nothing about your local library back.
+- **Spotify playlists and artwork.** Importing a playlist requests metadata
+  from Spotify. Missing covers for linked tracks may be fetched in the
+  background from Spotify and its image CDN, then cached locally. Mixless never
+  receives decoded mixing audio from Spotify or uploads local audio for this.
 - **Model downloads.** The first time stem/note analysis runs, the app
   downloads pinned ONNX model artifacts over HTTPS from Hugging Face
   (`StemSplitio/htdemucs-onnx`) and GitHub (`spotify/basic-pitch`). No audio or
@@ -27,6 +27,14 @@ analytics, tracking, or crash reporting** of any kind.
   separately installed `yt-dlp`/`FFmpeg` may contact the services you select
   (e.g. YouTube Music). Those requests are made by the external tools under
   their own terms; Mixless does not proxy or inspect them.
+
+- **Updates.** Release builds contact GitHub at launch and on a manual update
+  check. Available updates download a manifest and installer. These requests do
+  not upload the music library.
+
+These HTTPS requests expose normal connection information, such as your IP
+address, to the contacted services. Once audio and models are prepared, local
+playback and inference do not require a cloud service.
 
 ## Data deletion
 

@@ -1,0 +1,76 @@
+.mx-container { width: min(1240px, calc(100% - 96px)); margin-inline: auto; }
+.mx-hero { padding: 178px 0 64px; text-align: center; }
+.sd-home .mx-hero h1 { margin: 0; font-size: clamp(56px, 7.2vw, 100px); font-weight: 560; letter-spacing: -.065em; line-height: 1.08; }
+.mx-hero h1 > span { color: #e8cbb2; }
+:lang(zh-CN) .mx-hero h1 { letter-spacing: -.05em; line-height: 1.24; }
+.mx-hero-description { max-width: 555px; margin: 28px auto 30px; color: #a9a6ad; font-size: 17px; line-height: 1.8; text-wrap: pretty; }
+.mx-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; }
+.mx-button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 12px; padding: 15px 23px; text-decoration: none; font-size: 14px; font-weight: 560; transition: background .18s, border-color .18s; }
+.mx-primary { background: #f0cfb1; color: #251c16; }
+.mx-primary:hover { background: #f7deca; }
+.mx-secondary { background: #ffffff08; border-color: #ffffff0d; color: #d5d0d7; }
+.mx-secondary:hover { background: #ffffff0e; border-color: #ffffff1a; }
+.mx-text-link { display: inline-block; color: #e8cbb2; font-size: 14px; font-weight: 500; text-decoration: underline; text-decoration-color: #e8cbb240; text-underline-offset: 6px; transition: text-decoration-color .18s; }
+.mx-text-link:hover { text-decoration-color: currentColor; }
+.mx-workspace, .mx-automix { scroll-margin-top: 118px; }
+.mx-product { padding: 6px; border: 1px solid #ffffff12; border-radius: 18px; background: #19181b; margin: 0; box-shadow: 0 25px 80px #0003; }
+.mx-product img { width: 100%; height: auto; border-radius: 12px; }
+.mx-feature-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 64px; padding: 48px 14px 0; }
+.sd-home h2 { font-size: clamp(30px, 3.4vw, 44px); font-weight: 540; line-height: 1.2; letter-spacing: -.04em; margin: 0; text-wrap: balance; }
+.sd-home .mx-feature h2 { font-size: 19px; font-weight: 540; line-height: 1.4; letter-spacing: -.025em; margin: 0 0 12px; text-wrap: initial; }
+.mx-feature p { font-size: 14px; line-height: 1.8; color: var(--sd-muted); margin: 0; text-wrap: pretty; }
+.mx-automix { display: grid; grid-template-columns: 1fr 1.06fr; gap: 110px; align-items: center; padding-block: 136px; }
+.mx-automix-copy > p { color: var(--sd-muted); font-size: 16px; line-height: 1.85; margin: 25px 0; max-width: 450px; text-wrap: pretty; }
+.mx-transition { border: 1px solid #ffffff0c; border-radius: 24px; padding: 20px; background: #151417; }
+.mx-transition-tabs { display: flex; gap: 4px; padding: 4px; background: #0b0b0d; border-radius: 12px; }
+.mx-transition-tabs button { flex: 1; color: #9c97a3; padding: 10px 5px; font-size: 12px; font-weight: 500; border: none; background: transparent; border-radius: 9px; cursor: pointer; transition: color .18s, background .18s; }
+.mx-transition-tabs button:hover { color: #efeaef; }
+.mx-transition-tabs button[aria-pressed="true"] { color: #f2e7de; background: #2b282c; }
+.mx-transition-plot { margin: 30px 4px 0; }
+.mx-track-label { display: flex; align-items: center; gap: 10px; font-size: 11px; color: #97909f; }
+.mx-track-label b { color: #cfb6a1; font-size: 12px; font-weight: 500; }
+.mx-track { height: 76px; display: flex; align-items: center; gap: 2px; }
+.mx-track i { flex: 1; background: #d0a483; border-radius: 2px; transition: height .25s ease; }
+.mx-track-b i { background: #a9a2b7; }
+.mx-transition-description { min-height: 74px; margin: 18px 4px 0; }
+.mx-transition-description p { color: #b1aab7; font-size: 13px; line-height: 1.8; margin: 0; text-wrap: pretty; }
+.mx-diagram-note { color: #8c8496; font-size: 11px; padding: 0 4px; margin: 14px 0 0; }
+.mx-guide { display: grid; grid-template-columns: 1fr 1.06fr; gap: 110px; padding-bottom: 100px; }
+.mx-guide h2 { max-width: 380px; padding-top: 23px; }
+.mx-guide-links a { border-bottom: 1px solid #ffffff10; padding: 24px 0; display: flex; align-items: center; justify-content: space-between; gap: 24px; text-decoration: none; }
+.mx-guide-links a:first-child { border-top: 1px solid #ffffff10; }
+.mx-guide-links h3 { font-size: 17px; font-weight: 500; margin: 0 0 8px; letter-spacing: -.02em; }
+.mx-guide-links p { font-size: 13px; line-height: 1.7; color: var(--sd-muted); margin: 0; }
+.mx-guide-links svg { width: 20px; height: 20px; flex: 0 0 auto; stroke: #9e96a7; stroke-width: 1.5; fill: none; transition: transform .18s, stroke .18s; }
+.mx-guide-links a:hover h3 { color: #f0cfb1; }
+.mx-guide-links a:hover svg { transform: translateX(3px); stroke: #f0cfb1; }
+.mx-closing { display: flex; align-items: center; justify-content: space-between; gap: 36px; padding-block: 70px 86px; border-top: 1px solid #ffffff10; }
+.mx-closing h2 { font-size: clamp(27px, 3vw, 36px); }
+.mx-closing .mx-button { flex-shrink: 0; }
+@media (max-width: 1000px) {
+  .mx-container { width: calc(100% - 64px); }
+  .mx-hero { padding-top: 156px; }
+  .mx-automix, .mx-guide { gap: 50px; }
+  .mx-feature-row { gap: 34px; padding-inline: 4px; }
+}
+@media (max-width: 700px) {
+  .mx-container { width: calc(100% - 40px); }
+  .mx-hero { padding-top: 132px; padding-bottom: 42px; }
+  .sd-home .mx-hero h1 { font-size: clamp(38px, 8.8vw, 58px); letter-spacing: -.052em; }
+  .mx-hero-description { font-size: 15px; margin: 24px auto; max-width: 440px; }
+  .mx-actions { gap: 10px; }
+  .mx-button { padding: 13px 17px; font-size: 13px; border-radius: 11px; }
+  .mx-product { padding: 3px; border-radius: 10px; }
+  .mx-product img { border-radius: 7px; }
+  .mx-feature-row { grid-template-columns: 1fr; gap: 28px; padding: 32px 2px 0; }
+  .sd-home .mx-feature h2 { font-size: 18px; margin-bottom: 8px; }
+  .mx-feature p { font-size: 14px; }
+  .mx-automix { grid-template-columns: 1fr; gap: 30px; padding-block: 76px; }
+  .mx-automix-copy > p { font-size: 15px; margin: 20px 0; }
+  .mx-transition { padding: 16px; border-radius: 18px; }
+  .mx-transition-description { min-height: 78px; }
+  .mx-guide { grid-template-columns: 1fr; gap: 26px; padding-bottom: 56px; }
+  .mx-guide h2 { max-width: none; padding-top: 0; }
+  .mx-guide-links a { padding: 22px 0; }
+  .mx-closing { flex-direction: column; text-align: center; gap: 26px; padding: 50px 0 60px; }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@mixless/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "svedocs dev",
+    "build": "svedocs build --mode static",
+    "deploy": "pnpm build && wrangler deploy --no-autoconfig",
+    "preview": "svedocs preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:content": "svedocs check --translations --strict",
+    "assets": "node scripts/sync-assets.mjs",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@sveltejs/adapter-static": "^3.0.10",
+    "@sveltejs/kit": "^2.60.1",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@tailwindcss/vite": "^4.3.0",
+    "svedocs": "0.2.1",
+    "svelte": "^5.55.7",
+    "tailwindcss": "^4.3.0",
+    "vite": "^8.0.13"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^25.8.0",
+    "sharp": "^0.34.5",
+    "svedocs-cli": "0.2.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "wrangler": "4.135.0"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "description": "Mixless official website and bilingual user guide.",
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
