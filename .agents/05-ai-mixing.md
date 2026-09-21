@@ -16,6 +16,8 @@
 
 FX 决策层位于平滑规划器之前：先做 grid、phrase、vocal、kick、harmonic 和 cue 的硬否决，再选择 DryCut、EchoOut、FilterBridge、DropCut、LoopRoll 或 ScratchCut。干净的和声／节奏交接不叠 FX；Outro/Break 的尾句优先 Echo；调性冲突的短桥优先 Filter；FX 不能修复不可靠节拍或连续双前景。
 
+2026-09-21 修订：`ANALYSIS_VERSION=16` 修正半速曲目误读（comb 门控与 3/4、4/3 别名候选）、抑制 <4 小节假高潮、结构切点吸附乐句网格并新增软 build-up。规划侧禁止无交换的 drop 前退出与叠混内入碟高潮，FilterSweep 限 16 小节，`major_peaks` 驱动高潮罚分；新增 Spinback 与 LoopOut，技法按 (曲对, 退出, 进入) 哈希确定性轮换。过渡期外新增 live moves（滤波渐升、鼓声部抽离，用户触碰即交还该 lane）。细则与审计见 [AUTOMIX 参考](reference/AUTOMIX.md) 与 `history/2026-09-21-melodic-dubstep-audit.md`。
+
 ## Mix 时钟
 
 - Master = **出碟**，除非策略声明（`energy_hold` 在 xf 过 0 后把 master 交给入碟，仍用出碟 sounding 网格）。

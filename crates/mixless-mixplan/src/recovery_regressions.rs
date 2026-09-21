@@ -129,7 +129,33 @@ fn a_two_bar_breath_with_voice_support_does_not_create_a_false_exit() {
 
 #[test]
 fn filtered_rhythm_requires_voice_evidence_and_hides_tonal_bands_until_the_handoff() {
-    let (a, mut b) = vocal_break();
+    let (mut a, mut b) = vocal_break();
+    // Give the breakdown room for a complete filtered phrase: a blend must
+    // resolve well before the next drop instead of consuming its downbeat.
+    let bar = 240. / 174.;
+    a.sections = [
+        (0., 32., S::Intro),
+        (32., 64., S::Drop),
+        (64., 88., S::Breakdown),
+        (88., 96., S::BuildUp),
+        (96., 120., S::Drop),
+        (120., 128., S::Outro),
+    ]
+    .into_iter()
+    .map(|(start, end, label)| Section {
+        start_sec: start * bar,
+        end_sec: end * bar,
+        label,
+    })
+    .collect();
+    for f in &mut a.bars {
+        f.section = a
+            .sections
+            .iter()
+            .find(|s| f.start_sec >= s.start_sec && f.start_sec < s.end_sec)
+            .unwrap()
+            .label;
+    }
     b.camelot = Some("11A".into());
     assert!(crate::filtered::eligible(&b, 0., 16.));
     let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());

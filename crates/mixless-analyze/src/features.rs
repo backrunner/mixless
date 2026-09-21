@@ -12,7 +12,7 @@ const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 15;
+pub const ANALYSIS_VERSION: u32 = 18;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -158,13 +158,15 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         };
         let norm_conf = local_confidence / ((end - probe) / 16.).clamp(0.01, 1.);
         let local_bpm = if estimate.is_finite() {
-            // Autocorrelation can select a half/double-time alias in a short
-            // phrase. Correct clear aliases while preserving genuine local
-            // changes such as 100 -> 80 BPM.
-            let corrected = if estimate < bpm * 0.6 {
-                estimate * 2.0
-            } else if estimate > bpm * 1.6 {
-                estimate * 0.5
+            // Autocorrelation can select a metrical alias in a short phrase.
+            // Snap extreme outliers to the closest sub/harmonic of the global
+            // fit while preserving genuine local changes such as 100 -> 80 BPM.
+            let corrected = if estimate < bpm * 0.6 || estimate > bpm * 1.6 {
+                [0.5, 2., 2.5, 3., 4.]
+                    .iter()
+                    .map(|f| estimate * f)
+                    .min_by(|a, b| (a / bpm - 1.).abs().total_cmp(&(b / bpm - 1.).abs()))
+                    .unwrap_or(estimate)
             } else {
                 estimate
             };

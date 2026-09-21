@@ -341,6 +341,9 @@ fn terminal_drop_handoff_launches_at_eof_on_the_render_clock() {
             label: mixless_protocol::SectionLabel::Drop,
         },
     ];
+    // A sine fixture detects an arbitrary tempo; pin one so the six-second
+    // tail drop is a real peak (>= 3.5 bars) and earns the hold-to-EOF branch.
+    a.tempo.global_bpm = 174.;
     let plan = mixless_mixplan::short_handoff(
         &mixless_mixplan::PlanContext {
             outgoing: &a,

@@ -46,7 +46,7 @@ fn rows(strategy: S) -> Vec<Row> {
             [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
         ],
-        S::ScratchCut => vec![
+        S::ScratchCut | S::Spinback => vec![
             [0., -1., 0., -6., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
@@ -75,7 +75,7 @@ fn rows(strategy: S) -> Vec<Row> {
             [0.5, 0., 0., 0., 0., 0., 0., 0., 0., 0., 800., 400., 0.],
             [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 200., 20., 0.],
         ],
-        S::LoopConstruct => vec![
+        S::LoopConstruct | S::LoopOut => vec![
             [
                 0., -0.5, 0., -9., 0., KILL, 0., -3., 0., 0., 20000., 20., 0.,
             ],
@@ -176,7 +176,7 @@ pub(crate) fn compile(
             + (n * 0.625 * ga.meter() * c.beat_factor).rem_euclid(bars as f32 * gb.meter());
         t_end_b = gb.sec(exit_beat + n * 0.375 * ga.meter() * c.beat_factor);
     }
-    if c.strategy == S::ScratchCut {
+    if matches!(c.strategy, S::ScratchCut | S::Spinback) {
         let on_bar = (n - 0.5).max(0.0);
         let peak_bar = (n - 0.25).max(on_bar + 0.0625);
         let start_beat = c.start_beat + on_bar * ga.meter();
@@ -189,6 +189,7 @@ pub(crate) fn compile(
             on_bar,
             peak_bar,
             off_bar: n,
+            accelerate: c.strategy == S::Spinback,
         });
     }
     let held_rate = lanes.rate_b.sample(n);

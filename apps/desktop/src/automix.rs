@@ -3,6 +3,7 @@
 mod bootstrap;
 mod next;
 mod order;
+mod performance;
 mod preparation;
 mod start;
 pub use preparation::{Preparation, prepare_playlist, refresh_previews};
@@ -233,6 +234,7 @@ pub fn run(
                 return Ok(());
             };
             let b = next.incoming;
+            let a = next.outgoing;
             if next.transition.is_none() {
                 // A cold load may finish after EOF. Continue with the prepared
                 // track instead of leaving AUTO stranded on an ended deck.
@@ -245,6 +247,28 @@ pub fn run(
             let start = plan.t_in_a;
             let next_entry = plan.t_in_b;
             let _ = tx.send(AutomixMsg::Plan(outgoing, plan));
+            // Live gestures on the playing deck until the plan's automation
+            // takes the lanes over. The status line already shows "Next: …";
+            // a separate "Live: …" message would fight it, so none is sent.
+            let mut performer = {
+                let snapshot = core.engine.snapshot();
+                let d = snapshot.deck(outgoing);
+                let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
+                performance::Performer::new(mixless_mixplan::performance_moves(
+                    &a.analysis,
+                    now,
+                    start,
+                    core.engine.stems_ready(outgoing),
+                    core.settings.get().live_moves,
+                ))
+            };
+            // Live gestures go through Engine::perform so the committed plan
+            // never reads them as user takeover of its automation lanes.
+            let release = |performer: &mut performance::Performer| {
+                for cmd in performer.release(outgoing) {
+                    let _ = core.engine.perform(cmd);
+                }
+            };
             // Look one track ahead while the staged pair plays. Decode is
             // bounded by the shared PCM cache, independent of the UI clock.
             let mut lookahead = order.clone();
@@ -258,10 +282,12 @@ pub fn run(
             let mut phase = String::new();
             loop {
                 if !active() {
+                    release(&mut performer);
                     return Ok(());
                 }
                 let snapshot = core.engine.snapshot();
                 if !snapshot.automix_on {
+                    release(&mut performer);
                     if snapshot.automix_progress < 1.0 {
                         return Err("Automix stopped after a playback change".into());
                     }
@@ -269,6 +295,21 @@ pub fn run(
                 }
                 let seconds = snapshot.deck(outgoing).frame as f32
                     / snapshot.deck(outgoing).src_sample_rate.max(1) as f32;
+                if snapshot.automix_progress > 0. {
+                    // The plan's automation owns the lanes from here on.
+                    release(&mut performer);
+                } else if !snapshot.automix_paused && seconds < start - 0.25 {
+                    let d = snapshot.deck(outgoing);
+                    let commands = performer.tick(seconds, d.filter_amount, d.stem_gain, outgoing);
+                    if !commands.is_empty() {
+                        let _ = guarded(&core, &active, || {
+                            for cmd in commands {
+                                core.engine.perform(cmd).map_err(|e| e.to_string())?;
+                            }
+                            Ok(())
+                        });
+                    }
+                }
                 let next_phase = if snapshot.automix_paused {
                     "Paused".into()
                 } else if seconds < start && snapshot.automix_progress == 0. {

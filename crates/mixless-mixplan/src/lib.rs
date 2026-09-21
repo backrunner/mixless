@@ -6,6 +6,7 @@ mod progression;
 #[cfg(test)]
 mod stem_regressions;
 pub use handoff::short_handoff;
+pub use performance::{performance_moves, LiveMoves, PerformanceLane, PerformanceMove};
 mod arrangement;
 mod bridge;
 mod candidates;
@@ -19,6 +20,7 @@ mod filtered;
 mod grid;
 mod lookahead;
 mod musical;
+pub mod performance;
 mod phrasing;
 mod policy;
 mod recovery;

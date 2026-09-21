@@ -127,7 +127,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             && sec >= 0.
             && sec <= audible_end + 0.001
             && if out {
-                sec + 0.001 >= earliest && (is_manual || sec >= (t.duration_sec * 0.12).min(24.))
+                sec + 0.001 >= earliest && (is_manual || sec >= (t.duration_sec * 0.25).min(60.))
             } else {
                 is_manual || sec < t.duration_sec * 0.5
             }

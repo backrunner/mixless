@@ -38,6 +38,9 @@ const ROW_PAD: f32 = 14.;
 // the same compact height to keep scrolling and hit targets aligned.
 const SOURCE_ROW_HEIGHT: f32 = 24.;
 const SOURCE_ROW_PAD: f32 = 6.;
+const SOURCE_LIST_PAD: f32 = 4.;
+// The import button and every source count share the same right edge.
+const SOURCE_TRAILING_WIDTH: f32 = 22.;
 
 fn cover_placeholder(track: &Track) -> gpui::AnyElement {
     let color = theme::cue_color(track.id.0.unsigned_abs() as usize);
@@ -120,6 +123,17 @@ pub(crate) fn playlist_sources(playlists: &[mixless_library::PlaylistSummary]) -
     sources
 }
 
+fn source_count(count: impl ToString) -> gpui::Div {
+    gpui::div()
+        .flex_none()
+        .w(px(SOURCE_TRAILING_WIDTH))
+        .text_align(gpui::TextAlign::Right)
+        .text_size(px(10.))
+        .line_height(px(16.))
+        .text_color(theme::MUTED)
+        .child(count.to_string())
+}
+
 // Source groups are flat: reserve space for the icon, not an empty tree gutter.
 // Both source types share the same geometry so names and counts stay aligned.
 fn source_row(
@@ -192,17 +206,7 @@ fn source_row(
             .size(px(12.)),
         )
         .child(ellipsized_text(name).flex_1().w_0().min_w_0().h(px(16.)))
-        .when_some(count, |el, count| {
-            el.child(
-                gpui::div()
-                    .flex_none()
-                    .min_w(px(22.))
-                    .text_align(gpui::TextAlign::Right)
-                    .text_size(px(10.))
-                    .text_color(theme::MUTED)
-                    .child(count.to_string()),
-            )
-        })
+        .when_some(count, |el, count| el.child(source_count(count)))
 }
 
 // Downloader-created folder IDs are not useful playlist titles. Keep the
@@ -339,7 +343,7 @@ impl UiState {
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(theme::MUTED)
                                     .child(title)
-                                    .child(count.to_string())
+                                    .child(source_count(count))
                                     .into_any_element(),
                             );
                             continue;
@@ -417,7 +421,7 @@ impl UiState {
                     .items_center()
                     .justify_between()
                     .h(px(30.))
-                    .px(px(4. + SOURCE_ROW_PAD))
+                    .px(px(SOURCE_LIST_PAD + SOURCE_ROW_PAD))
                     .border_b_1()
                     .border_color(theme::LINE)
                     .text_size(px(10.))
@@ -427,9 +431,11 @@ impl UiState {
                         gpui::div()
                             .id("library-import")
                             .flex()
+                            .flex_none()
                             .items_center()
-                            .justify_center()
-                            .size(px(18.))
+                            .justify_end()
+                            .w(px(SOURCE_TRAILING_WIDTH))
+                            .h(px(18.))
                             .rounded(px(3.))
                             .cursor_pointer()
                             .text_size(px(13.))
@@ -450,7 +456,7 @@ impl UiState {
                     .w_full()
                     .min_w_0()
                     .min_h_0()
-                    .px(px(4.))
+                    .px(px(SOURCE_LIST_PAD))
                     .py(px(2.))
                     .child(all_tracks_row)
                     .when(self.playlists.is_empty(), |el| {
@@ -594,6 +600,8 @@ impl UiState {
                             analysis_statuses
                                 .get(&t.id)
                                 .unwrap_or(&crate::analysis::Status::Queued),
+                            t.id,
+                            track_state.clone(),
                         );
                         let dur = fmt_duration(t.duration_ms as u64);
 
@@ -725,7 +733,6 @@ impl UiState {
                                     .text_color(theme::MUTED)
                                     .child(dur),
                             )
-                            .children(status_overlay)
                             .children(status::stem_badge(stem_statuses.get(&t.id)))
                             .children([false, true].map(|after| {
                                 drag::drop_target(
@@ -735,7 +742,8 @@ impl UiState {
                                     ix,
                                     after,
                                 )
-                            }));
+                            }))
+                            .children(status_overlay);
 
                         let st = track_state.clone();
                         let menu_state = track_state.clone();

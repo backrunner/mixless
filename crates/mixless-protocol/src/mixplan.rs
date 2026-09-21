@@ -13,6 +13,8 @@ pub enum StrategyId {
     FilterSweep,
     LoopConstruct,
     ScratchCut,
+    Spinback,
+    LoopOut,
     BreakToIntro,
     EnergyHold,
     FallbackSwapFilter,
@@ -22,8 +24,8 @@ impl StrategyId {
     pub fn default_bars(self) -> u16 {
         match self {
             Self::PhraseBlend | Self::BreakToIntro => 32,
-            Self::DryCut | Self::DropCut | Self::ScratchCut => 4,
-            Self::EchoOut => 8,
+            Self::DryCut | Self::DropCut | Self::ScratchCut | Self::Spinback => 4,
+            Self::EchoOut | Self::LoopOut => 8,
             _ => 16,
         }
     }
@@ -56,6 +58,16 @@ pub enum WhoStretches {
     #[default]
     B,
     Both,
+}
+
+/// How much between-transition live motion AutoMix applies to the playing deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveMoves {
+    Off,
+    #[default]
+    Subtle,
+    Active,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +155,10 @@ pub struct ScratchOp {
     pub on_bar: f32,
     pub peak_bar: f32,
     pub off_bar: f32,
+    /// Accelerating pull (a spinback eases in, then whips back fastest just
+    /// before release); a steady jog stays linear.
+    #[serde(default)]
+    pub accelerate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

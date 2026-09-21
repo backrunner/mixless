@@ -44,6 +44,20 @@ pub(super) fn driving(bars: &[BarFeature], level: f32, attacks: f32) -> Vec<bool
             state[start..i].fill(true);
         }
     }
+    // Symmetric to the gap fill: a loud two-bar fill or impact inside a break
+    // is not a drop. A run reaching the last bar stays — an outro that keeps
+    // driving to the end is real.
+    let mut i = 0;
+    while i < state.len() {
+        let start = i;
+        let value = state[i];
+        while i < state.len() && state[i] == value {
+            i += 1;
+        }
+        if value && i - start < 4 && i < state.len() {
+            state[start..i].fill(false);
+        }
+    }
     state
 }
 

@@ -33,6 +33,9 @@ pub(super) fn detect(t: &TrackAnalysis) -> Vec<MixRegion> {
             let anchor = boundary
                 .filter(|b| (*b - point).abs() < 0.15)
                 .unwrap_or(point);
+            if kind == Kind::Out && mixless_protocol::drop_suspension(t, anchor).is_some() {
+                continue;
+            }
             let probe = if kind == Kind::In {
                 anchor + 0.01
             } else {

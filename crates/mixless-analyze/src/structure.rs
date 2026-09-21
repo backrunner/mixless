@@ -27,7 +27,7 @@ fn descriptor(bar: &BarFeature, level: f32, attacks: f32) -> Descriptor {
     }
     d[4] = 0.5 * (bar.onset_density.max(0.).ln_1p() / attacks.max(1.).ln_1p()).min(1.5);
     d[5] = 0.7 * bar.kick_salience.clamp(0., 1.);
-    d[6] = 0.7 * bar.vocal_presence.clamp(0., 1.);
+    d[6] = 0.5 * bar.vocal_presence.clamp(0., 1.);
     let chroma = bar.chroma.iter().map(|x| x.max(0.)).sum::<f32>().max(1e-6);
     for i in 0..12 {
         d[7 + i] = 0.8 * (bar.chroma[i].max(0.) / chroma).sqrt();
@@ -81,8 +81,16 @@ pub(crate) fn detect(
     // into silence or decide which bars are the chorus.
     let level = quantile(bars.iter().map(|b| b.rms), 0.8).max(0.001);
     let attacks = quantile(bars.iter().map(|b| b.onset_density), 0.8);
-    let data: Vec<_> = bars.iter().map(|b| descriptor(b, level, attacks)).collect();
-    let silent: Vec<_> = bars
+    let mut data: Vec<_> = bars.iter().map(|b| descriptor(b, level, attacks)).collect();
+    // Per-bar vocal estimates flicker between voiced and instrumental frames;
+    // a 3-bar mean keeps that flicker from inflating within-kernel variation.
+    let vocal: Vec<_> = data.iter().map(|d| d[6]).collect();
+    for (i, d) in data.iter_mut().enumerate() {
+        let lo = i.saturating_sub(1);
+        let hi = (i + 2).min(vocal.len());
+        d[6] = vocal[lo..hi].iter().sum::<f32>() / (hi - lo) as f32;
+    }
+    let mut silent: Vec<_> = bars
         .iter()
         .map(|b| b.rms < 0.001 || b.rms < level * 0.02)
         .collect();
@@ -95,6 +103,21 @@ pub(crate) fn detect(
         .collect();
     peaks.sort_by(|&a, &b| nov[b].total_cmp(&nov[a]));
     let driving = dynamics::driving(bars, level, attacks);
+    // Keep a short pre-drop silence attached to an evidenced build. It is
+    // tension awaiting resolution, not a new silent section or an exit cue.
+    for end in 1..bars.len() {
+        if !silent[end - 1] || silent[end] || !driving[end] {
+            continue;
+        }
+        let start = (0..end).rev().find(|&i| !silent[i]).map_or(0, |i| i + 1);
+        if end - start <= 2
+            && (start.saturating_sub(16)..start).any(|head| {
+                mixless_protocol::has_buildup(bars, bars[head].start_sec, bars[end - 1].end_sec)
+            })
+        {
+            silent[start..end].fill(false);
+        }
+    }
     let mut cuts = vec![0, bars.len()];
     cuts.extend(dynamics::edges(&driving));
     let build_edges = dynamics::build_edges(bars, &driving);
@@ -111,6 +134,50 @@ pub(crate) fn detect(
     }
     cuts.sort_unstable();
     cuts.dedup();
+    // Novelty peaks tend to fire one bar off the 4-bar phrase grid. When the
+    // movable cuts agree on a phase, snap the one-bar stragglers onto it.
+    // Cuts at silence edges and the track ends keep their measured position.
+    let mut fixed = vec![false; bars.len() + 1];
+    fixed[0] = true;
+    fixed[bars.len()] = true;
+    for i in 1..bars.len() {
+        if silent[i] != silent[i - 1] {
+            fixed[i] = true;
+        }
+    }
+    let movable: Vec<_> = cuts.iter().copied().filter(|&c| !fixed[c]).collect();
+    let mut votes = [0f32; 4];
+    for &c in &movable {
+        votes[c % 4] += 1. + nov[c].min(1.);
+    }
+    let phase = (0..4)
+        .max_by(|a, b| votes[*a].total_cmp(&votes[*b]))
+        .unwrap_or(0);
+    if movable.len() >= 3 && votes[phase] >= 0.5 * votes.iter().sum::<f32>() {
+        for c in &mut cuts {
+            if fixed[*c] {
+                continue;
+            }
+            let target = match (*c + 4 - phase) % 4 {
+                1 => *c - 1,
+                3 => *c + 1,
+                _ => continue,
+            };
+            if target == 0
+                || target >= bars.len()
+                || fixed[target]
+                || silent[*c - 1]
+                || silent[*c]
+                || silent[target - 1]
+                || silent[target]
+            {
+                continue;
+            }
+            *c = target;
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+    }
     let descriptors: Vec<_> = cuts.windows(2).map(|p| mean(&data[p[0]..p[1]])).collect();
     let energies: Vec<_> = cuts
         .windows(2)
@@ -165,9 +232,41 @@ pub(crate) fn detect(
         let later_drop = driving[p[1]..].iter().any(|v| *v);
         let build =
             mixless_protocol::has_buildup(bars, selected[0].start_sec, selected[n - 1].end_sec);
+        // A soft ramp still needs progression over multiple bars. Comparing
+        // endpoints alone mistakes the returning kick after a pause for a build.
+        let third = (n / 3).max(2).min(n.saturating_sub(1).max(1));
+        let tail_end = n.saturating_sub(1).max(1);
+        let (head, tail) = (&selected[..third], &selected[tail_end - third..tail_end]);
+        let mean_of = |s: &[BarFeature], f: fn(&BarFeature) -> f32| {
+            s.iter().map(f).sum::<f32>() / s.len() as f32
+        };
+        let soft_build = j != first_sound
+            && n >= 4
+            && n <= 16
+            && selected
+                .windows(2)
+                .filter(|w| {
+                    w[1].onset_density > w[0].onset_density.max(0.1) * 1.1
+                        || w[1].rms > w[0].rms * 1.05
+                        || (w[1].high_db > w[0].high_db + 1.
+                            && w[1].high_db - w[1].low_db > w[0].high_db - w[0].low_db + 1.)
+                })
+                .count()
+                * 3
+                >= (n - 1) * 2
+            && (mean_of(tail, |b| b.onset_density)
+                >= mean_of(head, |b| b.onset_density).max(0.1) * 1.25
+                || mean_of(tail, |b| b.rms) >= mean_of(head, |b| b.rms) * 1.15
+                || (mean_of(tail, |b| b.high_db - b.low_db)
+                    >= mean_of(head, |b| b.high_db - b.low_db) + 2.
+                    && mean_of(tail, |b| b.high_db) >= mean_of(head, |b| b.high_db) + 1.
+                    && mean_of(tail, |b| b.onset_density)
+                        >= mean_of(head, |b| b.onset_density).max(1.) * 0.8));
         let label = if silent[p[0]..p[1]].iter().all(|s| *s) {
             S::Silence
         } else if !driven && next_driven && build {
+            S::BuildUp
+        } else if !driven && next_driven && n >= 2 && soft_build {
             S::BuildUp
         } else if !driven && earlier_drop && later_drop {
             if kick < 0.4 {
@@ -276,5 +375,7 @@ pub(crate) fn detect(
     (sections, boundaries)
 }
 
+#[cfg(test)]
+mod melodic_tests;
 #[cfg(test)]
 mod tests;

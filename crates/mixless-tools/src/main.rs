@@ -3,6 +3,8 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 fn atomic_copy(source: &Path, dest: &Path) -> std::io::Result<()> {
@@ -57,6 +59,39 @@ fn option<'a>(
         .map(Some)
 }
 
+#[derive(serde::Deserialize)]
+struct BuildInfo {
+    version: String,
+    channel: String,
+}
+
+fn binary_identity(binary: &Path) -> Result<BuildInfo, Box<dyn std::error::Error>> {
+    let mut child = Command::new(binary)
+        .arg("--build-info")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(
+                "Binary did not return build identity; rebuild the desktop app first".into(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        return Err("Cannot read binary build identity; rebuild the desktop app first".into());
+    }
+    let info: BuildInfo = serde_json::from_slice(&result.stdout)
+        .map_err(|_| "Binary has no build identity; rebuild the desktop app first")?;
+    Ok(info)
+}
+
 fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let positional: Vec<_> = args
         .iter()
@@ -70,11 +105,18 @@ fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>
         .get(1)
         .map(|path| PathBuf::from(path.as_str()))
         .unwrap_or_else(|| root.join("target/app/Mixless.app"));
+    if !binary.is_file() || output.extension().and_then(|s| s.to_str()) != Some("app") {
+        return Err("Expected a built binary and an .app output path".into());
+    }
+    let identity = binary_identity(&binary)?;
     let version = option(args, "--version")?
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .unwrap_or(&identity.version)
         .to_owned();
     if !semver(&version) {
         return Err(format!("--version must be a semantic version, got {version:?}").into());
+    }
+    if version != identity.version {
+        return Err(format!("Bundle version {version} does not match binary version {}; rebuild with the requested version first", identity.version).into());
     }
     let build_number = option(args, "--build-number")?.unwrap_or("1").to_owned();
     // CFBundleVersion allows up to three dot-separated positive integers.
@@ -89,12 +131,14 @@ fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>
         )
         .into());
     }
-    let channel = option(args, "--channel")?.unwrap_or("dev").to_owned();
+    let channel = option(args, "--channel")?
+        .unwrap_or(&identity.channel)
+        .to_owned();
     if !["stable", "beta", "dev"].contains(&channel.as_str()) {
         return Err(format!("--channel must be stable, beta or dev, got {channel:?}").into());
     }
-    if !binary.is_file() || output.extension().and_then(|s| s.to_str()) != Some("app") {
-        return Err("Expected a built binary and an .app output path".into());
+    if channel != identity.channel {
+        return Err(format!("Bundle channel {channel} does not match binary channel {}; rebuild with MIXLESS_CHANNEL={channel}", identity.channel).into());
     }
     let contents = output.join("Contents");
     let macos = contents.join("MacOS");

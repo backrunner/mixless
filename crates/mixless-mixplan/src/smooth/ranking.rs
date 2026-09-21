@@ -16,6 +16,11 @@ pub(super) struct Evidence {
     pub clash: f32,
     pub drop_cut: bool,
     pub scratch_cut: bool,
+    pub spinback: bool,
+    pub loop_out: bool,
+    /// Stems are aligned on both decks, so a looped-out strip-down is a
+    /// strictly safer handoff than sharing the full outgoing spectrum.
+    pub stem_pair: bool,
     pub fx_decision: policy::Decision,
 }
 
@@ -65,6 +70,9 @@ mod tests {
             clash: 0.,
             drop_cut: false,
             scratch_cut: false,
+            spinback: false,
+            loop_out: false,
+            stem_pair: false,
             fx_decision: policy::Decision {
                 technique: Technique::DryCut,
                 confidence: 1.,
@@ -100,6 +108,9 @@ impl Evidence {
             clash,
             drop_cut,
             scratch_cut,
+            spinback,
+            loop_out,
+            stem_pair,
             fx_decision,
         } = self;
         let (a, b) = (ctx.outgoing, ctx.incoming);
@@ -164,7 +175,11 @@ impl Evidence {
             _ => 0.35,
         };
         let quality = if blend {
+            // A looped-out handoff is a genuine improvement on the same blend
+            // window, so it scores a touch above a plain swap.
             0.57 + 0.10 * key + 0.10 * structural_score - 0.10 * clash
+                + if loop_out { 0.04 } else { 0. }
+                + if loop_out && stem_pair { 0.04 } else { 0. }
         } else if loop_roll {
             0.39 + 0.08 * structural_score + 0.05 * (1. - vocal_a.min(vocal_b))
         } else {
@@ -172,6 +187,7 @@ impl Evidence {
                 + 0.02 * fx_decision.confidence
                 + 0.08 * (1. - vocal_a.min(vocal_b))
                 + if drop_cut { 0.08 } else { 0. }
+                + if spinback { 0.06 } else { 0. }
         };
         let phrase = if blend {
             (out_phrase + in_phrase + start_phrase + end_phrase) / 4.

@@ -288,7 +288,9 @@ pub(crate) fn score(
         Id::EnergyHold => (c.ratio - 1.0).abs() > 0.08,
         Id::PhraseBlend | Id::BreakToIntro => true,
         Id::FilterSweep => c.key_score < 0.85,
-        Id::FallbackSwapFilter => false,
+        // Spinback and LoopOut are smooth-planner techniques only; the catalog
+        // fallback path never proposes them.
+        Id::Spinback | Id::LoopOut | Id::FallbackSwapFilter => false,
     };
     if !eligible {
         return None;

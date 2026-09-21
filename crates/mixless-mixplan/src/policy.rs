@@ -15,6 +15,8 @@ pub(crate) enum Technique {
     DropCut,
     LoopRoll,
     ScratchCut,
+    Spinback,
+    LoopOut,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +24,10 @@ pub(crate) struct Evidence {
     pub loop_roll: bool,
     pub scratch: bool,
     pub drop: bool,
+    pub spinback: bool,
+    /// Deterministic per-candidate value so the planner rotates between
+    /// equally valid techniques instead of always taking the same one.
+    pub variety: u32,
     pub grid_reliable: bool,
     pub phrase_reliable: bool,
     pub harmonic_compatible: bool,
@@ -64,6 +70,26 @@ pub(crate) fn choose(e: Evidence) -> Decision {
         };
     }
 
+    // A backspin stop is a headline accent, never the default: when a drop
+    // cut is equally valid it wins most of the time, and even unopposed the
+    // spin is rotated in deterministically rather than every time.
+    if e.spinback
+        && e.grid_reliable
+        && e.phrase_reliable
+        && e.incoming_kick >= 0.55
+        && e.outgoing_vocal < 0.5
+        && if e.drop {
+            e.variety % 5 < 2
+        } else {
+            e.variety % 10 < 7
+        }
+    {
+        return Decision {
+            technique: Technique::Spinback,
+            confidence: 0.86,
+        };
+    }
+
     if e.drop
         && e.grid_reliable
         && e.phrase_reliable
@@ -102,9 +128,18 @@ pub(crate) fn choose(e: Evidence) -> Decision {
             SectionLabel::Outro | SectionLabel::Break
         ) || e.outgoing_vocal >= 0.35)
     {
-        Decision {
-            technique: Technique::EchoOut,
-            confidence: 0.72,
+        // Rotate between an echo tail and a filter release; an Outro keeps
+        // the echo so the outgoing track can ring out naturally.
+        if e.variety % 2 == 1 && e.outgoing_section != SectionLabel::Outro {
+            Decision {
+                technique: Technique::FilterBridge,
+                confidence: 0.72,
+            }
+        } else {
+            Decision {
+                technique: Technique::EchoOut,
+                confidence: 0.72,
+            }
         }
     } else {
         Decision {
@@ -123,6 +158,8 @@ mod tests {
             loop_roll: false,
             scratch: false,
             drop: false,
+            spinback: false,
+            variety: 0,
             grid_reliable: true,
             phrase_reliable: true,
             harmonic_compatible: true,

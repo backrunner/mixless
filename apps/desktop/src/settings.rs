@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mixless_engine::AudioConfig;
 use mixless_midi::MidiConfig;
-use mixless_protocol::{Command, DeckId, XfCurve};
+use mixless_protocol::{Command, DeckId, LiveMoves, XfCurve};
 use serde::{Deserialize, Serialize};
 
 use crate::state::WaveLayout;
@@ -28,6 +28,8 @@ pub struct Settings {
     pub keylock: bool,
     pub vinyl: bool,
     pub slip: bool,
+    /// Filter/stem gestures on the playing deck before each AutoMix transition.
+    pub live_moves: LiveMoves,
     /// Custom folder for downloaded audio. None uses the managed data dir.
     pub download_dir: Option<PathBuf>,
 }
@@ -51,6 +53,7 @@ impl Default for Settings {
             keylock: true,
             vinyl: false,
             slip: false,
+            live_moves: LiveMoves::Subtle,
             download_dir: None,
         }
     }

@@ -154,7 +154,26 @@ pub(crate) fn cut_safe(t: &TrackAnalysis, sec: f32, drop_boundary: bool) -> bool
     if !voice_cut_safe(t, sec) {
         return false;
     }
+    let section_edge = t
+        .sections
+        .iter()
+        .any(|s| (s.start_sec - sec).abs() < 0.08 || (s.end_sec - sec).abs() < 0.08);
+    // A sustained pad may ring across a measured edge into a release
+    // section: that tail is the outgoing section's release, not a mid-phrase
+    // note being severed. An edge that opens a peak or a new build keeps the
+    // veto — a note crossing there is foreground still in progress.
+    let release_edge = t.sections.iter().any(|s| {
+        (s.start_sec - sec).abs() < 0.08
+            && matches!(
+                s.label,
+                mixless_protocol::SectionLabel::Break
+                    | mixless_protocol::SectionLabel::Breakdown
+                    | mixless_protocol::SectionLabel::Outro
+                    | mixless_protocol::SectionLabel::Silence
+            )
+    });
     if !drop_boundary
+        && !release_edge
         && t.stems.as_ref().is_some_and(|s| {
             s.note_crossing(sec, mixless_protocol::StemKind::Instruments)
                 && s.frame_at(sec).is_some_and(|f| f.rms[2] > 0.003)
@@ -173,10 +192,7 @@ pub(crate) fn cut_safe(t: &TrackAnalysis, sec: f32, drop_boundary: bool) -> bool
     if drop_boundary {
         return true;
     }
-    let structural = t
-        .sections
-        .iter()
-        .any(|s| (s.start_sec - sec).abs() < 0.08 || (s.end_sec - sec).abs() < 0.08)
+    let structural = section_edge
         || t.phrase_boundaries
             .iter()
             .any(|p| (p.time_sec - sec).abs() < 0.08 && p.novelty >= 0.5);

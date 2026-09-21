@@ -19,6 +19,8 @@ pub fn reanalyze(core: &Arc<AppCore>, id: TrackId, clear_cues: bool) -> Result<(
         .or_default()
         .clone();
     let _track = lock.lock().map_err(|_| "Analysis lock poisoned")?;
+    // Locate the source before invalidating useful cached analysis and cues.
+    playback::current_track(core, id)?;
     if let Some(stems) = &core.stems {
         stems.retry();
     }
@@ -35,7 +37,7 @@ pub fn reanalyze(core: &Arc<AppCore>, id: TrackId, clear_cues: bool) -> Result<(
     let prepared = match result {
         Ok(p) => p,
         Err(error) => {
-            core.analysis.set(id, Status::Failed(error.clone()));
+            core.analysis.fail(id, error.clone());
             return Err(error);
         }
     };
@@ -71,6 +73,16 @@ pub(super) fn update_loaded(
         .map_err(|_| "Deck load lock poisoned")?;
     for deck in [DeckId::A, DeckId::B] {
         if core.engine.snapshot().deck(deck).track_id != Some(id) {
+            continue;
+        }
+        if !core
+            .analysis
+            .playback_revision
+            .lock()
+            .expect("source revision")[deck.index()]
+        .as_ref()
+        .is_some_and(|(_, hash)| hash == &prepared.track.content_hash)
+        {
             continue;
         }
         for index in 0..8 {

@@ -5,20 +5,23 @@ pub fn automatic_cues(t: &TrackAnalysis) -> Vec<Cue> {
     if t.sample_rate == 0 || !t.duration_sec.is_finite() || t.duration_sec <= 0. {
         return vec![];
     }
-    let audible: Vec<_> = t.bars.iter().filter(|b| b.rms > 0.001).collect();
+    let audible: Vec<_> = t
+        .bars
+        .iter()
+        .filter(|b| b.rms > 0.001 && b.section != S::Silence)
+        .collect();
     let (Some(first), Some(last)) = (audible.first(), audible.last()) else {
         return vec![];
     };
     let entry = first.start_sec;
-    let exit = t
-        .sections
-        .iter()
-        .find(|s| {
-            matches!(s.label, S::Drop | S::Chorus)
-                && s.end_sec - s.start_sec >= 8.
-                && s.end_sec > entry + 16.
+    let exit = mixless_protocol::peak_ranges(t)
+        .into_iter()
+        .find(|&(start, end)| {
+            end - start >= 8.
+                && end > entry + 16.
+                && mixless_protocol::drop_suspension(t, end).is_none()
         })
-        .map_or(last.end_sec.min(t.duration_sec), |s| s.end_sec);
+        .map_or(last.end_sec.min(t.duration_sec), |(_, end)| end);
     let mut selected = vec![(entry, 1., CueKind::In), (exit, 1., CueKind::Out)];
     let spacing = (8. * 60. / t.tempo.global_bpm.max(20.)).max(1.);
     let mut candidates = Vec::new();
@@ -89,6 +92,7 @@ mod tests {
             assert!(automatic_cues(&t).is_empty());
             for bar in &mut t.bars {
                 bar.rms = 0.2;
+                bar.section = S::Unknown;
             }
             t.phrase_boundaries = (0..12)
                 .map(|i| mixless_protocol::PhraseBoundary {
@@ -114,6 +118,7 @@ mod tests {
         );
         for bar in &mut t.bars {
             bar.rms = 0.2;
+            bar.section = S::Unknown;
         }
         t.tempo.global_bpm = 120.;
         t.sections = vec![
@@ -150,5 +155,24 @@ mod tests {
             32 * 22050
         );
         assert!(!cues.iter().any(|c| c.frame == 48 * 22050));
+        // Adjacent peak variations share one exit even when a variation is
+        // shorter than the planner's minimum peak length.
+        t.sections[1].end_sec = 20.;
+        t.sections.insert(
+            2,
+            mixless_protocol::Section {
+                start_sec: 20.,
+                end_sec: 32.,
+                label: S::Chorus,
+            },
+        );
+        assert_eq!(
+            automatic_cues(&t)
+                .iter()
+                .find(|c| c.kind == CueKind::Out)
+                .unwrap()
+                .frame,
+            32 * 22050
+        );
     }
 }

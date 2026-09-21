@@ -2,25 +2,43 @@
 use mixless_protocol::{SectionLabel as S, TrackAnalysis};
 
 /// A section boundary inside one continuous drop is a variation, not an exit.
+/// A drop shorter than a fill is not a peak at all.
 pub(super) fn peaks(track: &TrackAnalysis) -> Vec<(f32, f32)> {
-    let mut result: Vec<(f32, f32)> = Vec::new();
-    // A legacy whole-file label supplies no measured drop boundaries.
-    if track.sections.len() < 2 {
-        return result;
+    mixless_protocol::peak_ranges(track)
+}
+
+/// The track's full-weight peaks: at least eight bars long and within ~1.2 dB
+/// of the loudest peak's median bar level. A lighter first chorus is not the
+/// moment the track is waiting for.
+pub(super) fn major_peaks(track: &TrackAnalysis) -> Vec<(f32, f32)> {
+    let peaks = peaks(track);
+    let median = |p: &(f32, f32)| {
+        let mut rms: Vec<_> = track
+            .bars
+            .iter()
+            .filter(|b| b.start_sec >= p.0 - 0.01 && b.end_sec <= p.1 + 0.01)
+            .map(|b| b.rms)
+            .collect();
+        rms.sort_by(f32::total_cmp);
+        rms.get(rms.len() / 2).copied().unwrap_or(0.)
+    };
+    let top = peaks.iter().map(&median).fold(0., f32::max);
+    let bar = 240. / track.tempo.global_bpm.max(20.);
+    let major: Vec<_> = peaks
+        .iter()
+        .copied()
+        .filter(|p| median(p) >= top * 0.87 && p.1 - p.0 >= 7.5 * bar)
+        .collect();
+    if major.is_empty() {
+        peaks
+    } else {
+        major
     }
-    for s in &track.sections {
-        if !matches!(s.label, S::Drop | S::Chorus) {
-            continue;
-        }
-        if let Some(last) = result.last_mut() {
-            if s.start_sec <= last.1 + 0.1 {
-                last.1 = last.1.max(s.end_sec);
-                continue;
-            }
-        }
-        result.push((s.start_sec, s.end_sec));
-    }
-    result
+}
+
+/// The next drop's start at or after `sec` — where the current build resolves.
+pub(super) fn next_peak_start(track: &TrackAnalysis, sec: f32) -> Option<f32> {
+    peaks(track).iter().map(|p| p.0).find(|&p| p >= sec - 0.05)
 }
 
 /// Preserve an entered peak's resolution. Starting a complementary layer
@@ -48,34 +66,23 @@ pub(super) fn entry_allowed(track: &TrackAnalysis, entry: f32) -> bool {
 }
 
 pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
-    let mut peaks: Vec<(f32, f32)> = Vec::new();
-    for section in &track.sections {
-        if !matches!(section.label, S::Drop | S::Chorus)
-            || section.end_sec <= entry + 1.
-            || section.end_sec - section.start_sec < 4.
-        {
-            continue;
-        }
-        if let Some(last) = peaks.last_mut() {
-            if section.start_sec <= last.1 + 1. {
-                last.1 = section.end_sec;
-                continue;
+    let peaks: Vec<(f32, f32)> = major_peaks(track)
+        .into_iter()
+        .filter(|p| p.1 > entry + 1.)
+        .collect();
+    let base = match peaks.first() {
+        None => 0.,
+        Some(first) if exit + 0.1 < first.1 => 0.22,
+        _ => match peaks.get(1) {
+            Some(second) if exit > second.0 + 0.1 => {
+                let heard = ((exit - second.0) / (second.1 - second.0)).clamp(0., 1.);
+                0.16 + heard * 0.16
+                    + peaks.iter().skip(2).filter(|p| exit > p.0).count() as f32 * 0.08
             }
-        }
-        peaks.push((section.start_sec, section.end_sec));
-    }
-    let Some(first) = peaks.first() else {
-        return 0.;
+            _ => 0.,
+        },
     };
-    if exit + 0.1 < first.1 {
-        return 0.22;
-    }
-    let Some(second) = peaks.get(1) else {
-        return 0.;
-    };
-    if exit <= second.0 + 0.1 {
-        return 0.;
-    }
-    let heard = ((exit - second.0) / (second.1 - second.0)).clamp(0., 1.);
-    0.16 + heard * 0.16 + peaks.iter().skip(2).filter(|p| exit > p.0).count() as f32 * 0.08
+    // Leaving in the first stretch of a track discards its main body even
+    // when no peak is being cut short.
+    base + (0.4 - exit / track.duration_sec).max(0.) * 0.5
 }

@@ -93,7 +93,7 @@ fn compressed_dnb_break_uses_sustained_bass_retreat_despite_saturated_kicks() {
         "{sections:?}"
     );
 }
-fn bars(n: usize) -> Vec<BarFeature> {
+pub(super) fn bars(n: usize) -> Vec<BarFeature> {
     (0..n)
         .map(|i| BarFeature {
             bar_index: i as u32,

@@ -22,9 +22,7 @@ actions!(
 
 pub fn init(core: Arc<AppCore>, main_window: WindowHandle<UiState>, cx: &mut App) {
     let update_core = core.clone();
-    cx.on_action(move |_: &CheckForUpdates, _| {
-        crate::update::start(update_core.clone(), true)
-    });
+    cx.on_action(move |_: &CheckForUpdates, _| crate::update::start(update_core.clone(), true));
     cx.on_action(move |_: &Preferences, cx| {
         let core = core.clone();
         // Menu actions dispatch inside the active window's own update, which

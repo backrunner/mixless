@@ -11,7 +11,7 @@ use mixless_midi::{
     MidiBinding, MidiConfig, MidiControlMode, MidiGroup, MidiMessage, MidiPort, MidiSourceKind,
     MidiTarget,
 };
-use mixless_protocol::{Command, DeckId, XfCurve};
+use mixless_protocol::{Command, DeckId, LiveMoves, XfCurve};
 
 use crate::{
     settings::Settings,
@@ -902,6 +902,38 @@ impl Preferences {
                     }),
                 )
                 .into_any_element(),
+        ))
+        .child(row(
+            "AutoMix live moves",
+            div()
+                .flex()
+                .gap_1()
+                .children(
+                    [
+                        (LiveMoves::Off, "Off"),
+                        (LiveMoves::Subtle, "Subtle"),
+                        (LiveMoves::Active, "Active"),
+                    ]
+                    .map(|(level, label)| {
+                        self.button(
+                            format!("moves-{label}"),
+                            label,
+                            true,
+                            move |s, _, _| s.save_general(|p| p.live_moves = level),
+                            cx,
+                        )
+                        .text_color(if settings.live_moves == level {
+                            theme::ACCENT
+                        } else {
+                            theme::MUTED
+                        })
+                    }),
+                )
+                .into_any_element(),
+        ))
+        .child(info(
+            "AutoMix",
+            "Filter and stem gestures on the playing track between transitions.".into(),
         ))
         .child(section("Library"))
         .child(row(

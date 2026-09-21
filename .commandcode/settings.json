@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(df:*)",
+      "Shell(ls:*)",
+      "Shell(du -sh ~/Library/Caches 2>/dev/null; du -sh ~/Library/Application\\ Support 2>/dev/null; du -sh ~/Library/Developer 2>/dev/null)",
+      "Shell(du -sh ~/Library/Developer/CoreSimulator/Devices/* 2>/dev/null | sort -rh | head -15; echo \"=== runtime volumes ===\"; ls -la /Library/Developer/CoreSimulator/Volumes/ 2>/dev/null; echo \"=== simctl list ===\"; xcrun simctl list devices 2>/dev/null | grep -iE \"unavailable|Booted\" | head -20)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

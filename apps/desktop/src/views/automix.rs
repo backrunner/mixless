@@ -22,6 +22,8 @@ fn technique(strategy: S) -> &'static str {
         S::DropCut => "Drop cut",
         S::LoopConstruct => "Loop roll",
         S::ScratchCut => "Scratch cut",
+        S::Spinback => "Spinback",
+        S::LoopOut => "Loop out",
         S::EnergyHold => "Energy hold",
     }
 }

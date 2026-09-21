@@ -17,8 +17,12 @@ impl UiState {
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
         let menu = self.track_menu.clone()?;
+        let missing = matches!(
+            self.core.analysis.statuses().get(&menu.track),
+            Some(crate::analysis::Status::MissingFile(_))
+        );
         let width = 224.;
-        let height = 20. + 2. * 5. + 3. * theme::MENU_ROW_HEIGHT + 8.;
+        let height = 20. + 2. * 5. + (if missing { 6. } else { 3. }) * theme::MENU_ROW_HEIGHT + 8.;
         let x = f32::from(menu.position.x)
             .min(f32::from(window.viewport_size().width) - width - 8.)
             .max(8.);
@@ -51,11 +55,22 @@ impl UiState {
                     .text_color(theme::MUTED)
                     .child(menu.title),
             );
-        for (action, label, enabled) in [
+        let mut actions = vec![
             (0, "Remove from playlist", menu.playlist.is_some()),
             (1, "Reanalyze", true),
             (2, "Reset cues & reanalyze", true),
-        ] {
+        ];
+        if missing {
+            actions.splice(
+                0..0,
+                [
+                    (3, "Locate file…", true),
+                    (4, "Search again", true),
+                    (5, "Remove from library", true),
+                ],
+            );
+        }
+        for (action, label, enabled) in actions {
             if action < 2 {
                 panel = panel.child(div().h(px(1.)).my(px(2.)).mx(px(4.)).bg(theme::LINE));
             }
@@ -73,7 +88,7 @@ impl UiState {
                     .line_height(px(16.))
                     .text_color(if !enabled {
                         theme::MUTED
-                    } else if action == 2 {
+                    } else if action == 2 || action == 5 {
                         theme::DANGER
                     } else {
                         theme::TEXT
@@ -105,10 +120,12 @@ impl UiState {
                         cx.stop_propagation();
                         if enabled {
                             s.track_menu = None;
-                            if action == 0 {
-                                s.remove_playlist_track(playlist.unwrap(), track);
-                            } else {
-                                s.reanalyze_track(track, action == 2);
+                            match action {
+                                0 => s.remove_playlist_track(playlist.unwrap(), track),
+                                3 => s.choose_track_file(track, cx),
+                                4 => s.retry_track_file(track),
+                                5 => s.remove_library_track(track),
+                                _ => s.reanalyze_track(track, action == 2),
                             }
                             cx.notify();
                         }

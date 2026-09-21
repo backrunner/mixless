@@ -8,6 +8,16 @@ pub fn has_buildup(bars: &[BarFeature], start: f32, end: f32) -> bool {
     let Some(part) = bars.get(first..last) else {
         return false;
     };
+    // A final breath belongs to the build's resolution. Only trim at most
+    // two trailing silent bars; an internal or extended silence is not a roll.
+    let sounding = part
+        .iter()
+        .rposition(|b| b.rms > 0.001)
+        .map_or(0, |i| i + 1);
+    if part.len() - sounding > 2 {
+        return false;
+    }
+    let part = &part[..sounding];
     if part.len() < 3 || part.iter().any(|b| b.rms <= 0.001) {
         return false;
     }
@@ -18,7 +28,8 @@ pub fn has_buildup(bars: &[BarFeature], start: f32, end: f32) -> bool {
     let head = &part[..width];
     // A one-bar breath/fill immediately before the drop can lower the final
     // average; require a sustained rise in the latter half, not a final spike.
-    let tail = part[part.len() / 2..]
+    let tail_start = (part.len() / 2).min(part.len() - width - 1);
+    let tail = part[tail_start..part.len() - 1]
         .windows(width)
         .max_by(|a, b| mean(a, |b| b.rms).total_cmp(&mean(b, |b| b.rms)))
         .unwrap();
@@ -55,5 +66,21 @@ pub fn has_buildup(bars: &[BarFeature], start: f32, end: f32) -> bool {
                 && mean(tail, bright) > mean(head, bright) + 1.5))
         && mean(tail, attacks) >= mean(head, attacks) * 0.85
         && mean(tail, level) >= mean(head, level) * 0.85;
-    swell || roll || sustained_roll
+    // Limited electronic builds can lose bass without rising in RMS or
+    // attack count. Require sustained treble growth as well as bass retreat;
+    // one returning kick after a quiet pause cannot establish this ramp.
+    let bright_tail = part[tail_start..part.len() - 1]
+        .windows(width)
+        .max_by(|a, b| mean(a, |b| b.high_db).total_cmp(&mean(b, |b| b.high_db)))
+        .unwrap();
+    let spectral_riser = mean(bright_tail, bright) > mean(head, bright) + 6.
+        && mean(bright_tail, |b| b.high_db) > mean(head, |b| b.high_db) + 3.
+        && mean(bright_tail, attacks) >= mean(head, attacks).max(1.) * 0.8
+        && part
+            .windows(2)
+            .filter(|w| bright(&w[1]) >= bright(&w[0]) - 1.)
+            .count()
+            * 3
+            >= (part.len() - 1) * 2;
+    swell || roll || sustained_roll || spectral_riser
 }

@@ -2,8 +2,8 @@
 //! render-audit ANALYSES.json AUDIO_PATHS.json OUTPUT_DIRECTORY
 use mixless_engine::{Engine, EngineConfig};
 use mixless_mixplan::{short_handoff, PlanContext, Planner, PlannerOptions};
-use mixless_protocol::{Command, DeckId, TrackAnalysis};
-use std::{error::Error, path::Path};
+use mixless_protocol::{Command, Cue, CueKind, DeckId, TrackAnalysis};
+use std::{collections::HashMap, error::Error, path::Path};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -19,8 +19,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("Mismatched tracks/paths".into());
     }
     std::fs::create_dir_all(&args[2])?;
+    let cues_map: HashMap<i64, Vec<Cue>> = match std::env::var("MIXLESS_AUDIT_CUES") {
+        Ok(p) => serde_json::from_slice(&std::fs::read(p)?)?,
+        Err(_) => HashMap::new(),
+    };
     let processor = (args.len() == 5)
         .then(|| mixless_stems::Processor::new((&args[3]).into(), (&args[4]).into(), false));
+    // Plan against the stored payloads exactly as the library audit does;
+    // `apply_stems` rewrites bars/sections, so keep unmutated clones for
+    // planning while the engine still receives the cached stem PCM.
+    let planning_tracks = tracks.clone();
     let mut stem_hashes = vec![None; tracks.len()];
     if let Some(processor) = &processor {
         for (index, (track, path)) in tracks.iter_mut().zip(&paths).enumerate() {
@@ -47,12 +55,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     for i in 0..tracks.len() {
         let j = (i + 1) % tracks.len();
         planner.options.stem_playback = stem_hashes[i].is_some() && stem_hashes[j].is_some();
-        let (a, b) = (&tracks[i], &tracks[j]);
+        let (a, b) = (&planning_tracks[i], &planning_tracks[j]);
+        let filtered = |id, drop: CueKind| {
+            cues_map
+                .get(&id)
+                .map(|c| {
+                    c.iter()
+                        .cloned()
+                        .filter(|c| c.kind != drop)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let cues_out = filtered(a.track_id.0, CueKind::In);
+        let cues_in = filtered(b.track_id.0, CueKind::Out);
         let ctx = PlanContext {
             outgoing: a,
             incoming: b,
-            cues_out: &[],
-            cues_in: &[],
+            cues_out: &cues_out,
+            cues_in: &cues_in,
             offset_a: Default::default(),
             offset_b: Default::default(),
         };
@@ -99,6 +120,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         engine.dispatch(Command::SetCrossfader { value: -1. })?;
         engine.dispatch(Command::PlayPause { deck: DeckId::A })?;
         let summary = plan.summary.clone().ok_or("Missing summary")?;
+        // Record the outgoing deck's source frame per rendered block so a
+        // spinback's backwards pull can be verified from the actual render.
+        let spin_window = plan.lanes.scratch_a.as_ref().map(|op| {
+            (
+                plan.clock.sample(op.on_bar),
+                plan.clock.sample(op.off_bar),
+                op.peak_delta_frames,
+            )
+        });
+        let mut outgoing_frames: Vec<(f32, u64)> = Vec::new();
         std::fs::write(
             Path::new(&args[2]).join(format!("{}-{}.json", a.track_id.0, b.track_id.0)),
             serde_json::to_vec_pretty(&plan)?,
@@ -144,7 +175,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .fold(0., f32::max);
             gain_max = gain_max.max(gain);
             window_gain = window_gain.max(gain);
-            for sample in engine.render_offline((frames - start).min(256)) {
+            let audio = engine.render_offline((frames - start).min(256));
+            outgoing_frames.push((
+                (start + audio.len() / 2) as f32 / 48_000.,
+                engine.snapshot().decks[0].frame,
+            ));
+            for sample in audio {
                 if !sample.is_finite() || sample.abs() > 1. {
                     return Err("Invalid rendered sample".into());
                 }
@@ -181,6 +217,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         let snapshot = engine.snapshot();
         if snapshot.automix_on || snapshot.automix_progress < 1. || !snapshot.decks[1].playing {
             return Err(format!("Pair {}→{} did not complete", a.track_id.0, b.track_id.0).into());
+        }
+        if let Some((on_sec, off_sec, delta)) = spin_window {
+            let lo = before + on_sec;
+            let hi = before + off_sec;
+            let leg: Vec<u64> = outgoing_frames
+                .iter()
+                .filter(|(t, _)| *t >= lo && *t <= hi)
+                .map(|(_, f)| *f)
+                .collect();
+            let backwards = leg.windows(2).filter(|w| w[1] < w[0]).count();
+            let forwards = leg.windows(2).filter(|w| w[1] > w[0]).count();
+            println!(
+                "    spin window {on_sec:.2}–{off_sec:.2}s of plan (+{before:.2}s offset): {} samples, first={} last={} delta={delta} backwards_steps={backwards} forwards_steps={forwards}",
+                leg.len(),
+                leg.first().copied().unwrap_or(0),
+                leg.last().copied().unwrap_or(0),
+            );
         }
         println!(
             "{}→{} {:?} {:.2}s peak={:.4} completed stem_blocks={} gain_max={:.2}dB prepare={:.1}ms",

@@ -22,7 +22,10 @@ pub(crate) fn candidates(track: &TrackAnalysis, cues: &[Cue], outgoing: bool) ->
                 S::Drop | S::Chorus | S::Outro | S::Break | S::BuildUp
             )
         {
-            result.push(grid.floor_bar(section.end_sec));
+            let beat = grid.floor_bar(section.end_sec);
+            if mixless_protocol::drop_suspension(track, grid.sec(beat)).is_none() {
+                result.push(beat);
+            }
         } else if !outgoing
             && matches!(
                 section.label,

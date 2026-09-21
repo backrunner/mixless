@@ -92,6 +92,26 @@ impl Engine {
         self.shared.apply_cmd(&cmd);
         Ok(())
     }
+
+    /// Host-driven live gestures on a playing deck between transitions.
+    /// Applies the control atomics directly without `automation_command`, so
+    /// a committed plan never reads them as user takeover of its lanes.
+    pub fn perform(&self, cmd: Command) -> Result<(), EngineError> {
+        let finite = match &cmd {
+            Command::SetChannelFilter { amount, .. } => amount.is_finite(),
+            Command::SetStemGain { value, .. } => value.is_finite(),
+            _ => {
+                return Err(EngineError::Protocol(
+                    "perform accepts channel filter and stem gain only",
+                ));
+            }
+        };
+        if !finite {
+            return Err(EngineError::Protocol("non-finite audio parameter"));
+        }
+        self.shared.apply_cmd(&cmd);
+        Ok(())
+    }
 }
 
 impl Shared {

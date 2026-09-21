@@ -7,7 +7,25 @@ pub(super) struct Playback {
 }
 
 pub(super) fn current_track(core: &AppCore, id: TrackId) -> Result<Track, String> {
-    let mut track = core.library.get_track(id).map_err(|e| e.to_string())?;
+    let previous = core.library.get_track(id).map_err(|e| e.to_string())?;
+    let mut track = core.library.resolve_track_file(id).map_err(|error| {
+        if let mixless_library::LibraryError::MissingFile(path) = &error {
+            core.analysis.set(id, Status::MissingFile(path.clone()));
+        }
+        error.to_string()
+    })?;
+    if matches!(core.analysis.status(&track), Status::MissingFile(_)) {
+        core.analysis.set(id, Status::Checking);
+    }
+    if track.path != previous.path {
+        core.analysis
+            .latest
+            .lock()
+            .expect("analysis metadata")
+            .insert(id, track.clone());
+        core.analysis.updated(track.clone());
+        core.analysis.revision.fetch_add(1, Ordering::Release);
+    }
     let path = Path::new(&track.path);
     let hash = core
         .library

@@ -2,6 +2,7 @@
 use super::*;
 
 pub(super) struct Next {
+    pub outgoing: crate::analysis::PreparedTrack,
     pub incoming: crate::analysis::PreparedTrack,
     pub transition: Option<Arc<mixless_protocol::MixPlan>>,
 }
@@ -46,6 +47,7 @@ pub(super) fn stage(
             let d = core.engine.snapshot().deck(outgoing).clone();
             if !d.playing && d.frame >= d.frames.saturating_sub(1) {
                 return Ok(Some(Next {
+                    outgoing: a.clone(),
                     incoming: b,
                     transition: None,
                 }));
@@ -101,6 +103,7 @@ pub(super) fn stage(
                 return Ok(None);
             }
             Ok(Some(Next {
+                outgoing: a.clone(),
                 incoming: b,
                 transition,
             }))

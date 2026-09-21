@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mixless Audio Analysis"
+  short_description: "Develop audio analysis with evidence and generalization checks"
+  default_prompt: "Use $mixless-audio-analysis to investigate and improve musical analysis without overfitting to the reported tracks."

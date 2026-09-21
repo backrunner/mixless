@@ -5,6 +5,9 @@ use mixless_protocol::{SectionLabel as S, TrackAnalysis};
 pub(crate) fn windows(t: &TrackAnalysis) -> Vec<(f32, f32)> {
     let mut result = vec![];
     for (_, drop_end) in crate::drops::peaks(t) {
+        if mixless_protocol::drop_suspension(t, drop_end).is_some() {
+            continue;
+        }
         let Some(first) = t.sections.iter().position(|s| {
             (s.start_sec - drop_end).abs() < 0.08
                 && matches!(s.label, S::Break | S::Breakdown | S::Outro)

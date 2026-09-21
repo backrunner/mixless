@@ -11,11 +11,13 @@ use std::sync::{
 mod deep;
 mod playback;
 mod reanalysis;
+mod sources;
 mod stems;
 pub use deep::promote as promote_deep;
 pub use deep::schedule as schedule_deep;
 pub use playback::load_manual;
 pub use reanalysis::reanalyze;
+pub use sources::{relink_file, remove_track};
 pub use stems::attach_stems;
 
 use crate::state::AppCore;
@@ -27,6 +29,7 @@ pub enum Status {
     Checking,
     Analyzing,
     Ready(String),
+    MissingFile(String),
     Failed(String),
 }
 
@@ -76,7 +79,11 @@ impl AnalysisJobs {
             .values()
             .filter(|s| matches!(s, Status::Failed(_)))
             .count();
-        let pending = states.len() - ready - failed;
+        let missing = states
+            .values()
+            .filter(|s| matches!(s, Status::MissingFile(_)))
+            .count();
+        let pending = states.len() - ready - failed - missing;
         let mut text = if pending > 0 {
             format!(
                 "Analyzing · {ready}/{} complete · {pending} remaining",
@@ -87,6 +94,10 @@ impl AnalysisJobs {
         };
         if failed > 0 {
             text.push_str(&format!(" · {failed} failed"));
+        }
+        if missing > 0 {
+            let noun = if missing == 1 { "file" } else { "files" };
+            text.push_str(&format!(" · {missing} {noun} not found"));
         }
         let stems = self.stem_states.lock().expect("stem states");
         let stem_pending = stems
@@ -149,6 +160,15 @@ impl AnalysisJobs {
         let mut states = self.states.lock().expect("analysis states");
         if states.get(&id) != Some(&status) {
             states.insert(id, status);
+            self.revision.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    fn fail(&self, id: TrackId, error: String) {
+        let mut states = self.states.lock().expect("analysis states");
+        // Source resolution already published a typed, actionable failure.
+        if !matches!(states.get(&id), Some(Status::MissingFile(_))) {
+            states.insert(id, Status::Failed(error));
             self.revision.fetch_add(1, Ordering::Release);
         }
     }
@@ -230,6 +250,16 @@ pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         .or_default()
         .clone();
     let _track = lock.lock().map_err(|_| "Analysis worker lock poisoned")?;
+    if matches!(
+        core.analysis
+            .states
+            .lock()
+            .expect("analysis states")
+            .get(&id),
+        Some(Status::MissingFile(_))
+    ) {
+        core.analysis.set(id, Status::Checking);
+    }
     let result = prepare_inner(core, id);
     match &result {
         Ok(prepared) => {
@@ -250,7 +280,16 @@ pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
             core.analysis
                 .set(id, Status::Ready(prepared.track.content_hash.clone()));
         }
-        Err(error) => core.analysis.set(id, Status::Failed(error.clone())),
+        Err(error) => {
+            if matches!(
+                core.library.get_track(id),
+                Err(mixless_library::LibraryError::NotFound)
+            ) {
+                core.analysis.forget(id);
+            } else {
+                core.analysis.fail(id, error.clone());
+            }
+        }
     }
     result
 }
@@ -294,7 +333,9 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
         .iter()
         .find(|p| p.track.id == id && p.track.content_hash == hash && track.analyzed)
     {
-        return Ok(prepared.clone());
+        let mut prepared = prepared.clone();
+        prepared.track = track;
+        return Ok(prepared);
     }
     // Cache hits must not flicker a finished row: only a real decode/analysis
     // below may publish a busy status over Ready.

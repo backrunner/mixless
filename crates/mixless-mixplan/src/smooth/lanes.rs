@@ -55,6 +55,9 @@ pub(super) fn shape(
     vocal_b: f32,
     outgoing_bpm: f32,
     technique: Technique,
+    // With aligned stem buffers on both decks the LoopOut strip-down is done
+    // by the stem envelopes instead of EQ.
+    stems: bool,
 ) {
     if blend {
         let middle = handoff;
@@ -128,6 +131,15 @@ pub(super) fn shape(
         if vocal_b > 0.5 {
             lanes.eq_a.mid = line(&[(0., 0.), (middle, -6.), (n, -12.)]);
         }
+        // Without stems the looped phrase is stripped by EQ instead: mids dive
+        // through the exchange and highs ease off, so the loop reads as
+        // texture under the incoming track rather than a second foreground.
+        if technique == Technique::LoopOut && !stems {
+            lanes.eq_a.mid = line(&[(0., 0.), (1., 0.), (middle, -12.), (n, -12.)]);
+            lanes.eq_a.mid.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.eq_a.high = line(&[(0., 0.), (middle, -6.), (n, -6.)]);
+            lanes.eq_a.high.nodes.dedup_by(|a, b| a.0 == b.0);
+        }
     } else if !loop_roll {
         let handoff = start_b;
         // Finish the dry fade just before the downbeat, then open B fully on
@@ -174,6 +186,33 @@ pub(super) fn shape(
             lanes.filter_a = neutral().filter_a;
             lanes.fx_send_a = Polyline::constant(0.);
             lanes.eq_a.low = line(&[(0., 0.), (handoff - fade, 0.), (handoff, KILL)]);
+        }
+        if technique == Technique::Spinback {
+            // The outgoing deck backspins into B's downbeat: full level until
+            // the touch, a quick fade under the spin, bass choked early and
+            // the top pulled down so the spin tail cannot smear the first
+            // incoming kick.
+            lanes.gain_a = line(&[
+                (0., 0.),
+                ((handoff - 0.5).max(0.), 0.),
+                ((handoff - 0.03).max(0.), -9.),
+                (handoff, KILL),
+            ]);
+            lanes.gain_a.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.filter_a.lp_hz = line(&[
+                (0., 20000.),
+                ((handoff - 0.5).max(0.), 20000.),
+                (handoff, 2500.),
+            ]);
+            lanes.filter_a.lp_hz.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.eq_a.low = line(&[
+                (0., 0.),
+                ((handoff - 0.5).max(0.), 0.),
+                ((handoff - 0.125).max(0.), -6.),
+                (handoff, KILL),
+            ]);
+            lanes.eq_a.low.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.fx_send_a = Polyline::constant(0.);
         }
     }
 }

@@ -3,6 +3,14 @@
 Mixless currently targets macOS. Install current stable Rust and full Xcode
 with the Metal compiler, then run `./dev.sh --check` and `./dev.sh`.
 
+`dev.sh` builds and refreshes `target/app/Mixless.app` with the workspace
+version and the `dev` channel, then launches that bundle. `--build` refreshes
+it without launching. Development builds do not install public updates.
+Keep the workspace version ahead of the latest published beta when starting
+the next beta; use `cargo run -p mixless-tools -- set-version VERSION` followed
+by `cargo update --workspace`. Bundle version and channel are read from the
+executable's `--build-info`; explicit packaging overrides must match it.
+
 Enable the repository commit-message hook after cloning:
 
 ```sh

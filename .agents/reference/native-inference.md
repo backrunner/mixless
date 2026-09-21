@@ -22,7 +22,7 @@
 
 `stem-cache/<hash>/` 的键由原曲内容 hash、模型 hash 和证据版本构成；三轨完整写入后再发布 JSON manifest。跨进程锁防止重复写入，损坏/不完整缓存不能标记为 Ready。缓存按最近使用淘汰，目标上限 6 GiB；写入前检查并保留 512 MiB 磁盘余量，只清理自己的分轨缓存。当前单曲深度分析上限 20 分钟。
 
-SQLite 的 `TrackAnalysis.stems` 保存完整的轻量证据，`ANALYSIS_VERSION=15`。已有旧分析在正常准备时刷新；重启复用 SQLite，不重新推理。分轨任务按 CPU 预算并行处理不同曲目，同一内容通过跨进程锁合并；清理缓存仍需要独占锁。已上碟与即将播放的曲目提升到队首（`deep::promote`），队列空闲约 30 秒后释放模型会话。分析使用内存和 CPU，首次整轨推理不是实时操作。
+SQLite 的 `TrackAnalysis.stems` 保存完整的轻量证据，`ANALYSIS_VERSION=16`。已有旧分析在正常准备时刷新；重启复用 SQLite，不重新推理。分轨任务按 CPU 预算并行处理不同曲目，同一内容通过跨进程锁合并；清理缓存仍需要独占锁。已上碟与即将播放的曲目提升到队首（`deep::promote`），队列空闲约 30 秒后释放模型会话。分析使用内存和 CPU，首次整轨推理不是实时操作。
 
 开发/隔离验收可指定 `MIXLESS_MODEL_DIR`；`MIXLESS_MODELS_OFFLINE=1` 禁止模型下载；应用数据仍可用 `MIXLESS_DATA_DIR` 隔离。这些环境变量不是用户必需的安装步骤。
 

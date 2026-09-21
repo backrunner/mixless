@@ -7,6 +7,7 @@ mod hash;
 mod imports;
 mod ordering;
 mod schema;
+mod sources;
 mod spotify_artwork;
 mod storage;
 mod verification;
@@ -47,6 +48,12 @@ pub enum LibraryError {
     Sql(#[from] rusqlite::Error),
     #[error("not found")]
     NotFound,
+    #[error("File not found: {0}. Choose its local file or remove the track from the library.")]
+    MissingFile(String),
+    #[error("This file already belongs to another track in the library")]
+    SourceInUse,
+    #[error("Track changed while locating its file; try again")]
+    SourceChanged,
     #[error("Track order changed; refresh the list and try again")]
     OrderChanged,
     #[error("invalid cue index {0}")]

@@ -1,7 +1,7 @@
 //! Optional source envelopes. Existing whole-track EQ remains the safe fallback
 //! when the host has not yet loaded both aligned stem buffers.
 use super::*;
-use mixless_protocol::{Polyline, StemMix};
+use mixless_protocol::{Polyline, StemKind, StemMix};
 
 pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
     // A stem-layered candidate already carries deliberate envelopes.
@@ -206,4 +206,29 @@ pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
     }
     plan.requires_stems = true;
     plan.stem_mix = Some(result);
+}
+
+/// LoopOut strip-down: the looped outgoing phrase sheds its vocal first, then
+/// its instruments through the exchange, while only the incoming drums play
+/// until the new foreground arrives on the phrase downbeat.
+pub(super) fn loop_out(plan: &mut MixPlan) {
+    let Some(summary) = &plan.summary else {
+        return;
+    };
+    let n = summary.length_bars as f32;
+    let line = |nodes: &[(f32, f32)]| Polyline {
+        nodes: nodes.to_vec(),
+    };
+    let mut mix = StemMix {
+        outgoing: std::array::from_fn(|_| Polyline::constant(1.)),
+        incoming: std::array::from_fn(|_| Polyline::constant(1.)),
+    };
+    mix.outgoing[StemKind::Vocals.index()] = line(&[(0., 1.), (0.25, 0.), (n, 0.)]);
+    mix.outgoing[StemKind::Instruments.index()] =
+        line(&[(0., 1.), (1., 1.), (n / 2., 0.), (n, 0.)]);
+    mix.incoming[StemKind::Vocals.index()] =
+        line(&[(0., 0.), (n / 2., 0.), (n / 2. + 1., 1.), (n, 1.)]);
+    mix.incoming[StemKind::Instruments.index()] = mix.incoming[StemKind::Vocals.index()].clone();
+    plan.requires_stems = true;
+    plan.stem_mix = Some(mix);
 }

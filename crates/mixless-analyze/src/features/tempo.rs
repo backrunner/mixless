@@ -5,8 +5,12 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     if frames.len() < 128 {
         return (120., 0., 0.);
     }
-    let flux: Vec<_> = frames.iter().map(|f| f.onset).collect();
+    let mut flux: Vec<_> = frames.iter().map(|f| f.onset).collect();
     let dt = HOP as f32 / SR;
+    // Onset flux is all-positive, so the raw autocorrelation is dominated by
+    // the DC component and favours metrical aliases. Centre it first.
+    let mean = flux.iter().sum::<f32>() / flux.len() as f32;
+    flux.iter_mut().for_each(|v| *v -= mean);
     let norm = flux.iter().map(|v| v * v).sum::<f32>();
     if norm < 1e-6 {
         return (120., 0., 0.);
@@ -21,8 +25,22 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     };
     let min = (60. / 180. / dt) as usize;
     let max = (60. / 70. / dt).ceil() as usize;
-    // Compute each autocorrelation once, including across phrase probes.
-    let correlations: Vec<_> = (min - 1..=max + 1).map(corr).collect();
+    // Compute each autocorrelation once, including across phrase probes and
+    // the 2x/4x harmonic lags the comb scorer below consults. Never narrow
+    // the range below `max + 1`: the peak search and interpolation index it
+    // directly.
+    let hi = (4 * max + 1).min((flux.len() / 2).max(max + 1));
+    let correlations: Vec<_> = (min - 1..=hi).map(corr).collect();
+    let corr_at = |lag: usize| {
+        lag.checked_sub(min - 1)
+            .and_then(|i| correlations.get(i))
+            .copied()
+            .unwrap_or(0.)
+    };
+    let comb = |bpm: f32| {
+        let lag = (60. / bpm / dt).round() as usize;
+        corr_at(lag) + 0.6 * corr_at(2 * lag) + 0.4 * corr_at(4 * lag)
+    };
     let best = (min..=max)
         .max_by(|a, b| correlations[*a - min + 1].total_cmp(&correlations[*b - min + 1]))
         .unwrap_or(min);
@@ -33,12 +51,20 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     // Search plausible metrical aliases as well as the largest lag peak. A
     // dotted-note autocorrelation (e.g. 116 vs 174) is not a tempo change.
     let mut centers = vec![center];
-    for factor in [0.5, 2., 2. / 3., 1.5] {
+    for factor in [0.5, 2., 2. / 3., 1.5, 0.75, 4. / 3.] {
         let candidate = center * factor;
         if (70. ..=180.).contains(&candidate) {
             centers.push(candidate);
         }
     }
+    // A true tempo still correlates at its harmonic lags; a 3/4 or 4/3 alias
+    // does not. Gate and rank candidates on that comb evidence.
+    let best_comb = centers
+        .iter()
+        .flat_map(|&center| (-12..=12).map(move |step| center + step as f32 * 0.05))
+        .filter(|candidate| (70. ..=180.).contains(candidate))
+        .map(comb)
+        .fold(0f32, f32::max);
     let mut bpm = center;
     let mut fit = 0.;
     let mut phase = 0.;
@@ -50,12 +76,8 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
                 continue;
             }
             let period = 60. / candidate;
-            let lag = (period / dt).round() as usize;
-            let periodic = correlations
-                .get(lag.saturating_sub(min - 1))
-                .copied()
-                .unwrap_or(0.);
-            if periodic < mid * 0.45 {
+            let strength = comb(candidate);
+            if strength < best_comb * 0.45 {
                 continue;
             }
             let mut histogram = [0.; 64];
@@ -63,6 +85,7 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
                 let p = ((f.time / period).fract() * 64.) as usize;
                 histogram[p.min(63)] += f.onset;
             }
+            let weight = 0.5 + 0.5 * strength / best_comb.max(1e-6);
             for j in 0..64 {
                 // A fixed time window treats 87 and 174 BPM equally. A fixed
                 // number of phase bins made the fast grid's tolerance half as
@@ -73,13 +96,17 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
                         histogram[(j as i32 + offset).rem_euclid(64) as usize]
                             * (1. - (offset as f32).abs() / (radius + 1.)).max(0.)
                     })
-                    .sum::<f32>();
+                    .sum::<f32>()
+                    * weight;
                 // Keep the original metrical interpretation for near-ties.
                 if score > fit * 1.005 {
                     fit = score;
                     bpm = candidate;
                     phase = (j as f32 + 0.5) / 64. * period;
-                    selected_mid = periodic;
+                    // Scale the comb evidence back to a single-lag magnitude:
+                    // a pick held up only by harmonic lags reports less
+                    // periodic support than its fundamental correlation.
+                    selected_mid = strength * 0.5;
                 }
             }
         }
@@ -135,7 +162,8 @@ pub(super) fn pulse_confidence(frames: &[Frame], bpm: f32, phase: f32) -> f32 {
     if frames.len() < 128 {
         return 0.;
     }
-    let norm = frames.iter().map(|f| f.onset * f.onset).sum::<f32>();
+    let mean = frames.iter().map(|f| f.onset).sum::<f32>() / frames.len() as f32;
+    let norm = frames.iter().map(|f| (f.onset - mean).powi(2)).sum::<f32>();
     if norm <= 1e-6 {
         return 0.;
     }
@@ -148,7 +176,7 @@ pub(super) fn pulse_confidence(frames: &[Frame], bpm: f32, phase: f32) -> f32 {
                 .iter()
                 .skip(lag)
                 .zip(frames)
-                .map(|(a, b)| a.onset * b.onset)
+                .map(|(a, b)| (a.onset - mean) * (b.onset - mean))
                 .sum::<f32>()
                 / (norm * (1. - lag as f32 / frames.len() as f32)).max(1e-6)
         })

@@ -411,11 +411,16 @@ impl DensePlan {
                             &lanes.scratch_b
                         };
                         if let Some(op) = op {
-                            let phase = if u <= op.peak_bar {
+                            let mut phase = if u <= op.peak_bar {
                                 (u - op.on_bar) / (op.peak_bar - op.on_bar)
                             } else {
                                 (op.off_bar - u) / (op.off_bar - op.peak_bar)
                             };
+                            // A spinback eases in and whips back fastest just
+                            // before release; the slip return stays linear.
+                            if op.accelerate && u <= op.peak_bar {
+                                phase = phase.clamp(0.0, 1.0).powi(2);
+                            }
                             (op.start_src_frame as i128
                                 + (op.peak_delta_frames as f32 * phase.clamp(0.0, 1.0)) as i128)
                                 .max(0) as u64
@@ -1548,5 +1553,203 @@ mod tests {
             assert!((snap.decks[1 - outgoing.index()].gain_db + 3.).abs() < 0.011);
             eprintln!("{outgoing:?}: maximum rendered beat phase error {max_phase_error:.6} beats");
         }
+    }
+
+    #[test]
+    fn an_accelerated_spinback_pulls_the_outgoing_source_backwards() {
+        let engine = super::super::tests::test_engine(48000);
+        for (index, hz) in [440.0f32, 550.].into_iter().enumerate() {
+            let frames = 16 * 48000usize;
+            let mut samples = Vec::with_capacity(frames * 2);
+            for f in 0..frames {
+                let v = (std::f32::consts::TAU * hz * f as f32 / 48000.).sin() * 0.4;
+                samples.extend([v, v]);
+            }
+            let slot = &engine.shared.decks[index];
+            slot.track_id.store(index as u64 + 1, Ordering::Relaxed);
+            slot.src_sr.store(48000, Ordering::Relaxed);
+            slot.frames.store(frames as u64, Ordering::Relaxed);
+            slot.gain_milli.store(9600, Ordering::Relaxed);
+            slot.fader.store(1000, Ordering::Relaxed);
+            *slot.buffer.lock().unwrap() = Some(Arc::new(crate::AudioBuffer {
+                loudness: Default::default(),
+                samples,
+                frames: frames as u64,
+                sample_rate: 48000,
+            }));
+        }
+        let line = |nodes: &[(f32, f32)]| Polyline {
+            nodes: nodes.to_vec(),
+        };
+        let mut lanes = mixless_protocol::AutomationLanes::default();
+        lanes.xfader = line(&[(0., -1.), (3.5, -1.), (4., 1.)]);
+        lanes.gain_a = line(&[(0., 0.), (3.5, 0.), (3.97, -9.), (4., -96.)]);
+        lanes.gain_b = Polyline::constant(0.);
+        lanes.rate_a = Polyline::constant(1.);
+        lanes.rate_b = Polyline::constant(1.);
+        lanes.pitch_a = Polyline::constant(0.);
+        lanes.pitch_b = Polyline::constant(0.);
+        lanes.fx_send_a = Polyline::constant(0.);
+        lanes.fx_send_b = Polyline::constant(0.);
+        lanes.filter_a.lp_hz = Polyline::constant(20000.);
+        lanes.filter_a.hp_hz = Polyline::constant(20.);
+        lanes.filter_b.lp_hz = Polyline::constant(20000.);
+        lanes.filter_b.hp_hz = Polyline::constant(20.);
+        lanes.eq_a.low = Polyline::constant(0.);
+        lanes.eq_a.mid = Polyline::constant(0.);
+        lanes.eq_a.high = Polyline::constant(0.);
+        lanes.eq_b.low = Polyline::constant(0.);
+        lanes.eq_b.mid = Polyline::constant(0.);
+        lanes.eq_b.high = Polyline::constant(0.);
+        // The last half bar of A is pulled backwards, easing in then whipping
+        // back fastest just before the release onto B's downbeat.
+        lanes.scratch_a = Some(mixless_protocol::ScratchOp {
+            start_src_frame: 276_000, // outgoing source frame at bar 3.5
+            peak_delta_frames: -91_200,
+            on_bar: 3.5,
+            peak_bar: 3.98,
+            off_bar: 4.,
+            accelerate: true,
+        });
+        let plan = MixPlan {
+            summary: Some(MixPlanSummary {
+                pair: (TrackId(1), TrackId(2)),
+                strategy: mixless_protocol::StrategyId::Spinback,
+                score: 0.8,
+                used_fallback: false,
+                length_bars: 4,
+            }),
+            incoming_offset_end: PerformanceOffset::identity(),
+            outgoing_offset: PerformanceOffset::identity(),
+            t_in_a: 4.,
+            t_out_a: 6.,
+            t_in_b: 0.,
+            t_end_b: 0.5,
+            clock: line(&[(0., 0.), (4., 2.), (4.25, 2.25)]),
+            outgoing_source: line(&[(0., 4.), (4., 6.)]),
+            incoming_start_bar: 4.,
+            transition_mode: Some(mixless_protocol::TransitionMode::PhraseBridge),
+            master_bpm: Polyline::constant(120.),
+            lanes,
+            handoff_bar: Some(4.),
+            ..Default::default()
+        };
+        let prepared = engine.prepare_plan_on(plan, DeckId::A).unwrap();
+        let dense = prepared.0.clone();
+        let sr = dense.sample_rate as f32;
+        // The compiled touch leg must jog the outgoing source strictly
+        // backwards, easing in and covering most of the pull in the second
+        // half — the accelerating backspin profile.
+        let leg: Vec<(f32, u64)> = dense
+            .points
+            .iter()
+            .enumerate()
+            .map(|(j, p)| {
+                (
+                    bar_at(&dense.plan.clock, (j * STEP) as f32 / sr),
+                    p.decks[0],
+                )
+            })
+            .filter(|(u, _)| *u >= 3.5 && *u <= 3.98)
+            .map(|(u, p)| (u, p.scratch_target))
+            .collect();
+        assert!(leg.len() > 8, "touch leg covers {leg:?}");
+        assert!(
+            leg.windows(2).all(|w| w[1].1 <= w[0].1),
+            "spinback target must move backwards monotonically"
+        );
+        assert!(leg.first().unwrap().1 > leg.last().unwrap().1);
+        let mid = (3.5 + 3.98) / 2.;
+        let at = |u: f32| {
+            leg.iter()
+                .min_by(|x, y| (x.0 - u).abs().total_cmp(&(y.0 - u).abs()))
+                .unwrap()
+                .1
+        };
+        let first_half_pull = leg.first().unwrap().1 - at(mid);
+        let second_half_pull = at(mid) - leg.last().unwrap().1;
+        assert!(
+            second_half_pull > first_half_pull * 2,
+            "accelerating pull: {first_half_pull} then {second_half_pull}"
+        );
+        // The live render applies the same targets through the jog path and
+        // the outgoing playhead visibly runs backwards during the last half
+        // bar before the release.
+        engine
+            .dispatch(Command::SetCrossfader { value: -1. })
+            .unwrap();
+        engine
+            .cue_loaded_track(DeckId::A, TrackId(1), 4 * 48000)
+            .unwrap();
+        engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        engine.commit_plan(prepared).unwrap();
+        let mut rendered = 0usize;
+        let mut targets = vec![];
+        while rendered < 110_000 {
+            engine.render_offline(512);
+            rendered += 512;
+            if engine.shared.decks[0].jog_touch.load(Ordering::Acquire) {
+                targets.push(engine.shared.decks[0].jog_target.load(Ordering::Acquire));
+            }
+        }
+        assert!(targets.len() > 4, "spin touch window produced {targets:?}");
+        let peak = targets.iter().min().copied().unwrap();
+        assert!(peak < targets[0], "targets never moved backwards");
+        let pulling: Vec<_> = targets.iter().take_while(|&&t| t > peak).copied().collect();
+        assert!(pulling.windows(2).all(|w| w[1] <= w[0]));
+        engine.render_offline(20_000);
+        assert!(!engine.snapshot().automix_on);
+        assert!(engine.snapshot().decks[1].playing);
+    }
+
+    #[test]
+    fn a_live_gesture_does_not_read_as_plan_takeover() {
+        let (engine, plan) = setup(DeckId::A);
+        engine.load_plan(plan).unwrap();
+        let auto = &engine.shared.automation;
+        engine
+            .perform(Command::SetChannelFilter {
+                deck: DeckId::A,
+                amount: 0.3,
+            })
+            .unwrap();
+        engine
+            .perform(Command::SetStemGain {
+                deck: DeckId::A,
+                stem: mixless_protocol::StemKind::Drums,
+                value: 0.,
+            })
+            .unwrap();
+        assert_eq!(auto.cancelled.load(Ordering::Acquire), 0);
+        assert!(!auto.gain_cancelled.load(Ordering::Acquire));
+        assert_eq!(
+            engine.shared.decks[0].filter_milli.load(Ordering::Relaxed),
+            650
+        );
+        assert_eq!(
+            engine.shared.decks[0].stem_gain[1].load(Ordering::Relaxed),
+            0
+        );
+        // The user path still registers takeover on the same lanes.
+        engine
+            .dispatch(Command::SetChannelFilter {
+                deck: DeckId::A,
+                amount: 0.1,
+            })
+            .unwrap();
+        assert_ne!(auto.cancelled.load(Ordering::Acquire) & bit(0, 2), 0);
+        assert!(auto.gain_cancelled.load(Ordering::Acquire));
+        // Only the two gesture commands are accepted.
+        assert!(engine
+            .perform(Command::PlayPause { deck: DeckId::A })
+            .is_err());
+        assert!(engine
+            .perform(Command::SetChannelFilter {
+                deck: DeckId::A,
+                amount: f32::NAN,
+            })
+            .is_err());
     }
 }

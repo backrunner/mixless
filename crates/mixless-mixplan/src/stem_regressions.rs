@@ -3,7 +3,7 @@ use mixless_protocol::{
     Polyline, SectionLabel, StemAnalysis, StemFrame, StemKind, StemNote, TrackId,
 };
 
-fn with_stems(mut track: TrackAnalysis) -> TrackAnalysis {
+pub(crate) fn with_stems(mut track: TrackAnalysis) -> TrackAnalysis {
     let frames = (0..(track.duration_sec / 0.05).ceil() as usize)
         .map(|i| StemFrame {
             start_sec: i as f32 * 0.05,
@@ -398,11 +398,13 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
     for bar in &mut a.bars {
         bar.chord = Some("Am".into());
     }
+    // A verse entry keeps the looped-out strip-down off this pair; the test
+    // pins the long drum-layered blend for clashing keys.
     let mut b = with_stems(crate::tests::track(
         2,
         128.,
         "4A",
-        SectionLabel::Intro,
+        SectionLabel::Verse,
         64,
         0.8,
         0.9,

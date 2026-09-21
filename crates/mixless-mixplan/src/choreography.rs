@@ -78,6 +78,7 @@ pub(super) fn arrange(
             Technique::EchoOut => "Echo tail",
             Technique::FilterBridge => "Filter exit",
             Technique::LoopRoll => "Loop layer",
+            Technique::Spinback => "Spinback",
             _ => "Phrase cut",
         };
         if let Some(op) = &lanes.loop_b {

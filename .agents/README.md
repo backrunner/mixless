@@ -25,6 +25,8 @@ Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只�
 
 ## 当前实现记录
 
+音频分析与 AutoMix 分析规则的开发、调参和评审遵循 [mixless-audio-analysis skill](skills/mixless-audio-analysis/SKILL.md)，包括反例、独立录音评估和证据边界。
+
 上表是早期设计资料，不能作为已实现功能或当前验收结果。原先的许可证、固定混音长度和设备默认值描述存在过时内容；当前代码、根目录 README 与 LICENSE 优先。
 
 - [AutoMix 使用和工程参考](reference/AUTOMIX.md)

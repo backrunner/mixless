@@ -3581,7 +3581,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-acquire"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "hound",
  "mixless-analyze",
@@ -3597,7 +3597,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-acquire-yt"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "libc",
  "mixless-acquire",
@@ -3611,7 +3611,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-analyze"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "blake3",
  "cc",
@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-desktop"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "dirs 6.0.0",
  "fs2",
@@ -3657,7 +3657,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-engine"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "cc",
  "cpal",
@@ -3675,7 +3675,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-library"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "blake3",
  "hound",
@@ -3693,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-midi"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "midir",
  "mixless-protocol",
@@ -3705,14 +3705,14 @@ dependencies = [
 
 [[package]]
 name = "mixless-mixplan"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "mixless-protocol",
 ]
 
 [[package]]
 name = "mixless-protocol"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3720,7 +3720,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-spotify"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "mixless-protocol",
  "serde",
@@ -3732,7 +3732,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-stems"
-version = "0.1.0"
+version = "0.1.0-beta.3"
 dependencies = [
  "blake3",
  "fs2",
@@ -3752,7 +3752,11 @@ dependencies = [
 
 [[package]]
 name = "mixless-tools"
-version = "0.1.0"
+version = "0.1.0-beta.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "moxcms"

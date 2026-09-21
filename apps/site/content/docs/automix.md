@@ -27,7 +27,7 @@ Mixless compares entry and exit regions using local tempo, phrase boundaries, ke
 | Echo or filter exit | Shape the outgoing track around the handoff |
 | Structural cut | Switch at an appropriate boundary when an overlap is unsuitable |
 
-Transition length follows the music. A suitable pair can use a long layered blend; a structural cut can be instantaneous. A Drop Cut requires evidence of a real build-up ending and a suitable incoming section. Not every pair should use the same technique.
+Transition length follows the music. A suitable pair can use a long layered blend; a structural cut can be instantaneous. A Drop Cut requires evidence of a real build-up ending and a suitable incoming section. Where the evidence supports it, a transition can also finish with a **Spinback** (a short accelerating backspin on the outgoing deck) or **Loop out** (the outgoing track loops its final phrase while stems or EQ strip it down underneath the incoming one). Not every pair should use the same technique.
 
 Analysis is an estimate. Uncertain beat grids, dense vocals, or incompatible structure can lead to a conservative handoff. Listen to unfamiliar pairs before relying on them in a set.
 
@@ -52,5 +52,7 @@ The idle deck is prepared with its cue, tempo, key lock, EQ, and a closed level.
 **PAUSE**, **RESUME**, and **SKIP** are available while a plan runs. Adjusting a fader, EQ, or filter takes over that lane only. Loading a track manually takes over from AutoMix.
 
 AutoMix can add temporary gain during a sustained overlap that loses energy. The deck's **AUTO +…** display shows this compensation; manual changes take control and compensation returns to zero after the mix.
+
+Between transitions, the **Live moves** preference (Off / Subtle / Active) lets AutoMix add small analysis-driven gestures to the playing track — filter risers into drops and brief drum stem pull-outs inside them. Touching the filter or a stem control hands that control back to you for the rest of the track.
 
 For the rest of the controls, see [decks and effects](/docs/decks) and [audio levels](/docs/audio).

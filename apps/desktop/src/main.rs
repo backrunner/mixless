@@ -34,6 +34,21 @@ use gpui::{
 const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
+    // Packaging reads the executable's identity before starting AppKit, audio
+    // or self-installation. The bundle must never label a different build.
+    if std::env::args().nth(1).as_deref() == Some("--build-info") {
+        println!(
+            "{}",
+            serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "channel": env!("MIXLESS_CHANNEL"),
+                "revision": env!("MIXLESS_REVISION"),
+                "profile": env!("MIXLESS_BUILD_PROFILE"),
+                "built": env!("MIXLESS_BUILD_TIME"),
+            })
+        );
+        return;
+    }
     tracing_subscriber::fmt()
         .with_env_filter("mixless=info,mixless_engine=info")
         .init();
@@ -101,9 +116,7 @@ fn main() {
                                 // freeze every polled surface for good.
                                 let animating = state.needs_continuous_repaint();
                                 let changed = state.poll();
-                                if changed
-                                    || (!animating && state.needs_continuous_repaint())
-                                {
+                                if changed || (!animating && state.needs_continuous_repaint()) {
                                     cx.notify();
                                 }
                             })

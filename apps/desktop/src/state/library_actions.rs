@@ -9,6 +9,68 @@ pub(super) enum PlaylistAction {
 }
 
 impl UiState {
+    pub fn choose_track_file(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        if self.picker_open {
+            return;
+        }
+        self.picker_open = true;
+        cx.spawn(async move |this, cx| {
+            let selected = rfd::AsyncFileDialog::new()
+                .set_title("Locate track audio")
+                .add_filter(
+                    "Audio files",
+                    &[
+                        "wav", "wave", "mp3", "m4a", "mp4", "aac", "flac", "aif", "aiff", "ogg",
+                        "opus",
+                    ],
+                )
+                .pick_file()
+                .await;
+            let _ = this.update(cx, |s, cx| {
+                s.picker_open = false;
+                if let Some(file) = selected {
+                    let core = s.core.clone();
+                    let (tx, rx) = channel();
+                    s.library_actions.push(rx);
+                    std::thread::spawn(move || {
+                        let result =
+                            crate::analysis::relink_file(&core, track, file.path()).map(|_| track);
+                        let _ = tx.send(result);
+                    });
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn remove_library_track(&mut self, track: TrackId) {
+        if self.automix_active {
+            self.stop_automix();
+        }
+        let core = self.core.clone();
+        let (tx, rx) = channel();
+        self.library_actions.push(rx);
+        std::thread::spawn(move || {
+            let result = crate::analysis::remove_track(&core, track).map(|_| track);
+            let _ = tx.send(result);
+        });
+    }
+
+    pub fn retry_track_file(&mut self, track: TrackId) {
+        let core = self.core.clone();
+        let (tx, rx) = channel();
+        self.library_actions.push(rx);
+        std::thread::spawn(move || {
+            let result = crate::analysis::prepare(&core, track).map(|_| {
+                crate::analysis::schedule_deep(&core, track);
+                track
+            });
+            let _ = tx.send(result);
+        });
+    }
+
     pub fn remove_import_item(&mut self, playlist: i64, position: usize) {
         let core = self.core.clone();
         let (tx, rx) = channel();
@@ -109,6 +171,7 @@ impl UiState {
         for rx in pending {
             match rx.try_recv() {
                 Ok(Ok(track)) => {
+                    self.error = "".into();
                     self.library_previews.invalidate(track);
                     crate::automix::refresh_previews(&self.core);
                     for i in 0..2 {

@@ -67,6 +67,17 @@ else
     [ -n "${DEVELOPER_DIR:-}" ] || fail "需要完整 Xcode 和 Metal 编译器；仅 Command Line Tools 不够。安装并首次打开 Xcode 后重试。"
 fi
 export DEVELOPER_DIR
+# A local shell may retain the channel used for a release rehearsal. Local
+# development must never download a public release over unshipped changes.
+export MIXLESS_CHANNEL=dev
+
+build_development() {
+    cargo build --locked -p mixless-desktop --bin mixless
+    build_root="${CARGO_TARGET_DIR:-$project_dir/target}"
+    desktop_bin="$(cd -- "$build_root/debug" && pwd)/mixless"
+    desktop_app="$project_dir/target/app/Mixless.app"
+    cargo run --locked -p mixless-tools -- bundle "$desktop_bin" "$desktop_app" --channel dev
+}
 
 printf '项目：%s\nXcode：%s\n' "$project_dir" "$DEVELOPER_DIR"
 case "$mode" in
@@ -76,19 +87,17 @@ case "$mode" in
         printf '开发启动环境已就绪。\n'
         ;;
     --build)
-        exec cargo build --locked -p mixless-desktop --bin mixless
+        build_development
         ;;
     run)
         printf '正在编译开发版本；编译成功后重启本仓库的实例。\n'
-        cargo build --locked -p mixless-desktop --bin mixless
-        build_root="${CARGO_TARGET_DIR:-$project_dir/target}"
-        desktop_bin="$(cd -- "$build_root/debug" && pwd)/mixless"
+        build_development
         # Match the executable mapping, not a shell command/substring. This
         # also recognizes ./target/debug/mixless and leaves other checkouts alone.
         for pid in $(/usr/bin/pgrep -x mixless || true); do
             same_binary=false
             while IFS= read -r entry; do
-                if [ "$entry" = "n$desktop_bin" ]; then same_binary=true; fi
+                if [ "$entry" = "n$desktop_bin" ] || [ "$entry" = "n$desktop_app/Contents/MacOS/mixless" ]; then same_binary=true; fi
             done < <(/usr/sbin/lsof -a -p "$pid" -d txt -Fn 2>/dev/null || true)
             if [ "$same_binary" = true ]; then
                 printf '停止本仓库的旧实例：PID %s\n' "$pid"
@@ -102,7 +111,7 @@ case "$mode" in
                 fi
             fi
         done
-        printf '启动：%s\nCtrl+C 停止。\n' "$desktop_bin"
-        exec "$desktop_bin"
+        printf '启动：%s\nCtrl+C 停止。\n' "$desktop_app"
+        exec "$desktop_app/Contents/MacOS/mixless"
         ;;
 esac
