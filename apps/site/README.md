@@ -48,7 +48,7 @@ After the validation commands above pass, deploy from `apps/site` using an authe
 
 ```sh
 pnpm exec wrangler whoami
-pnpm deploy
+pnpm run deploy
 ```
 
 The local static host (`node scripts/serve-build.mjs 4174`) uses the same release resolver. Plain static hosting or `svedocs preview` alone does not serve the download endpoints. Use `pnpm exec wrangler dev` after building to validate the full Worker locally.
@@ -63,7 +63,7 @@ SITE_URL=https://example.com pnpm build
 
 Wrangler serves unknown paths with `404.html` **and HTTP 404** and redirects HTML paths to extensionless URLs without a trailing slash. The output includes `sitemap.xml`, `robots.txt`, per-page Markdown, `llms.txt`, and `llms-full.txt`. No SPA fallback or server-side AI/search endpoint is needed.
 
-Building alone does not publish the site. `pnpm deploy` publishes the build and attaches the configured custom domain. After deploying, verify the English and Chinese homepages, a docs page and local search, missing-route status, and sitemap on the production domain. Changing `SITE_URL` also requires matching the custom domain in `wrangler.jsonc`.
+Building alone does not publish the site. `pnpm run deploy` invokes this project's deployment script and attaches the configured custom domain; plain `pnpm deploy` is pnpm's separate workspace deployment command. After deploying, verify the English and Chinese homepages, a docs page and local search, missing-route status, and sitemap on the production domain. Changing `SITE_URL` also requires matching the custom domain in `wrangler.jsonc`.
 
 ## Release downloads
 
