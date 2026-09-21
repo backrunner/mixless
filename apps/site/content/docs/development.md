@@ -3,7 +3,7 @@ title: "Build from source"
 description: "Run the native app or work on the official website."
 order: 9
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -22,7 +22,7 @@ cd mixless
 
 The script finds an Xcode installation with Metal support; an explicit `DEVELOPER_DIR` takes precedence. Use `./dev.sh --build` to build without launching. Development uses the normal local application library and does not watch files automatically.
 
-The first build optimizes the audio engine and UI dependencies and can take longer. Rerun after changes. **Mixless → About Mixless** shows the version, Git revision, and build time.
+The first build optimizes the audio engine and UI dependencies and can take longer. Rerun after changes. **mixless → About mixless** shows the version, Git revision, and build time.
 
 ## Workspace
 
@@ -63,4 +63,4 @@ The build emits a static site in `apps/site/build`. Set `SITE_URL` when building
 
 Read [CONTRIBUTING.md](https://github.com/backrunner/mixless/blob/main/CONTRIBUTING.md) for checks and commit conventions, and [RELEASING.md](https://github.com/backrunner/mixless/blob/main/RELEASING.md) for signed macOS releases.
 
-Mixless is licensed under [MPL 2.0](https://github.com/backrunner/mixless/blob/main/LICENSE). Attribution and component licenses are listed in [THIRD_PARTY_NOTICES.md](https://github.com/backrunner/mixless/blob/main/THIRD_PARTY_NOTICES.md).
+mixless is licensed under [MPL 2.0](https://github.com/backrunner/mixless/blob/main/LICENSE). Attribution and component licenses are listed in [THIRD_PARTY_NOTICES.md](https://github.com/backrunner/mixless/blob/main/THIRD_PARTY_NOTICES.md).

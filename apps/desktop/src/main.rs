@@ -1,4 +1,4 @@
-//! Mixless — GPUI desktop app. Pure Rust UI, no web stack.
+//! mixless — GPUI desktop app. Pure Rust UI, no web stack.
 
 mod analysis;
 mod automix;
@@ -58,7 +58,7 @@ fn main() {
         env!("MIXLESS_REVISION"),
         env!("MIXLESS_BUILD_TIME")
     );
-    tracing::info!(build = %build_id, profile = env!("MIXLESS_BUILD_PROFILE"), "starting Mixless");
+    tracing::info!(build = %build_id, profile = env!("MIXLESS_BUILD_PROFILE"), "starting mixless");
 
     #[cfg(target_os = "macos")]
     self_install::relocate_from_disk_image();
@@ -71,7 +71,7 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
-                title: Some("Mixless".into()),
+                title: Some("mixless".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(24.))),
             }),

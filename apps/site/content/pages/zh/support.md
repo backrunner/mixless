@@ -2,7 +2,7 @@
 title: "支持"
 description: "查找常见问题，或反馈可复现的问题。"
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -17,7 +17,7 @@ imageType: image/png
 
 ## 反馈问题
 
-前往 [GitHub](https://github.com/backrunner/mixless/issues) 创建 issue。请提供 **About Mixless** 中的应用版本、macOS 版本、音频设备，以及最短的复现步骤。如果是过渡问题，请描述听到的现象、涉及的 Cue 或技法。
+前往 [GitHub](https://github.com/backrunner/mixless/issues) 创建 issue。请提供 **About mixless** 中的应用版本、macOS 版本、音频设备，以及最短的复现步骤。如果是过渡问题，请描述听到的现象、涉及的 Cue 或技法。
 
 不要提交私人凭据或无权分享的音乐文件。安全问题请按照 [SECURITY.md](https://github.com/backrunner/mixless/blob/main/SECURITY.md) 的方式报告。
 

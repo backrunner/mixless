@@ -1,4 +1,4 @@
-# dmgbuild settings for the Mixless installer image.
+# dmgbuild settings for the mixless installer image.
 # Passed via -D: app=<path to Mixless.app>, background=<path to background.png>.
 import os
 

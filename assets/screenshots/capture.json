@@ -1,0 +1,33 @@
+{
+  "capturedAt": "2026-09-21T17:31:34.423705+00:00",
+  "build": {
+    "version": "0.1.0-beta.3",
+    "channel": "dev",
+    "revision": "6e9e38c-dirty",
+    "profile": "debug",
+    "built": "2026-09-21T17:17:42Z"
+  },
+  "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+  "screenshots": {
+    "workspace": {
+      "width": 2880,
+      "height": 1800
+    },
+    "preferences": {
+      "width": 1520,
+      "height": 1520
+    },
+    "about": {
+      "width": 840,
+      "height": 848,
+      "capturedAt": "2026-09-21T17:54:43.760342+00:00",
+      "build": {
+        "version": "0.1.0-beta.3",
+        "channel": "dev",
+        "revision": "6e9e38c-dirty",
+        "profile": "debug",
+        "built": "2026-09-21T17:52:00Z"
+      }
+    }
+  }
+}

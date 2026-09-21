@@ -20,6 +20,7 @@
     {#each modes as item}<button type="button" aria-pressed={mode === item} onclick={() => mode = item}>{context.t(`automix.${item}`)}</button>{/each}
   </div>
   <div class="mx-transition-plot" aria-hidden="true">
+    <div class="mx-playhead"><span></span></div>
     <div class="mx-track-label"><b>A</b><span>{context.t('automix.outgoing')}</span></div>
     <div class="mx-track mx-track-a">{#each bars as i}<i style={`height:${height(i, false)}%`}></i>{/each}</div>
     <div class="mx-track-label"><b>B</b><span>{context.t('automix.incoming')}</span></div>

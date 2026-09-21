@@ -3,7 +3,7 @@ title: "MIDI controllers"
 description: "Map your hardware to the decks, mixer, and library."
 order: 6
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png

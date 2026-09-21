@@ -1,4 +1,6 @@
-# Mixless 图标
+# mixless 品牌与图标
+
+品牌规范见 [mixless-brand skill](../../.agents/skills/mixless-brand/SKILL.md)。产品名一律小写 `mixless`，独立字标为 `mixless.`，黄色句点与适度字距在应用和网站中保持一致。
 
 当前图标在历史版本的连续波形 M 上增加了柔和的珐琅质感：保留圆润的字母轮廓、比例与黄橙渐变，通过细腻的边缘高光、浅倒角和轻微阴影增加立体感。两侧与中央连接延续双唱盘和音乐交接的含义。
 
@@ -10,6 +12,7 @@
 | `m-generation.json` | 编辑提示词及生成参数，不含内联图片数据 |
 | `m-generation-metadata.json` | 模型、质量、时间、prediction ID、参考图路径及哈希 |
 | `app-icon-1024.png` | 1024 × 1024、RGB、不透明、sRGB 的方形母版 |
+| `readme-icon.png` | README 使用的透明圆角版本，336 × 336，显示为 112 px |
 | `icon-preview.png` | 实际 macOS 图标的 256／128／64／32／16 px 预览 |
 | `archive/wave-m/` | 原始扁平 M 的 SVG、PNG 与预览；本次编辑的参考来源 |
 | `archive/first-mixer/` | 第一版橙色混音台历史方案 |
@@ -31,6 +34,8 @@ cargo run --locked -p mixless-tools -- bundle
 生成器输出不裁角、不带 Alpha 的方形 sRGB 母版。macOS ICNS 与 asset catalog 另行使用圆角轮廓和透明外边距；标题栏、About 窗口与开发模式 Dock 都嵌入同一套生成资源。`icon-preview.png` 显示这些桌面图标的真实尺寸。
 
 导出和构建要求 macOS／Xcode；`mixless-tools` 输出本地未签名的 `target/app/Mixless.app`。修改母版后须重新导出并构建，应用下次启动时会加载新图标。
+
+运行 `pnpm -C apps/site assets` 从母版生成网站图标、32／64 px 圆角 favicon 和 README 圆角图标，同时为原生截图导出 README 圆角副本。README 与浏览器标签页的圆角写入图片透明通道，不依赖 CSS。
 
 ## 重新请求模型编辑
 

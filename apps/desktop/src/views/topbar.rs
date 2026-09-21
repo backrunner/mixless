@@ -205,8 +205,8 @@ impl UiState {
                     .child(gpui::img(crate::branding::mark()).flex_none().size(px(30.)))
                     .child(
                         gpui::div()
-                            .text_size(px(11.))
-                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(15.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
                             .child(crate::branding::wordmark()),
                     )

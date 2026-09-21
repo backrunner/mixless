@@ -1,6 +1,6 @@
 # Third-party notices
 
-Mixless source is licensed under MPL-2.0; see LICENSE.
+mixless source is licensed under MPL-2.0; see LICENSE.
 
 The vendored Signalsmith DSP and stretch sources in
 `crates/mixless-engine/native/vendor/` retain their own MIT licenses and copyright
@@ -34,13 +34,13 @@ is not a runtime or build dependency.
 "Spotify" is a trademark of Spotify AB. "YouTube" and "YouTube Music" are
 trademarks of Google LLC. "SoundCloud", "Bandcamp", "rekordbox" and "djay" are
 trademarks of their respective owners. References in this repository are for
-interoperability and comparison only; Mixless is not affiliated with, endorsed
+interoperability and comparison only; mixless is not affiliated with, endorsed
 by, or sponsored by any of these parties.
 
 ## Brand assets
 
-The Mixless name and the artwork under `assets/branding/` (including the app
+The mixless name and the artwork under `assets/branding/` (including the app
 icon, which was produced with AI-assisted generation; provenance is documented
 in `assets/branding/README.md`) identify the project. The MPL-2.0 license of
-the source code does not grant rights to use the Mixless name or logo to imply
+the source code does not grant rights to use the mixless name or logo to imply
 endorsement or to distribute confusingly similar builds.

@@ -16,7 +16,7 @@ void mixless_set_app_icon(const unsigned char *bytes, unsigned long length) {
 // Only the explicitly empty header regions initiate a native window drag.
 void mixless_configure_main_window(void) {
     for (NSWindow *window in NSApp.windows) {
-        if ([window.title isEqualToString:@"Mixless"]) {
+        if ([window.title isEqualToString:@"mixless"]) {
             window.movable = NO;
             window.movableByWindowBackground = NO;
         }
@@ -25,7 +25,7 @@ void mixless_configure_main_window(void) {
 void mixless_drag_main_window(void) {
     NSEvent *event = NSApp.currentEvent;
     NSWindow *window = event.window;
-    if (window && [window.title isEqualToString:@"Mixless"]) {
+    if (window && [window.title isEqualToString:@"mixless"]) {
         window.movable = YES;
         [window performWindowDragWithEvent:event];
         window.movable = NO;

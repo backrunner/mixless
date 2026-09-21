@@ -3,7 +3,7 @@ title: "Storage & offline use"
 description: "Understand your local library, models, and regenerable caches."
 order: 8
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -13,7 +13,7 @@ imageType: image/png
 
 Your library database stores track metadata, analysis, cue points, and playlist order. Preferences and MIDI mappings live beside it. Audio, artwork, stem data, and model artifacts remain on your disk.
 
-Mixless does not upload audio for inference. First use downloads verified HTDemucs and Basic Pitch ONNX models; after those are available, inference runs locally without Python or a cloud model API.
+mixless does not upload audio for inference. First use downloads verified HTDemucs and Basic Pitch ONNX models; after those are available, inference runs locally without Python or a cloud model API.
 
 ## Clear derived data
 
@@ -27,6 +27,6 @@ Import the music you need and allow model downloads and background analysis to f
 
 ## Remove application data
 
-Uninstalling Mixless does not automatically remove its application support directory. Back up the library and any downloaded audio you want to keep before removing that directory. The Storage preferences provide controls for inspecting local data locations.
+Uninstalling mixless does not automatically remove its application support directory. Back up the library and any downloaded audio you want to keep before removing that directory. The Storage preferences provide controls for inspecting local data locations.
 
 See the [privacy page](/privacy) for a complete explanation of network activity.

@@ -3,7 +3,7 @@ title: "Keyboard shortcuts"
 description: "Keep the decks under your fingertips."
 order: 7
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png

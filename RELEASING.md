@@ -1,4 +1,4 @@
-# Releasing Mixless
+# Releasing mixless
 
 The release pipeline (`.github/workflows/release.yml`) builds a universal
 (Apple Silicon + Intel) `Mixless.app`, signs and notarizes it with your Apple
@@ -23,7 +23,7 @@ all release pages. Release creation order does not determine version precedence.
 ## Updates
 
 `apps/desktop/src/update.rs` drives self-updates on every launch (release
-channels only; dev builds skip) and from **Mixless → Check for Updates…**:
+channels only; dev builds skip) and from **mixless → Check for Updates…**:
 
 - The manifest for the build's channel is fetched and compared with
   `CARGO_PKG_VERSION` by semver — only a strictly newer version installs, so
@@ -104,13 +104,14 @@ Notarization — one of:
 
 ## Cutting a release
 
-1. Push a tag: `git tag v1.2.3 && git push origin v1.2.3`
+1. Validate the workspace, desktop and website checks, and commit the intended release state. Add user-facing changes and known limitations to `.github/release-notes/<tag>.md`; the workflow attaches this file to the release.
+2. Push a tag: `git tag v1.2.3 && git push origin v1.2.3`
    (or `v1.2.3-beta.1` for beta).
-2. The workflow stamps the workspace version, builds both architectures,
+3. The workflow stamps the workspace version, builds both architectures,
    bundles, signs, notarizes and staples the app, then builds, signs,
    notarizes and staples the DMG, verifies the mount layout, and publishes a
    draft-turned-public release.
-3. Re-running for an existing tag: **Actions → Release → Run workflow** with
+4. Re-running for an existing tag: **Actions → Release → Run workflow** with
    the tag (and optionally an explicit channel override). Published releases
    are never overwritten — the workflow fails instead.
 

@@ -3,7 +3,7 @@ title: "键盘快捷键"
 description: "让常用操作留在指尖。"
 order: 7
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png

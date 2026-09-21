@@ -3,7 +3,7 @@ title: "从源代码构建"
 description: "运行原生应用，或参与官方网站开发。"
 order: 9
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -22,7 +22,7 @@ cd mixless
 
 脚本会查找支持 Metal 的 Xcode；显式设置的 `DEVELOPER_DIR` 优先。使用 `./dev.sh --build` 只构建、不启动。开发版本使用正常的本地应用资料库，不自动监视文件变化。
 
-首次构建会优化音频引擎与 UI 依赖，可能需要更长时间。修改后重新运行脚本。**Mixless → About Mixless** 中可查看版本、Git 修订和构建时间。
+首次构建会优化音频引擎与 UI 依赖，可能需要更长时间。修改后重新运行脚本。**mixless → About mixless** 中可查看版本、Git 修订和构建时间。
 
 ## 工作区
 
@@ -63,4 +63,4 @@ pnpm -C apps/site build
 
 检查项与提交约定见 [CONTRIBUTING.md](https://github.com/backrunner/mixless/blob/main/CONTRIBUTING.md)，签名 macOS 发行流程见 [RELEASING.md](https://github.com/backrunner/mixless/blob/main/RELEASING.md)。
 
-Mixless 采用 [MPL 2.0](https://github.com/backrunner/mixless/blob/main/LICENSE) 许可证。归属与组件许可见 [THIRD_PARTY_NOTICES.md](https://github.com/backrunner/mixless/blob/main/THIRD_PARTY_NOTICES.md)。
+mixless 采用 [MPL 2.0](https://github.com/backrunner/mixless/blob/main/LICENSE) 许可证。归属与组件许可见 [THIRD_PARTY_NOTICES.md](https://github.com/backrunner/mixless/blob/main/THIRD_PARTY_NOTICES.md)。

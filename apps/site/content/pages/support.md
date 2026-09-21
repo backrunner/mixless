@@ -2,7 +2,7 @@
 title: "Support"
 description: "Find a quick answer or report a reproducible problem."
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -17,7 +17,7 @@ imageType: image/png
 
 ## Report a problem
 
-Open an issue on [GitHub](https://github.com/backrunner/mixless/issues). Include your Mixless version from **About Mixless**, macOS version, audio device, and the shortest steps that reproduce the problem. For a transition issue, describe what you heard and which cue or technique was involved.
+Open an issue on [GitHub](https://github.com/backrunner/mixless/issues). Include your mixless version from **About mixless**, macOS version, audio device, and the shortest steps that reproduce the problem. For a transition issue, describe what you heard and which cue or technique was involved.
 
 Do not include private credentials or music files you cannot share. Security reports should follow [SECURITY.md](https://github.com/backrunner/mixless/blob/main/SECURITY.md).
 

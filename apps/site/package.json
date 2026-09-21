@@ -11,7 +11,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:content": "svedocs check --translations --strict",
     "assets": "node scripts/sync-assets.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:releases": "node --test server/releases.test.mjs"
   },
   "dependencies": {
     "@sveltejs/adapter-static": "^3.0.10",
@@ -33,7 +34,7 @@
     "wrangler": "4.135.0"
   },
   "packageManager": "pnpm@12.3.4",
-  "description": "Mixless official website and bilingual user guide.",
+  "description": "mixless official website and bilingual user guide.",
   "engines": {
     "node": ">=22.12.0"
   }

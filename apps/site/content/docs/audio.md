@@ -3,13 +3,13 @@ title: "Audio & monitoring"
 description: "Set up master and headphone outputs, then balance your levels."
 order: 5
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
 ---
 
-Open **Mixless → Preferences…** with **Cmd+,** and choose **Audio I/O**.
+Open **mixless → Preferences…** with **Cmd+,** and choose **Audio I/O**.
 
 ## Output devices
 
@@ -42,6 +42,6 @@ AutoMix may temporarily add up to 6 dB when a sustained overlap loses energy. **
 
 General saves waveform layout, effects visibility, quantize, Key Lock, vinyl/slip, crossfader curve/reverse, and filter/EQ resonance. Changes also apply to the current session.
 
-![Mixless General preferences](/images/preferences.webp)
+![mixless General preferences](/images/preferences.webp)
 
 Microphone and Line In capture are not implemented. For controller setup, continue to [MIDI mapping](/docs/midi).

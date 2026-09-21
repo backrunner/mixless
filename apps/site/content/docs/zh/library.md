@@ -3,7 +3,7 @@ title: "音乐资料库"
 description: "导入文件夹、整理歌单，把曲目放上唱盘。"
 order: 2
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -45,7 +45,7 @@ imageType: image/png
 
 ## 找不到音频文件
 
-原文件移动后，Mixless 会在后台查找其他曲目的目录、已导入文件夹和下载目录。内容一致的文件会自动重新关联，保留曲目身份、歌单和 Cue。自动查找有范围限制；位于已知目录之外的文件可能需要手动选择。
+原文件移动后，mixless 会在后台查找其他曲目的目录、已导入文件夹和下载目录。内容一致的文件会自动重新关联，保留曲目身份、歌单和 Cue。自动查找有范围限制；位于已知目录之外的文件可能需要手动选择。
 
 仍找不到时，曲目行会显示 **File not found**。悬停可查看原路径。点击 **Locate file…** 选择对应的本地音频并继续准备；文件夹或磁盘恢复可用后，可点 **Retry** 再次查找。**Remove** 从资料库和所有歌单移除该曲目，不删除音频文件。这些操作也在曲目右键菜单中。
 

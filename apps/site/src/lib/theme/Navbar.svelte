@@ -2,6 +2,7 @@
   import { MobileNav, SearchDialog } from 'svedocs/theme';
   import { resolveLocalizedHref } from 'svedocs/theme/headless';
   import type { SvedocsNavbarProps } from 'svedocs/theme/types';
+  import Wordmark from '../brand/Wordmark.svelte';
 
   let { context, mobileTree = [], mobileCurrentPath = '', mobileMenuId = 'mixless-menu',
     mobileMenuOpen = false, onToggleMobileMenu, onCloseMobileMenu }: SvedocsNavbarProps = $props();
@@ -11,9 +12,9 @@
 
 <header class="mx-header" class:mx-menu-open={mobileMenuOpen}>
   <div class="mx-header-inner">
-    <a class="mx-brand" href={resolveLocalizedHref('/', context)} aria-label="Mixless">
+    <a class="mx-brand" href={resolveLocalizedHref('/', context)} aria-label="mixless">
       <img src="/brand/icon.png" width="34" height="34" alt="" />
-      <span>mixless<span class="mx-brand-dot" aria-hidden="true">.</span></span>
+      <Wordmark />
     </a>
     <nav class="mx-nav" aria-label={context.t('nav.primary')}>
       {#each context.config.theme.nav as item}
@@ -25,7 +26,7 @@
       {#if alternate}
         <a class="mx-language" href={alternate.routePath} aria-label={context.t('site.language')} lang={otherLanguage === 'zh' ? 'zh-CN' : 'en'}>{otherLanguage === 'zh' ? '中' : 'EN'}</a>
       {/if}
-      <a class="mx-header-download" href="https://github.com/backrunner/mixless/releases">{context.t('site.download')}</a>
+      <a class="mx-header-download" href="/download" data-sveltekit-reload>{context.t('site.download')} <span aria-hidden="true">↓</span></a>
       <button class="mx-menu-button" type="button" onclick={onToggleMobileMenu} aria-expanded={mobileMenuOpen} aria-controls={mobileMenuId} aria-label={context.t(mobileMenuOpen ? 'nav.mobile.close' : 'nav.mobile.open')}>
         {#if mobileMenuOpen}<span aria-hidden="true">×</span>{:else}<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h16M4 16h16" /></svg>{/if}
       </button>
@@ -36,7 +37,8 @@
       {#each context.config.theme.nav as item}
         <a href={resolveLocalizedHref(item.href, context)} onclick={onCloseMobileMenu}>{item.labelKey ? context.t(item.labelKey) : item.label}</a>
       {/each}
-      <a href="https://github.com/backrunner/mixless/releases">{context.t('site.download')}</a>
+      <a href="/download" data-sveltekit-reload>{context.t('site.download')}</a>
+      <a href={resolveLocalizedHref('/#downloads', context)} onclick={onCloseMobileMenu}>{context.t('download.other')}</a>
     </nav>
     <MobileNav items={mobileTree} currentPath={mobileCurrentPath} {context} />
   </div>

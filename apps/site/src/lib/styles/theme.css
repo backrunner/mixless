@@ -1,4 +1,4 @@
-/* Mixless owns the visual theme. svedocs retains routing, content, and accessible tools. */
+/* mixless owns the visual theme. svedocs retains routing, content, and accessible tools. */
 :root,
 :root[data-theme="dark"],
 html:has(.sd-root[data-theme="dark"]),
@@ -9,8 +9,8 @@ html:has(.sd-root[data-theme="dark"]),
   --sd-ink: #f0edef;
   --sd-muted: #a09ba6;
   --sd-line: #29262d;
-  --sd-accent: #ffad66;
-  --sd-accent-2: #baabd1;
+  --sd-accent: #ffb224;
+  --sd-accent-2: #ff7550;
   --sd-grid-line: transparent;
   --sd-radius: 10px;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
@@ -25,7 +25,7 @@ body { -webkit-font-smoothing: antialiased; }
   --sd-ink: #f0edef !important;
   --sd-muted: #a09ba6 !important;
   --sd-line: #29262d !important;
-  --sd-accent-2: #baabd1 !important;
+  --sd-accent-2: #ff7550 !important;
   --sd-grid-line: transparent !important;
 }
 button, a, input { -webkit-tap-highlight-color: transparent; }
@@ -33,7 +33,14 @@ button { cursor: pointer; }
 ::selection { background: #684326; color: #fff; }
 :focus-visible { outline: 2px solid #ffc28c; outline-offset: 5px; border-radius: 3px; }
 [hidden] { display: none !important; }
-.sd-root, .sd-root[data-surface="reading"] { background: var(--sd-bg); }
+.sd-root, .sd-root[data-surface="reading"] {
+  background-color: var(--sd-bg);
+  background-image:
+    radial-gradient(ellipse 950px 620px at 8% 80px, #ab794011, transparent 75%),
+    radial-gradient(ellipse 850px 700px at 100% 500px, #8275960c, transparent 75%);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
 .sd-root::after, .sd-root[data-surface="reading"]::after { display: none; }
 .sd-home { margin: 0; padding: 0; }
 .sd-skip { z-index: 200; border-radius: 5px; }
@@ -41,8 +48,9 @@ button { cursor: pointer; }
 .mx-header { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); width: min(1120px, calc(100% - 64px)); z-index: 40; border: 1px solid #ffffff14; border-radius: 20px; background: #1c1b1fe8; backdrop-filter: blur(24px) saturate(120%); -webkit-backdrop-filter: blur(24px) saturate(120%); box-shadow: 0 10px 32px #0003; }
 .mx-header.mx-menu-open { background: #1c1b1f; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .mx-header-inner { padding: 0 20px; height: 66px; display: flex; align-items: center; gap: 38px; }
-.mx-brand { display: inline-flex; gap: 9px; align-items: center; font-size: 23px; font-weight: 620; letter-spacing: -.05em; text-decoration: none; color: #f5f2ef; }
+.mx-brand { display: inline-flex; gap: 9px; align-items: center; font-size: 23px; font-weight: 600; letter-spacing: -.025em; text-decoration: none; color: #f5f2ef; }
 .mx-brand img { border-radius: 8px; width: 30px; height: 30px; }
+.mx-wordmark { font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 600; letter-spacing: -.025em; font-kerning: normal; white-space: nowrap; }
 .mx-brand-dot { color: #f5d90a; }
 .mx-nav { display: flex; align-items: center; gap: 25px; }
 .mx-nav a { color: #b1acb7; font-size: 13px; font-weight: 450; text-decoration: none; white-space: nowrap; transition: color .15s; }
@@ -54,7 +62,7 @@ button { cursor: pointer; }
 .mx-header-tools .sd-search-trigger::before { content: ''; display: block; flex: none; width: 22px; height: 22px; background: currentColor; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7.5'/%3E%3Cpath d='m16.5 16.5 4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat; }
 .mx-language { font-size: 12px; padding: 9px 6px; text-decoration: none; color: #b1acb7; }
 .mx-language:hover { color: #f5efea; }
-.mx-header-download { display: inline-flex; align-items: center; padding: 9px 15px; border-radius: 10px; background: #f0ebe6; color: #292323; font-size: 12px; font-weight: 550; text-decoration: none; transition: background .18s; }
+.mx-header-download { display: inline-flex; align-items: center; gap: 10px; padding: 9px 15px; border-radius: 10px; background: #f0ebe6; color: #292323; font-size: 12px; font-weight: 550; text-decoration: none; transition: background .18s; }
 .mx-header-download:hover { background: #fffaf5; }
 .mx-menu-button { display: none; align-items: center; justify-content: center; background: transparent; color: var(--sd-ink); border: 0; width: 34px; height: 34px; padding: 4px; font-size: 27px; }
 .mx-menu-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.5; }

@@ -557,7 +557,7 @@ impl Preferences {
                 .text_size(px(11.))
                 .text_color(theme::MUTED)
                 .child(
-                    "Derived data Mixless recomputes on demand. Clearing never removes \
+                    "Derived data mixless recomputes on demand. Clearing never removes \
                      source audio, playlists or saved cues."
                         .to_string(),
                 ),
@@ -1560,7 +1560,7 @@ pub fn open(core: Arc<AppCore>, cx: &mut App) {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some("Mixless Preferences".into()),
+            title: Some("mixless Preferences".into()),
             appears_transparent: true,
             traffic_light_position: Some(gpui::point(px(16.), px(18.))),
             ..Default::default()

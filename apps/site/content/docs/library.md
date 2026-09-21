@@ -3,7 +3,7 @@ title: "Your music library"
 description: "Import folders, arrange playlists, and load your decks."
 order: 2
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -45,8 +45,8 @@ Manage derived files in [Storage](/docs/storage).
 
 ## Missing audio files
 
-If a source file has moved, Mixless searches known track folders, imported folders and its download directory in the background. Matching file contents reconnect automatically, preserving the track, playlists and cues. The search is bounded; files outside known folders may need to be selected manually.
+If a source file has moved, mixless searches known track folders, imported folders and its download directory in the background. Matching file contents reconnect automatically, preserving the track, playlists and cues. The search is bounded; files outside known folders may need to be selected manually.
 
 If the file still cannot be located, the row shows **File not found**. Hover the label to see the saved path. **Locate file…** selects the corresponding local audio file and resumes preparation; **Retry** searches again after a folder or disk becomes available. **Remove** removes the track from the library and all playlists without deleting audio. These actions are also available in the track's right-click menu.
 
-A manually selected file is checked before the saved path changes. If its contents differ, Mixless refreshes analysis and keeps manually placed cues. Other analysis failures remain labeled **Analysis failed**; hover that label for the error.
+A manually selected file is checked before the saved path changes. If its contents differ, mixless refreshes analysis and keeps manually placed cues. Other analysis failures remain labeled **Analysis failed**; hover that label for the error.

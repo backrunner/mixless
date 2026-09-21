@@ -3,13 +3,13 @@ title: "音频与预听"
 description: "设置主输出和耳机输出，理清增益与电平。"
 order: 5
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
 ---
 
-按 **Cmd+,** 打开 **Mixless → Preferences…**，选择 **Audio I/O**。
+按 **Cmd+,** 打开 **mixless → Preferences…**，选择 **Audio I/O**。
 
 ## 输出设备
 
@@ -42,6 +42,6 @@ PFL 监听经过唱盘限制器、但尚未经过通道推子的信号。Master 
 
 General 保存波形布局、效果器显示、量化、Key Lock、vinyl/slip、交叉推子曲线与反向，以及滤波/EQ 共振。修改也会立即应用于当前会话。
 
-![Mixless 的 General 设置界面](/images/preferences.webp)
+![mixless 的 General 设置界面](/images/preferences.webp)
 
 目前尚未实现麦克风或 Line In 输入采集。控制器设置见 [MIDI 映射](/docs/midi)。

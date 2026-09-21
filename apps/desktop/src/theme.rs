@@ -1,4 +1,4 @@
-//! Mixless visual language: Pioneer DJ inspired matte black + amber.
+//! mixless visual language: Pioneer DJ inspired matte black + amber.
 //! Semantic waveform/key colors are independent of the amber controls.
 
 use gpui::{Hsla, Rgba};

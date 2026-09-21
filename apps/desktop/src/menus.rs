@@ -65,20 +65,20 @@ pub fn init(core: Arc<AppCore>, main_window: WindowHandle<UiState>, cx: &mut App
     ]);
     cx.set_menus(vec![
         Menu {
-            name: "Mixless".into(),
+            name: "mixless".into(),
             items: vec![
-                MenuItem::action("About Mixless", About),
+                MenuItem::action("About mixless", About),
                 MenuItem::separator(),
                 MenuItem::action("Preferences...", Preferences),
                 MenuItem::action("Check for Updates...", CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action("Hide Mixless", Hide),
+                MenuItem::action("Hide mixless", Hide),
                 MenuItem::action("Hide Others", HideOthers),
                 MenuItem::action("Show All", ShowAll),
                 MenuItem::separator(),
-                MenuItem::action("Quit Mixless", Quit),
+                MenuItem::action("Quit mixless", Quit),
             ],
         },
         Menu {

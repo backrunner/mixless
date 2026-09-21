@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { handleReleaseRequest } from '../server/releases.mjs';
 
 const root = fileURLToPath(new URL('../build/', import.meta.url));
 const mime = {
@@ -16,6 +17,12 @@ await stat(resolve(root, 'index.html'));
 const server = createServer(async (request, response) => {
   try {
     const path = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+    if (['/download', '/download/', '/api/releases', '/api/releases/'].includes(path)) {
+      const result = await handleReleaseRequest(new Request(`http://localhost${request.url}`, { method: request.method }));
+      response.writeHead(result.status, Object.fromEntries(result.headers));
+      response.end(Buffer.from(await result.arrayBuffer()));
+      return;
+    }
     let file = resolve(root, `.${path}`);
     if (file !== resolve(root) && !file.startsWith(resolve(root) + sep)) {
       response.writeHead(400).end();
@@ -40,5 +47,5 @@ const server = createServer(async (request, response) => {
   }
 });
 server.listen(Number(process.argv[2] ?? 4173), '127.0.0.1', () => {
-  console.log(`Mixless static preview: http://127.0.0.1:${server.address().port}`);
+  console.log(`mixless static preview: http://127.0.0.1:${server.address().port}`);
 });

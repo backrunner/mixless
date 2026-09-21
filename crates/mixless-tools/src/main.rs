@@ -169,8 +169,8 @@ fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>Mixless</string>
-<key>CFBundleDisplayName</key><string>Mixless</string>
+<key>CFBundleName</key><string>mixless</string>
+<key>CFBundleDisplayName</key><string>mixless</string>
 <key>CFBundleIdentifier</key><string>app.mixless.desktop</string>
 <key>CFBundleExecutable</key><string>mixless</string>
 <key>CFBundleIconFile</key><string>Mixless.icns</string>
@@ -183,7 +183,7 @@ fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>
 <key>MixlessReleaseChannel</key><string>{channel}</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
-<key>NSHumanReadableCopyright</key><string>Mixless contributors. MPL-2.0.</string>
+<key>NSHumanReadableCopyright</key><string>mixless contributors. MPL-2.0.</string>
 </dict></plist>
 "#
     );

@@ -1,6 +1,6 @@
-# Mixless 文档索引
+# mixless 文档索引
 
-Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只做 macOS**）：双唱盘、本地资料库与离线预分析、Spotify 歌单浏览、把歌单曲目获取成本地文件后再混。实时音频与分析在 Rust，原生 GPUI 只渲染 UI。
+mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只做 macOS**）：双唱盘、本地资料库与离线预分析、Spotify 歌单浏览、把歌单曲目获取成本地文件后再混。实时音频与分析在 Rust，原生 GPUI 只渲染 UI。
 
 **一句话**：像 djay Pro 的双碟工作台；歌单走 Spotify，音频落到本地后再分析、预听、自动混。
 
@@ -27,10 +27,13 @@ Mixless 是基于 GPUI 0.2 的本地 AI Mixing / AI DJ 桌面应用（**v1 只�
 
 音频分析与 AutoMix 分析规则的开发、调参和评审遵循 [mixless-audio-analysis skill](skills/mixless-audio-analysis/SKILL.md)，包括反例、独立录音评估和证据边界。
 
+应用、网站、README 与安装器的命名、字标、圆角图标、动效和截图遵循 [mixless-brand skill](skills/mixless-brand/SKILL.md)。
+
 上表是早期设计资料，不能作为已实现功能或当前验收结果。原先的许可证、固定混音长度和设备默认值描述存在过时内容；当前代码、根目录 README 与 LICENSE 优先。
 
 - [AutoMix 使用和工程参考](reference/AUTOMIX.md)
 - [最新过渡改动与验证](history/2026-09-13-automix.md)
+- [恢复窗口交接与曲尾重叠](history/2026-09-21-recovery-handoffs.md)
 - [DJ 教学、分轨与音符模型调研](reference/automix-research.md)
 - [Rust 分轨、音符与正式 AutoMix 接入](reference/native-inference.md)
 - [独立声部实时播放与性能](reference/stem-playback.md)

@@ -3,7 +3,7 @@ use gpui::{HighlightStyle, Image, ImageFormat, StyledText};
 use std::sync::{Arc, OnceLock};
 
 pub fn wordmark() -> StyledText {
-    StyledText::new("MIXLESS.").with_highlights([(
+    StyledText::new("mixless.").with_highlights([(
         7..8,
         HighlightStyle {
             color: Some(crate::theme::BRAND_YELLOW.into()),

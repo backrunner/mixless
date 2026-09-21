@@ -3,7 +3,7 @@ title: "MIDI 控制器"
 description: "将硬件映射到唱盘、混音器和资料库。"
 order: 6
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png

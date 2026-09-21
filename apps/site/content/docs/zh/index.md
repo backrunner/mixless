@@ -1,19 +1,19 @@
 ---
 title: "第一次混音"
-description: "安装 Mixless，导入音乐，开始一场连贯的混音。"
+description: "安装 mixless，导入音乐，开始一场连贯的混音。"
 order: 1
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
 ---
 
-Mixless 是原生 macOS DJ 工作台。你可以亲手混音，让 AutoMix 完成过渡，也可以随时在两者之间切换。
+mixless 是原生 macOS DJ 工作台。你可以亲手混音，让 AutoMix 完成过渡，也可以随时在两者之间切换。
 
 ## 安装
 
-前往 [GitHub Releases](https://github.com/backrunner/mixless/releases) 获取安装包。打开 DMG，将 **Mixless** 拖入 **Applications（应用程序）**。应用面向 **macOS 12 及以上版本**，支持 Apple Silicon 和 Intel。标为 **Pre-release** 的版本属于 beta 通道。
+前往 [直接下载](https://mixless.alkinum.com/download) 获取安装包。打开 DMG，将 **mixless** 拖入 **Applications（应用程序）**。应用面向 **macOS 12 及以上版本**，支持 Apple Silicon 和 Intel。下载优先提供最新正式版；尚无正式版时提供最新 beta。[其他下载选项](https://mixless.alkinum.com/zh#downloads)包含 beta、历史版本、校验文件与源码。
 
 如果需要从源代码构建，请阅读[开发指南](/docs/development)。
 
@@ -25,13 +25,13 @@ Mixless 是原生 macOS DJ 工作台。你可以亲手混音，让 AutoMix 完�
 
 ## 检查输出设备
 
-按 **Cmd+,** 打开 **Mixless → Preferences…（设置）**。在 **Audio I/O** 中选择主输出设备并应用，从舒适的音量开始。你也可以配置独立耳机输出，详见[音频设置](/docs/audio)。
+按 **Cmd+,** 打开 **mixless → Preferences…（设置）**。在 **Audio I/O** 中选择主输出设备并应用，从舒适的音量开始。你也可以配置独立耳机输出，详见[音频设置](/docs/audio)。
 
 ## 开始播放
 
 1. 选中要播放的歌单。
 2. 拖动曲目，安排播放顺序。
-3. 按下 **AUTO**。如果唱盘为空，Mixless 会载入并播放列表中的第一首可播放曲目。
+3. 按下 **AUTO**。如果唱盘为空，mixless 会载入并播放列表中的第一首可播放曲目。
 4. 后续曲目可以顺序或随机播放。AutoMix 会循环整个歌单。
 
 也可以把曲目拖到 A 或 B 唱盘，按 Play 手动混音。音频完成解码和波形准备后即可播放，节拍和调性分析会随后补齐。
@@ -44,4 +44,4 @@ Mixless 是原生 macOS DJ 工作台。你可以亲手混音，让 AutoMix 完�
 
 ## 更新
 
-发行版启动时会检查所属的 stable 或 beta 通道，也可以选择 **Mixless → Check for Updates…** 手动检查。更新安装完成后，按照提示重启应用。开发版本不自动检查更新。
+发行版启动时会检查所属的 stable 或 beta 通道，也可以选择 **mixless → Check for Updates…** 手动检查。更新安装完成后，按照提示重启应用。开发版本不自动检查更新。

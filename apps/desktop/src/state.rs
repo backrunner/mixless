@@ -131,7 +131,7 @@ pub fn app_core() -> Arc<AppCore> {
             let backup = library_recovery::quarantine(&db_path)
                 .unwrap_or_else(|e| panic!("cannot preserve incompatible library: {e}"));
             let notice = format!(
-                "Your library was written by a newer version of Mixless. A fresh library was opened; \
+                "Your library was written by a newer version of mixless. A fresh library was opened; \
                  the previous database and its journals are preserved in {}. Reinstall the newer \
                  version and restore these files to recover it.",
                 display_dir(&backup)

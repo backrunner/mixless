@@ -2,7 +2,7 @@
 title: "隐私说明"
 description: "音乐在你的 Mac 上处理。这里说明应用保存哪些数据，以及何时访问网络。"
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -10,7 +10,7 @@ imageType: image/png
 
 ## 设备上的数据
 
-Mixless 不含遥测、分析统计、跟踪或崩溃上报。资料库、分析、波形、分轨、Cue、歌单、偏好设置和 MIDI 映射均保存在本地，不会上传音频或分析结果进行推理。
+mixless 不含遥测、分析统计、跟踪或崩溃上报。资料库、分析、波形、分轨、Cue、歌单、偏好设置和 MIDI 映射均保存在本地，不会上传音频或分析结果进行推理。
 
 ## 网络访问
 

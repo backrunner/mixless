@@ -1,12 +1,12 @@
 #!/bin/bash
-# Build the Mixless installer DMG from a signed, notarized .app bundle.
+# Build the mixless installer DMG from a signed, notarized .app bundle.
 # Usage: scripts/make-macos-dmg.sh <Mixless.app> <output.dmg> [volume name]
 # Requires dmgbuild on PATH: python3 -m pip install dmgbuild (or pipx).
 set -euo pipefail
 
 app="${1:?usage: make-macos-dmg.sh <Mixless.app> <output.dmg> [volume name]}"
 out="${2:?usage: make-macos-dmg.sh <Mixless.app> <output.dmg> [volume name]}"
-volname="${3:-Mixless}"
+volname="${3:-mixless}"
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 [ -d "${app}/Contents/MacOS" ] || { echo "Not an app bundle: ${app}" >&2; exit 1; }

@@ -51,13 +51,13 @@ fn notice(entry: &Entry) -> String {
     match &entry.status {
         Status::Checking => "Checking for updates…".into(),
         Status::Downloading { version, percent } => {
-            format!("Downloading Mixless {version} — {percent}%")
+            format!("Downloading mixless {version} — {percent}%")
         }
-        Status::Installing { version } => format!("Installing Mixless {version}…"),
+        Status::Installing { version } => format!("Installing mixless {version}…"),
         Status::Ready { version } => {
-            format!("Mixless {version} installed — restart to finish updating")
+            format!("mixless {version} installed — restart to finish updating")
         }
-        Status::UpToDate => format!("Mixless {} is up to date", env!("CARGO_PKG_VERSION")),
+        Status::UpToDate => format!("mixless {} is up to date", env!("CARGO_PKG_VERSION")),
         Status::Failed(error) => format!("Update failed: {error}"),
     }
 }

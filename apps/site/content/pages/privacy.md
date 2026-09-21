@@ -2,7 +2,7 @@
 title: "Privacy"
 description: "Your music is processed on your Mac. Here is what the app stores and when it connects."
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -10,7 +10,7 @@ imageType: image/png
 
 ## On your device
 
-Mixless contains no telemetry, analytics, tracking, or crash reporting. Your library, analysis, waveforms, stems, cue points, playlists, preferences, and MIDI maps are stored locally. Audio and analysis are not uploaded for inference.
+mixless contains no telemetry, analytics, tracking, or crash reporting. Your library, analysis, waveforms, stems, cue points, playlists, preferences, and MIDI maps are stored locally. Audio and analysis are not uploaded for inference.
 
 ## Network activity
 

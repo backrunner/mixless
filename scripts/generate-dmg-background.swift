@@ -74,7 +74,7 @@ func draw(_ ctx: CGContext) {
         label.draw(at: CGPoint(x: (W - size.width) / 2, y: y(top) - size.height))
     }
     centered(
-        "Double-click Mixless to install",
+        "Double-click mixless to install",
         328,
         NSFont.systemFont(ofSize: 15, weight: .semibold),
         text

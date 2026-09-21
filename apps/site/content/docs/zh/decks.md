@@ -3,7 +3,7 @@ title: "唱盘、Cue 与效果器"
 description: "使用双唱盘、控制分轨，掌握节拍网格。"
 order: 4
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png

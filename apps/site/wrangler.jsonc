@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mixless-site",
+  "main": "worker.mjs",
   "account_id": "b6754402d59fc29ee8b62119014fec89",
   "compatibility_date": "2026-09-20",
   "workers_dev": false,
@@ -12,6 +13,8 @@
     }
   ],
   "assets": {
+    "binding": "ASSETS",
+    "run_worker_first": ["/download", "/download/", "/api/releases", "/api/releases/"],
     "directory": "build",
     "html_handling": "drop-trailing-slash",
     "not_found_handling": "404-page"

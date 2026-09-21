@@ -1,6 +1,6 @@
 # Contributing
 
-Mixless currently targets macOS. Install current stable Rust and full Xcode
+mixless currently targets macOS. Install current stable Rust and full Xcode
 with the Metal compiler, then run `./dev.sh --check` and `./dev.sh`.
 
 `dev.sh` builds and refreshes `target/app/Mixless.app` with the workspace

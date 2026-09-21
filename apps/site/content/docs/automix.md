@@ -3,7 +3,7 @@ title: "AutoMix"
 description: "Build a continuous set while keeping control of each transition."
 order: 3
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -17,7 +17,7 @@ Selecting a playlist prepares analyses and adjacent transitions in the backgroun
 
 ## How transitions are chosen
 
-Mixless compares entry and exit regions using local tempo, phrase boundaries, key compatibility, energy, rhythm, and vocal evidence. Prepared stems and note analysis add information about foreground material and harmonic movement.
+mixless compares entry and exit regions using local tempo, phrase boundaries, key compatibility, energy, rhythm, and vocal evidence. Prepared stems and note analysis add information about foreground material and harmonic movement.
 
 | Technique | Musical purpose |
 | --- | --- |

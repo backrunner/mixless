@@ -3,7 +3,7 @@ title: "存储与离线使用"
 description: "了解本地资料库、模型和可重新生成的缓存。"
 order: 8
 image: /images/social.png
-imageAlt: "Mixless 双唱盘工作台"
+imageAlt: "mixless 双唱盘工作台"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png
@@ -13,7 +13,7 @@ imageType: image/png
 
 资料库数据库保存曲目元数据、分析结果、Cue 点和歌单顺序，偏好设置与 MIDI 映射保存在旁边。音频、封面、分轨与模型文件保留在磁盘上。
 
-Mixless 不上传音频进行推理。首次使用会下载经过校验的 HTDemucs 和 Basic Pitch ONNX 模型；模型就绪后，推理在本地运行，不需要 Python 或云模型 API。
+mixless 不上传音频进行推理。首次使用会下载经过校验的 HTDemucs 和 Basic Pitch ONNX 模型；模型就绪后，推理在本地运行，不需要 Python 或云模型 API。
 
 ## 清理派生数据
 
@@ -27,6 +27,6 @@ Mixless 不上传音频进行推理。首次使用会下载经过校验的 HTDem
 
 ## 删除应用数据
 
-卸载 Mixless 不会自动删除应用支持目录。移除该目录前，请备份需要保留的资料库和下载音频。Storage 设置提供查看本地数据位置的入口。
+卸载 mixless 不会自动删除应用支持目录。移除该目录前，请备份需要保留的资料库和下载音频。Storage 设置提供查看本地数据位置的入口。
 
 完整网络行为见[隐私说明](/privacy)。

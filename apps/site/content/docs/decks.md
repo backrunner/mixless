@@ -3,7 +3,7 @@ title: "Decks, cues & effects"
 description: "Use the dual decks, shape stems, and work with your beat grids."
 order: 4
 image: /images/social.png
-imageAlt: "Mixless dual-deck workspace"
+imageAlt: "mixless dual-deck workspace"
 imageWidth: 1200
 imageHeight: 630
 imageType: image/png

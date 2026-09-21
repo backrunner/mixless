@@ -48,7 +48,7 @@ fn relocate(install_only: bool) -> io::Result<()> {
     if dest == bundle {
         return Ok(());
     }
-    tracing::info!(from = %bundle.display(), to = %dest.display(), "installing Mixless");
+    tracing::info!(from = %bundle.display(), to = %dest.display(), "installing mixless");
     install_bundle(&bundle, &dest)?;
     // The installed copy keeps the quarantine attribute; clearing it skips the
     // first-launch Gatekeeper dialog. Best effort: a notarized copy still

@@ -85,7 +85,7 @@ impl UiState {
                         .map_err(|e| e.to_string())?
                         .as_millis();
                     core.engine
-                        .start_recording(&dir.join(format!("Mixless-{timestamp}.wav")))
+                        .start_recording(&dir.join(format!("mixless-{timestamp}.wav")))
                 })()
             };
             let _ = tx.send(result);
