@@ -110,7 +110,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         for (start, end) in crate::recovery::windows(t) {
             let mut beat = g.ceil_bar(start);
             while g.sec(beat) <= end + 0.05 {
-                if g.sec(beat) >= earliest {
+                if g.sec(beat) >= earliest.max((t.duration_sec * 0.25).min(60.)) {
                     window_points.push(beat);
                 }
                 beat += g.meter();

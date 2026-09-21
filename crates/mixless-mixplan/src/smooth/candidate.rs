@@ -39,7 +39,7 @@ pub(super) fn pair(
     if options.strategy == Some(S::ScratchCut) && (blend || loop_roll) {
         return None;
     }
-    let hold = options.strategy == Some(S::EnergyHold) && blend;
+    let requested_hold = options.strategy == Some(S::EnergyHold) && blend;
     if options.strategy == Some(S::DropCut) && (blend || loop_roll) {
         return None;
     }
@@ -84,6 +84,16 @@ pub(super) fn pair(
     let start_beat = out - n * ga.meter();
     let start = ga.sec(start_beat);
     let end = ga.sec(out);
+    // A short recovery need not fit the entire tempo migration. Keep A's
+    // sounding clock and carry B's offset into the next pair instead of
+    // rejecting a safe overlap until the outro. 1.875 is the maximum slope
+    // of the quintic ease used by timing::prepare.
+    let hold = blend
+        && (requested_hold
+            || options.strategy.is_none()
+                && crate::recovery::contains(a, start, end)
+                && 1.875 * correction.ln().abs() / ((end - start) / ctx.offset_a.rate).max(0.01)
+                    > MAX_LOG_TEMPO_PER_SEC);
     // Deterministic rotation between equally valid techniques — the pair, the
     // exit and the incoming entry decide, so the same inputs always produce
     // the same strategy.
@@ -227,19 +237,24 @@ pub(super) fn pair(
     // Exiting onto the downbeat that resolves A's build throws the tension
     // away unless B's own drop lands exactly where A leaves (a build-up
     // swap). A short suspension at a peak end still owes its next downbeat.
-    let bar_a = 240. / outgoing_bpm;
     let leaving_into_drop = !explicit_out
-        && crate::drops::next_peak_start(a, end).is_some_and(|p| p <= end + 8.5 * bar_a)
         && (mixless_protocol::drop_suspension(a, end).is_some()
-            || !crate::drops::peaks(a)
-                .iter()
-                .any(|p| (p.1 - end).abs() < 0.05));
+            || crate::drops::next_peak_start(a, end).is_some_and(|p| (p - end).abs() < 0.08)
+            || a.sections.iter().any(|s| {
+                s.label == mixless_protocol::SectionLabel::BuildUp
+                    && end > s.start_sec + 0.08
+                    && end <= s.end_sec + 0.08
+            }));
     if leaving_into_drop {
         let lands = if blend || loop_roll { b_end } else { bin };
         if mixless_protocol::drop_suspension(a, end).is_some()
-            || !crate::drops::peaks(b)
-                .iter()
-                .any(|p| (p.0 - lands).abs() < 0.08)
+            || !(crate::drops::peaks(b).iter().any(|p| (p.0 - lands).abs() < 0.08)
+                // A single, continuous peak has no surrounding sections for
+                // peak_ranges to merge, but can still receive a build-up swap.
+                || b.sections.len() == 1 && b.sections.iter().any(|s| {
+                    matches!(s.label, mixless_protocol::SectionLabel::Drop | mixless_protocol::SectionLabel::Chorus)
+                        && (s.start_sec - lands).abs() < 0.08
+                }))
         {
             return None;
         }
@@ -516,7 +531,22 @@ pub(super) fn pair(
     {
         return None;
     }
-    let instant = !blend
+    // A released instrumental recovery can carry a short native-rate overlap
+    // even when incompatible tempi rule out a beat blend. Require measured
+    // voice coverage throughout; a section label alone cannot authorize it.
+    let short_overlap = !blend
+        && !loop_roll
+        && !boundary_only
+        && n == 1.
+        && recovery
+        && !a.moments.is_empty()
+        && (0..32).all(|i| {
+            let sec = start + (end - start) * (i as f32 + 0.5) / 32.;
+            crate::continuity::moment(a, sec).is_some()
+                && crate::continuity::voice_active(a, sec) < 0.35
+        });
+    let instant = !short_overlap
+        && !blend
         && !loop_roll
         && n == 1.
         && !drop_cut
@@ -529,7 +559,15 @@ pub(super) fn pair(
     if boundary_only && !instant && !drop_cut && !spinback {
         return None;
     }
-    if !blend && !loop_roll && n < 4. && !drop_cut && !scratch_cut && !instant && !spinback {
+    if !blend
+        && !loop_roll
+        && n < 4.
+        && !drop_cut
+        && !scratch_cut
+        && !instant
+        && !spinback
+        && !short_overlap
+    {
         return None;
     }
     if drop_cut && !crate::continuity::cut_safe(a, end, true) {
@@ -852,7 +890,7 @@ pub(super) fn pair(
     }
     if filtered {
         crate::filtered::arrange(&mut plan, a, b)?;
-    } else if !loop_out && (blend || loop_roll || plan.incoming_start_bar == 0.) {
+    } else if !loop_out && !short_overlap && (blend || loop_roll || plan.incoming_start_bar == 0.) {
         crate::vocals::protect(&mut plan, a)?;
     }
     // A scratch op needs its material: compacting would crop the pull bars.

@@ -279,17 +279,20 @@ fn assert_exit_respects_peaks(
     a: &mixless_protocol::TrackAnalysis,
     b: &mixless_protocol::TrackAnalysis,
 ) {
-    let bar = 240. / a.tempo.global_bpm;
     let layered = matches!(
         p.transition_mode,
         Some(mixless_protocol::TransitionMode::BeatBlend)
             | Some(mixless_protocol::TransitionMode::LoopRoll)
     );
     let lands = if layered { p.t_end_b } else { p.t_in_b };
-    for &(start, end) in &crate::drops::peaks(a) {
-        let into_drop = p.t_out_a > start - 8. * bar
-            && p.t_out_a <= start + 0.05
-            && (end - p.t_out_a).abs() >= 0.05;
+    for &(start, _) in &crate::drops::peaks(a) {
+        let into_drop = (p.t_out_a - start).abs() < 0.05
+            || a.sections.iter().any(|s| {
+                s.label == S::BuildUp
+                    && p.t_out_a > s.start_sec + 0.08
+                    && p.t_out_a <= s.end_sec + 0.08
+                    && s.end_sec <= start + 0.08
+            });
         if into_drop {
             assert!(
                 crate::drops::peaks(b)

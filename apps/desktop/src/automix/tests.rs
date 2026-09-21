@@ -341,9 +341,31 @@ fn terminal_drop_handoff_launches_at_eof_on_the_render_clock() {
             label: mixless_protocol::SectionLabel::Drop,
         },
     ];
-    // A sine fixture detects an arbitrary tempo; pin one so the six-second
-    // tail drop is a real peak (>= 3.5 bars) and earns the hold-to-EOF branch.
-    a.tempo.global_bpm = 174.;
+    // This exercises the render clock, not tempo detection from a sine wave.
+    // Pin both the fallback tempo and measured bar durations: peak detection
+    // correctly prefers local bars over the global BPM.
+    a.tempo = mixless_protocol::TempoMap {
+        global_bpm: 174.,
+        meter_num: 4,
+        meter_den: 4,
+        ..Default::default()
+    };
+    let bar_seconds = 240. / a.tempo.global_bpm;
+    let measured = a.bars[0].clone();
+    a.bars = (0..(a.duration_sec / bar_seconds).ceil() as u32)
+        .map(|index| mixless_protocol::BarFeature {
+            bar_index: index,
+            start_sec: index as f32 * bar_seconds,
+            end_sec: ((index + 1) as f32 * bar_seconds).min(a.duration_sec),
+            section: if index as f32 * bar_seconds < 2. {
+                mixless_protocol::SectionLabel::Intro
+            } else {
+                mixless_protocol::SectionLabel::Drop
+            },
+            ..measured.clone()
+        })
+        .collect();
+    assert_eq!(mixless_protocol::peak_ranges(&a), vec![(2., 8.)]);
     let plan = mixless_mixplan::short_handoff(
         &mixless_mixplan::PlanContext {
             outgoing: &a,
@@ -355,6 +377,8 @@ fn terminal_drop_handoff_launches_at_eof_on_the_render_clock() {
         },
         0.,
     );
+    assert_eq!(plan.t_out_a, 8.);
+    assert_eq!(plan.incoming_start_bar, 1.);
     core.engine
         .dispatch(Command::SetCrossfader { value: -1. })
         .unwrap();

@@ -18,6 +18,8 @@ FX 决策层位于平滑规划器之前：先做 grid、phrase、vocal、kick、
 
 2026-09-21 修订：`ANALYSIS_VERSION=16` 修正半速曲目误读（comb 门控与 3/4、4/3 别名候选）、抑制 <4 小节假高潮、结构切点吸附乐句网格并新增软 build-up。规划侧禁止无交换的 drop 前退出与叠混内入碟高潮，FilterSweep 限 16 小节，`major_peaks` 驱动高潮罚分；新增 Spinback 与 LoopOut，技法按 (曲对, 退出, 进入) 哈希确定性轮换。过渡期外新增 live moves（滤波渐升、鼓声部抽离，用户触碰即交还该 lane）。细则与审计见 [AUTOMIX 参考](reference/AUTOMIX.md) 与 `history/2026-09-21-melodic-dubstep-audit.md`。
 
+2026-09-21 恢复窗口修订：短恢复窗口无法容纳整段 BPM 迁移时，可保持当前 sounding tempo 并传递入碟 rate；不再把高潮前固定 8.5 小节一律当作已进入 BuildUp。具备完整低人声测量的恢复尾句可使用一小节原速重叠，减少曲尾硬切。真实蓄势、高潮完整性、手工 cue 与缺失证据的安全约束继续生效。实曲差异和验证边界见 [恢复窗口交接](history/2026-09-21-recovery-handoffs.md)。
+
 ## Mix 时钟
 
 - Master = **出碟**，除非策略声明（`energy_hold` 在 xf 过 0 后把 master 交给入碟，仍用出碟 sounding 网格）。

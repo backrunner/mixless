@@ -1,13 +1,13 @@
 //! Conservative DJ policy: musical safety gates precede ranking. A scalar
 //! score cannot compensate for clashing foregrounds or an unreliable beat grid.
 use crate::{
+    PlanContext, PlannerOptions,
     constraints::{covers_user_range, user_range},
     grid::Grid,
     musical::{average_rms, bass_handoff, feature, percussion_only},
     phrasing::{boundary_quality, points},
     policy::{self, Evidence as FxEvidence, Technique},
     score::{section, window_key_match},
-    PlanContext, PlannerOptions,
 };
 use mixless_protocol::{
     AutomationLanes, BarMap, EqLane, FilterLane, MixPlan, MixPlanSummary, Polyline, ScratchOp,
@@ -145,3 +145,6 @@ pub(crate) fn plan(ctx: &PlanContext<'_>, options: &PlannerOptions) -> MixPlan {
     }
     best.unwrap_or_else(||MixPlan{failure_reason:Some("No smooth transition fits the remaining audio and user cue ranges; choose another mix point or track".into()),..Default::default()})
 }
+
+#[cfg(test)]
+mod recovery_tests;
