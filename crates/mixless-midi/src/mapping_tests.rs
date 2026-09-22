@@ -13,6 +13,107 @@ fn cc(target: MidiTarget, mode: MidiControlMode) -> MidiBinding {
 }
 
 #[test]
+fn targeted_learning_ignores_touch_notes_releases_and_encoder_idle() {
+    let mut input = InputState::default();
+    input.start_learning(Some(MidiTarget::Jog { deck: DeckId::A }));
+    for message in [
+        [0x92, 10, 127],
+        [0x82, 10, 0],
+        [0xb2, 11, 64],
+        [0xb2, 11, 0],
+    ] {
+        input.receive(&[], "controller", &message);
+        assert!(input.learned.is_none());
+    }
+    input.receive(&[], "controller", &[0xb2, 11, 127]);
+    assert_eq!(input.learned.as_ref().unwrap().kind, MidiSourceKind::Cc);
+    assert_eq!(input.learned.as_ref().unwrap().number, 11);
+
+    input.start_learning(Some(MidiTarget::Play { deck: DeckId::B }));
+    for message in [[0x82, 40, 127], [0x92, 40, 0], [0xb2, 40, 0], [0xf8, 0, 0]] {
+        input.receive(&[], "controller", &message);
+        assert!(input.learned.is_none());
+    }
+    input.receive(&[], "controller", &[0x92, 40, 100]);
+    input.receive(&[], "another controller", &[0x92, 41, 127]);
+    assert_eq!(input.learned.as_ref().unwrap().device_id, "controller");
+    assert_eq!(input.learned.as_ref().unwrap().number, 40);
+    assert!(input.queued.is_empty());
+}
+
+#[test]
+fn targeted_learning_accepts_zero_for_faders_and_retargeting_discards_old_capture() {
+    let mut input = InputState::default();
+    let map = [cc(MidiTarget::Master, MidiControlMode::Auto)];
+    input.start_learning(Some(MidiTarget::Master));
+    input.receive(&map, "controller", &[0x92, 10, 127]);
+    assert!(input.learned.is_none());
+    input.receive(&map, "controller", &[0xb2, 10, 0]);
+    assert_eq!(input.learned.as_ref().unwrap().value, 0);
+    assert!(input.queued.is_empty());
+    input.start_learning(Some(MidiTarget::CueGain));
+    assert!(input.learned.is_none());
+    input.receive(&map, "controller", &[0xb2, 12, 50]);
+    assert_eq!(input.learned.as_ref().unwrap().number, 12);
+}
+
+#[test]
+fn learned_reassignment_persists_and_preserves_other_devices_and_assignments() {
+    let dir = std::env::temp_dir().join(format!("mixless-midi-quick-{}", std::process::id()));
+    let path = dir.join("map.json");
+    let config = MidiConfig {
+        enabled: false,
+        input_ids: None,
+    };
+    let hub = MidiHub::start_with_config(path.clone(), config.clone()).unwrap();
+    let source = MidiBinding {
+        device_id: Some("one".into()),
+        ..cc(MidiTarget::Master, MidiControlMode::Auto)
+    };
+    let other_device = MidiBinding {
+        device_id: Some("two".into()),
+        ..source.clone()
+    };
+    let old_assignment = MidiBinding {
+        number: 15,
+        target: MidiTarget::CueGain,
+        ..source.clone()
+    };
+    let extra_assignment = MidiBinding {
+        number: 16,
+        ..old_assignment.clone()
+    };
+    for binding in [&source, &other_device, &old_assignment, &extra_assignment] {
+        hub.upsert(binding.clone()).unwrap();
+    }
+    {
+        let mut input = hub.input.lock().unwrap();
+        input.start_learning(Some(MidiTarget::CueGain));
+        input.receive(&hub.bindings(), "one", &[0xb2, 10, 90]);
+    }
+    let captured = hub.learned().unwrap();
+    let learned_binding = MidiBinding {
+        device_id: Some(captured.device_id),
+        kind: captured.kind,
+        channel: captured.channel,
+        number: captured.number,
+        target: MidiTarget::CueGain,
+        mode: MidiControlMode::Auto,
+    };
+    hub.replace(2, learned_binding.clone()).unwrap();
+    assert!(hub.drain().is_empty());
+    hub.set_learn(false);
+    assert!(hub.learned().is_none());
+    let reopened = MidiHub::start_with_config(path.clone(), config).unwrap();
+    assert_eq!(
+        reopened.bindings(),
+        vec![other_device, extra_assignment, learned_binding]
+    );
+    assert!(reopened.learn_target(MidiTarget::Master).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn catalogue_is_complete_unique_and_validates_every_default_binding() {
     let targets = MidiTarget::all();
     assert!(targets.len() > 100);

@@ -20,7 +20,14 @@ use crate::{
     theme,
 };
 
+mod audio;
+mod general;
 mod midi;
+mod widgets;
+
+use widgets::{setting_detail, setting_group, setting_stack};
+
+const TITLEBAR_HEIGHT: f32 = 50.;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
@@ -71,6 +78,8 @@ pub struct Preferences {
     midi_inputs_open: bool,
     midi_scroll: gpui::UniformListScrollHandle,
     learning: bool,
+    quick_learning: bool,
+    midi_feedback: Option<(String, bool)>,
     last: Option<MidiMessage>,
     job: Option<mpsc::Receiver<JobResult>>,
     status: String,
@@ -106,6 +115,8 @@ impl Preferences {
             midi_inputs_open: false,
             midi_scroll: gpui::UniformListScrollHandle::new(),
             learning: false,
+            quick_learning: false,
+            midi_feedback: None,
             last: None,
             job: None,
             error: !status.is_empty(),
@@ -227,6 +238,10 @@ impl Preferences {
             self.last = last;
             if self.learning {
                 if let Some(message) = learned {
+                    if self.quick_learning {
+                        self.finish_quick_learn(message);
+                        return;
+                    }
                     self.binding.device_id = Some(message.device_id);
                     self.binding.kind = message.kind;
                     self.binding.channel = message.channel;
@@ -364,13 +379,19 @@ impl Preferences {
 
     fn cancel_learn(&mut self) {
         self.learning = false;
+        self.quick_learning = false;
         if let Some(hub) = self.core.midi.lock().expect("MIDI").as_ref() {
             hub.set_learn(false);
         }
     }
 
     fn toggle_learn(&mut self) {
-        self.learning = !self.learning;
+        if self.learning {
+            self.cancel_learn();
+            return;
+        }
+        self.midi_feedback = None;
+        self.learning = true;
         if let Some(hub) = self.core.midi.lock().expect("MIDI").as_ref() {
             hub.set_learn(self.learning);
         }
@@ -382,8 +403,14 @@ impl Preferences {
             midi.as_ref()
                 .ok_or_else(|| "MIDI is unavailable".to_string())
                 .and_then(|hub| {
-                    if self.learning && hub.learned().is_none() {
-                        return Err("Waiting for a MIDI signal".into());
+                    if self.learning {
+                        let message = hub
+                            .learned()
+                            .ok_or_else(|| "Waiting for a MIDI signal".to_string())?;
+                        self.binding.device_id = Some(message.device_id);
+                        self.binding.kind = message.kind;
+                        self.binding.channel = message.channel;
+                        self.binding.number = message.number;
                     }
                     if let Some(index) = self.editing {
                         hub.replace(index, self.binding.clone())
@@ -393,11 +420,16 @@ impl Preferences {
                     }
                 })
         };
-        if result.is_ok() {
+        let saved = result.is_ok().then(|| self.binding.clone());
+        if saved.is_some() {
             self.cancel_learn();
         }
         self.result(result, "MIDI mapping saved");
         self.poll();
+        if let Some(saved) = saved {
+            self.editing = self.bindings.iter().position(|binding| *binding == saved);
+            self.binding = saved;
+        }
     }
 
     fn file_dialog(&mut self, export: bool, cx: &mut Context<Self>) {
@@ -491,7 +523,7 @@ impl Preferences {
             .items_center()
             .justify_between()
             .gap_4()
-            .min_h(px(44.))
+            .min_h(px(40.))
             .py_2()
             .border_b_1()
             .border_color(theme::LINE_SOFT)
@@ -551,17 +583,9 @@ impl Preferences {
 
     fn storage_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
         let busy = self.job.is_some();
-        let mut page = div().flex().flex_col().child(section("Cached data")).child(
-            div()
-                .pb_2()
-                .text_size(px(11.))
-                .text_color(theme::MUTED)
-                .child(
-                    "Derived data mixless recomputes on demand. Clearing never removes \
-                     source audio, playlists or saved cues."
-                        .to_string(),
-                ),
-        );
+        let mut page = setting_stack().w_full().max_w(px(760.)).mx_auto().py_5()
+            .child(div().text_size(px(11.)).line_height(px(16.)).text_color(theme::MUTED)
+                .child("Clear cached data to reclaim space. Source audio, playlists and saved cues are kept."));
         let Some(report) = &self.storage else {
             return page
                 .child(info(
@@ -582,129 +606,139 @@ impl Preferences {
                 .into_any_element();
         };
         page = page
-            .child(self.storage_row(
-                "stems",
-                "Stem cache",
-                "Separated vocals, drums and instruments used by stem mixing",
-                report.stems,
-                Some(ClearKind::Stems),
-                cx,
+            .child(setting_group(
+                "Cached data",
+                vec![
+                    self.storage_row(
+                        "stems",
+                        "Stem cache",
+                        "Separated vocals, drums and instruments used by stem mixing",
+                        report.stems,
+                        Some(ClearKind::Stems),
+                        cx,
+                    ),
+                    self.storage_row(
+                        "analysis",
+                        "Track analysis",
+                        "Beat grids, keys, structure and note evidence in library.db",
+                        report.analysis,
+                        Some(ClearKind::Analysis),
+                        cx,
+                    ),
+                    self.storage_row(
+                        "waveforms",
+                        "Waveforms",
+                        "Spectral envelopes in library.db, rebuilt from decoded audio",
+                        report.waveforms,
+                        Some(ClearKind::Waveforms),
+                        cx,
+                    ),
+                    self.storage_row(
+                        "artwork",
+                        "Artwork",
+                        "Extracted covers, re-extracted on next launch",
+                        report.artwork,
+                        Some(ClearKind::Artwork),
+                        cx,
+                    ),
+                    self.storage_row(
+                        "models",
+                        "Downloaded analysis models",
+                        "Downloaded copies only; models included in the app are kept",
+                        report.models,
+                        Some(ClearKind::Models),
+                        cx,
+                    ),
+                ],
             ))
-            .child(self.storage_row(
-                "analysis",
-                "Track analysis",
-                "Beat grids, keys, structure and note evidence in library.db",
-                report.analysis,
-                Some(ClearKind::Analysis),
-                cx,
-            ))
-            .child(self.storage_row(
-                "waveforms",
-                "Waveforms",
-                "Spectral envelopes in library.db, rebuilt from decoded audio",
-                report.waveforms,
-                Some(ClearKind::Waveforms),
-                cx,
-            ))
-            .child(self.storage_row(
-                "artwork",
-                "Artwork",
-                "Extracted covers, re-extracted on next launch",
-                report.artwork,
-                Some(ClearKind::Artwork),
-                cx,
-            ))
-            .child(self.storage_row(
-                "models",
-                "Downloaded analysis models",
-                "Downloaded copies only; models included in the app are kept",
-                report.models,
-                Some(ClearKind::Models),
-                cx,
-            ))
-            .child(section("Library"))
-            .child(self.storage_row(
-                "database",
-                "Library database",
-                "Tracks, cues, playlists and analysis payloads",
-                report.database,
-                None,
-                cx,
-            ))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_4()
-                    .min_h(px(44.))
-                    .py_2()
-                    .border_b_1()
-                    .border_color(theme::LINE_SOFT)
-                    .text_size(px(12.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(div().child("Downloaded audio"))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(theme::MUTED)
-                                    .child(crate::state::display_dir(&self.core.download_dir())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .flex_none()
-                            .child(
-                                div()
-                                    .text_color(theme::MUTED)
-                                    .child(storage::format_bytes(report.acquired)),
-                            )
-                            .child(
-                                self.button(
-                                    "storage-acquired",
-                                    "Show in Finder",
-                                    true,
-                                    |s, _, cx| {
-                                        let dir = s.core.download_dir();
-                                        std::fs::create_dir_all(&dir).ok();
-                                        cx.reveal_path(&dir);
-                                    },
-                                    cx,
+            .child(setting_group(
+                "Library",
+                vec![
+                    self.storage_row(
+                        "database",
+                        "Library database",
+                        "Tracks, cues, playlists and analysis payloads",
+                        report.database,
+                        None,
+                        cx,
+                    ),
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .min_h(px(40.))
+                        .py_2()
+                        .border_b_1()
+                        .border_color(theme::LINE_SOFT)
+                        .text_size(px(12.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(div().child("Downloaded audio"))
+                                .child(
+                                    div().text_size(px(11.)).text_color(theme::MUTED).child(
+                                        crate::state::display_dir(&self.core.download_dir()),
+                                    ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .flex_none()
+                                .child(
+                                    div()
+                                        .text_color(theme::MUTED)
+                                        .child(storage::format_bytes(report.acquired)),
                                 )
-                                .into_any_element(),
-                            ),
-                    ),
-            );
+                                .child(
+                                    self.button(
+                                        "storage-acquired",
+                                        "Show in Finder",
+                                        true,
+                                        |s, _, cx| {
+                                            let dir = s.core.download_dir();
+                                            std::fs::create_dir_all(&dir).ok();
+                                            cx.reveal_path(&dir);
+                                        },
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                ),
+                        ),
+                ],
+            ));
         if !report.playlists.is_empty() {
-            page = page.child(section("Per playlist")).child(
-                div()
-                    .pb_2()
-                    .text_size(px(11.))
-                    .text_color(theme::MUTED)
-                    .child(
-                        "Clear stems, analysis, waveforms and artwork for the tracks in a list. \
-                         Caches are per track, so tracks shared with other lists are cleared too."
-                            .to_string(),
-                    ),
-            );
-            for playlist in &report.playlists {
-                page = page.child(self.storage_row(
-                    format!("playlist-{}", playlist.id),
-                    &playlist.name,
-                    &format!("{} tracks", playlist.tracks),
-                    playlist.bytes,
-                    Some(ClearKind::Playlist(playlist.id)),
-                    cx,
-                ));
-            }
+            page = page
+                .child(setting_group(
+                    "Per playlist",
+                    report
+                        .playlists
+                        .iter()
+                        .map(|playlist| {
+                            self.storage_row(
+                                format!("playlist-{}", playlist.id),
+                                &playlist.name,
+                                &format!("{} tracks", playlist.tracks),
+                                playlist.bytes,
+                                Some(ClearKind::Playlist(playlist.id)),
+                                cx,
+                            )
+                        })
+                        .collect(),
+                ))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .line_height(px(16.))
+                        .text_color(theme::MUTED)
+                        .child("Tracks shared with other playlists use the same caches."),
+                );
         }
         page.child(div().flex().justify_end().py_3().child(self.button(
             "storage-refresh",
@@ -759,9 +793,9 @@ impl Preferences {
     ) -> gpui::AnyElement {
         div()
             .id(id)
-            .w(px(38.))
-            .h(px(22.))
-            .px(px(3.))
+            .w(px(32.))
+            .h(px(19.))
+            .px(px(2.))
             .flex()
             .items_center()
             .flex_none()
@@ -769,7 +803,7 @@ impl Preferences {
             .bg(if on { theme::LED_GREEN } else { theme::LINE })
             .when(on, |el| el.justify_end())
             .cursor_pointer()
-            .child(div().size(px(16.)).rounded_full().bg(theme::TEXT))
+            .child(div().size(px(15.)).rounded_full().bg(theme::TEXT))
             .on_click(cx.listener(move |s, _, _, cx| {
                 action(s);
                 cx.notify();
@@ -787,7 +821,7 @@ impl Preferences {
             },
             cx,
         )
-        .w(px(340.))
+        .w(px(300.))
         .h_auto()
         .min_h(px(30.))
         .py_2()
@@ -795,377 +829,6 @@ impl Preferences {
         .justify_between()
         .child(div().flex_none().child("\u{2304}"))
         .into_any_element()
-    }
-
-    fn general(&self, cx: &Context<Self>) -> gpui::AnyElement {
-        let settings = self.core.settings.get();
-        let mut page = div()
-            .flex()
-            .flex_col()
-            .child(section("Appearance"))
-            .child(row(
-                "Waveform layout",
-                div()
-                    .flex()
-                    .gap_1()
-                    .children(
-                        [(WaveLayout::Top, "Top"), (WaveLayout::Center, "Center")].map(
-                            |(layout, label)| {
-                                self.button(
-                                    format!("layout-{label}"),
-                                    label,
-                                    true,
-                                    move |s, _, _| s.save_general(|p| p.wave_layout = layout),
-                                    cx,
-                                )
-                                .text_color(
-                                    if settings.wave_layout == layout {
-                                        theme::ACCENT
-                                    } else {
-                                        theme::MUTED
-                                    },
-                                )
-                            },
-                        ),
-                    )
-                    .into_any_element(),
-            ))
-            .child(row(
-                "Effects panel",
-                self.toggle(
-                    "show-fx",
-                    settings.show_fx,
-                    |s| s.save_general(|p| p.show_fx = !p.show_fx),
-                    cx,
-                ),
-            ))
-            .child(section("Playback"));
-        for (id, label, on, field) in [
-            ("quantize", "Quantize", settings.quantize, 0),
-            ("fx-auto-fade", "FX fade in / out", settings.fx_auto_fade, 6),
-            ("keylock", "Key lock", settings.keylock, 1),
-            ("vinyl", "Vinyl mode", settings.vinyl, 2),
-            ("slip", "Slip mode", settings.slip, 3),
-            (
-                "filter-resonance",
-                "Filter / EQ resonance",
-                settings.filter_resonance,
-                5,
-            ),
-            ("xf-reverse", "Crossfader reverse", settings.xf_reverse, 4),
-        ] {
-            page = page.child(row(
-                label,
-                self.toggle(
-                    id,
-                    on,
-                    move |s| {
-                        s.save_general(|p| match field {
-                            0 => p.quantize = !p.quantize,
-                            1 => p.keylock = !p.keylock,
-                            2 => p.vinyl = !p.vinyl,
-                            3 => p.slip = !p.slip,
-                            5 => p.filter_resonance = !p.filter_resonance,
-                            6 => p.fx_auto_fade = !p.fx_auto_fade,
-                            _ => p.xf_reverse = !p.xf_reverse,
-                        })
-                    },
-                    cx,
-                ),
-            ));
-        }
-        page.child(row(
-            "Crossfader curve",
-            div()
-                .flex()
-                .gap_1()
-                .children(
-                    [
-                        (XfCurve::Linear, "Linear"),
-                        (XfCurve::EqualPower, "Equal power"),
-                        (XfCurve::Cut, "Cut"),
-                        (XfCurve::Scratch, "Scratch"),
-                    ]
-                    .map(|(curve, label)| {
-                        self.button(
-                            format!("curve-{label}"),
-                            label,
-                            true,
-                            move |s, _, _| s.save_general(|p| p.xf_curve = curve),
-                            cx,
-                        )
-                        .text_color(if settings.xf_curve == curve {
-                            theme::ACCENT
-                        } else {
-                            theme::MUTED
-                        })
-                    }),
-                )
-                .into_any_element(),
-        ))
-        .child(row(
-            "AutoMix live moves",
-            div()
-                .flex()
-                .gap_1()
-                .children(
-                    [
-                        (LiveMoves::Off, "Off"),
-                        (LiveMoves::Subtle, "Subtle"),
-                        (LiveMoves::Active, "Active"),
-                    ]
-                    .map(|(level, label)| {
-                        self.button(
-                            format!("moves-{label}"),
-                            label,
-                            true,
-                            move |s, _, _| s.save_general(|p| p.live_moves = level),
-                            cx,
-                        )
-                        .text_color(if settings.live_moves == level {
-                            theme::ACCENT
-                        } else {
-                            theme::MUTED
-                        })
-                    }),
-                )
-                .into_any_element(),
-        ))
-        .child(info(
-            "AutoMix",
-            "Filter and stem gestures on the playing track between transitions.".into(),
-        ))
-        .child(section("Library"))
-        .child(row(
-            "Stem and note analysis for AutoMix",
-            self.toggle(
-                "deep-analysis",
-                settings.deep_analysis,
-                |s| s.save_general(|p| p.deep_analysis = !p.deep_analysis),
-                cx,
-            ),
-        ))
-        .child(info(
-            "Analysis",
-            if self.core.stems.as_ref().is_some_and(|s| s.has_bundled_models()) {
-                "Models are included in this app. Analysis runs locally, including offline."
-            } else {
-                "Runs locally in the background. First use downloads models; playback stays available."
-            }.into(),
-        ))
-        .child(row(
-            "Library and preferences",
-            self.button(
-                "data-folder",
-                "Show in Finder",
-                true,
-                |s, _, cx| {
-                    cx.reveal_path(s.core.settings.path.parent().unwrap_or(&PathBuf::from(".")))
-                },
-                cx,
-            )
-            .into_any_element(),
-        ))
-        .child(row(
-            "Downloaded audio",
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    self.button(
-                        "audio-folder",
-                        "Show in Finder",
-                        true,
-                        |s, _, cx| {
-                            let dir = s.core.download_dir();
-                            std::fs::create_dir_all(&dir).ok();
-                            cx.reveal_path(&dir);
-                        },
-                        cx,
-                    )
-                    .into_any_element(),
-                )
-                .child(
-                    self.button(
-                        "audio-folder-change",
-                        "Change…",
-                        self.job.is_none(),
-                        |s, _, cx| s.pick_download_dir(cx),
-                        cx,
-                    )
-                    .into_any_element(),
-                )
-                .when(settings.download_dir.is_some(), |el| {
-                    el.child(
-                        self.button(
-                            "audio-folder-default",
-                            "Use default",
-                            self.job.is_none(),
-                            |s, _, _| s.save_general(|p| p.download_dir = None),
-                            cx,
-                        )
-                        .into_any_element(),
-                    )
-                })
-                .into_any_element(),
-        ))
-        .child(info(
-            "Location",
-            crate::state::display_dir(&self.core.download_dir()),
-        ))
-        .child(info(
-            "Spotify playlists",
-            "New downloads are saved in a subfolder named after the playlist.".into(),
-        ))
-        .into_any_element()
-    }
-
-    fn audio_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
-        let snapshot = self.core.engine.snapshot();
-        let settings = self.core.settings.get();
-        let available = self.core.engine.audio_available();
-        div()
-            .flex()
-            .flex_col()
-            .child(section("Output routing"))
-            .child(row(
-                "Master output",
-                self.select(
-                    Selector::Master,
-                    self.audio
-                        .master_device
-                        .clone()
-                        .unwrap_or("System Default".into()),
-                    cx,
-                ),
-            ))
-            .child(row(
-                "Headphone output (PFL)",
-                self.select(
-                    Selector::Cue,
-                    self.audio.cue_device.clone().unwrap_or("Disabled".into()),
-                    cx,
-                ),
-            ))
-            .child(row(
-                "Sample rate",
-                self.select(
-                    Selector::Rate,
-                    self.audio
-                        .sample_rate
-                        .map_or("Device native".into(), |rate| format!("{rate} Hz")),
-                    cx,
-                ),
-            ))
-            .child(row(
-                "Buffer size",
-                self.select(
-                    Selector::Buffer,
-                    self.audio
-                        .buffer_frames
-                        .map_or("Device default".into(), |frames| format!("{frames} frames")),
-                    cx,
-                ),
-            ))
-            .child(row(
-                "Headphone volume",
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(self.button(
-                        "cue-down",
-                        "-",
-                        settings.cue_gain > 0.0,
-                        |s, _, _| s.save_general(|p| p.cue_gain = (p.cue_gain - 0.05).max(0.0)),
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .w(px(45.))
-                            .text_center()
-                            .child(format!("{:.0}%", settings.cue_gain * 100.0)),
-                    )
-                    .child(self.button(
-                        "cue-up",
-                        "+",
-                        settings.cue_gain < 1.0,
-                        |s, _, _| s.save_general(|p| p.cue_gain = (p.cue_gain + 0.05).min(1.0)),
-                        cx,
-                    ))
-                    .into_any_element(),
-            ))
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .py_4()
-                    .child(self.button(
-                        "refresh-audio",
-                        "Refresh devices",
-                        self.job.is_none(),
-                        |s, _, _| s.refresh(),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "revert-audio",
-                        "Revert",
-                        self.job.is_none(),
-                        |s, _, _| s.audio = s.core.settings.get().audio,
-                        cx,
-                    ))
-                    .child(
-                        self.button(
-                            "apply-audio",
-                            "Apply audio",
-                            self.job.is_none(),
-                            |s, _, _| s.apply_audio(),
-                            cx,
-                        )
-                        .text_color(theme::ACCENT),
-                    ),
-            )
-            .child(section("Current audio"))
-            .child(info(
-                "Status",
-                if available {
-                    "Running".into()
-                } else {
-                    "Audio unavailable".into()
-                },
-            ))
-            .child(info("Master", snapshot.device_name))
-            .child(info(
-                "Headphones",
-                snapshot.cue_device.unwrap_or("Disabled".into()),
-            ))
-            .child(info(
-                "Sample rate / buffer",
-                format!(
-                    "{} Hz / {} frames",
-                    snapshot.sample_rate, snapshot.block_frames
-                ),
-            ))
-            .child(info(
-                "Buffer duration",
-                format!(
-                    "{:.2} ms",
-                    snapshot.block_frames as f64 * 1000.0 / snapshot.sample_rate.max(1) as f64
-                ),
-            ))
-            .child(info("Underruns", snapshot.xrun_count.to_string()))
-            .when(self.audio != self.core.engine.audio_config(), |el| {
-                el.child(
-                    div()
-                        .py_3()
-                        .text_color(theme::WARN)
-                        .text_size(px(12.))
-                        .child("Selected configuration differs from the active audio device."),
-                )
-            })
-            .into_any_element()
     }
 
     fn port_name(&self, id: &str) -> String {
@@ -1305,22 +968,13 @@ impl Preferences {
     }
 }
 
-fn section(label: &str) -> gpui::Div {
-    div()
-        .pt_4()
-        .pb_2()
-        .text_size(px(14.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .child(label.to_string())
-}
-
 fn row(label: &str, control: gpui::AnyElement) -> gpui::Div {
     div()
         .flex()
         .items_center()
         .justify_between()
         .gap_4()
-        .min_h(px(44.))
+        .min_h(px(40.))
         .py_2()
         .border_b_1()
         .border_color(theme::LINE_SOFT)
@@ -1346,7 +1000,7 @@ impl Render for Preferences {
             self.focus.focus(window);
         }
         let content = match self.tab {
-            Tab::General => self.general(cx),
+            Tab::General => self.general(f32::from(window.viewport_size().width) >= 860., cx),
             Tab::Audio => self.audio_page(cx),
             Tab::Midi => self.midi_page(cx),
             Tab::Storage => self.storage_page(cx),
@@ -1358,7 +1012,7 @@ impl Render for Preferences {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme::PANEL)
+            .bg(theme::BG)
             .text_color(theme::TEXT)
             .font_family(theme::FONT_UI)
             .text_size(px(12.))
@@ -1387,14 +1041,25 @@ impl Render for Preferences {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap_2()
-                    // The transparent macOS titlebar overlays this row. Keep
-                    // the tabs clear of the native traffic-light controls.
+                    .h(px(TITLEBAR_HEIGHT))
                     .pl(px(96.))
                     .pr_6()
-                    .py_3()
+                    .bg(theme::PANEL)
+                    .text_size(px(13.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child("Preferences"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_1()
+                    .h(px(44.))
+                    .px_6()
                     .border_b_1()
                     .border_color(theme::LINE)
+                    .bg(theme::PANEL)
                     .children(
                         [
                             (Tab::General, "General"),
@@ -1403,6 +1068,7 @@ impl Render for Preferences {
                             (Tab::Storage, "Storage"),
                         ]
                         .map(|(tab, label)| {
+                            let active = self.tab == tab;
                             self.button(
                                 format!("tab-{label}"),
                                 label,
@@ -1418,10 +1084,16 @@ impl Render for Preferences {
                                 },
                                 cx,
                             )
-                            .text_color(if self.tab == tab {
-                                theme::ACCENT
-                            } else {
-                                theme::MUTED
+                            .h_full()
+                            .px_4()
+                            .rounded_none()
+                            .border_0()
+                            .bg(theme::PANEL)
+                            .text_color(if active { theme::TEXT } else { theme::MUTED })
+                            .when(active, |el| {
+                                el.border_b_2()
+                                    .border_color(theme::ACCENT)
+                                    .font_weight(gpui::FontWeight::MEDIUM)
                             })
                         }),
                     ),
@@ -1438,14 +1110,28 @@ impl Render for Preferences {
             )
             .child(
                 div()
+                    .flex()
                     .flex_none()
-                    .min_h(px(58.))
                     .items_center()
-                    .justify_between()
+                    .gap_4()
+                    .min_h(px(56.))
                     .px_6()
                     .py_3()
+                    .bg(theme::PANEL)
                     .border_t_1()
                     .border_color(theme::LINE)
+                    .child(
+                        self.button(
+                            "reset-defaults",
+                            "Reset defaults",
+                            self.job.is_none(),
+                            |s, _, _| s.reset_defaults(),
+                            cx,
+                        )
+                        .border_color(gpui::transparent_black())
+                        .bg(theme::PANEL)
+                        .text_color(theme::MUTED),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -1457,43 +1143,33 @@ impl Render for Preferences {
                                 theme::MUTED
                             })
                             .child(if self.job.is_some() && self.status.is_empty() {
-                                "Loading devices...".into()
+                                "Loading…".into()
+                            } else if self.status.is_empty() && self.tab == Tab::General {
+                                "Changes save automatically".into()
                             } else {
                                 self.status.clone()
                             }),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(self.button(
-                                "reset-defaults",
-                                "Reset defaults",
-                                self.job.is_none(),
-                                |s, _, _| s.reset_defaults(),
-                                cx,
-                            ))
-                            .child(
-                                self.button(
-                                    "close-preferences",
-                                    "Close",
-                                    true,
-                                    |s, window, _| {
-                                        s.cancel_learn();
-                                        window.remove_window();
-                                    },
-                                    cx,
-                                )
-                                .text_color(theme::ACCENT),
-                            ),
+                        self.button(
+                            "close-preferences",
+                            "Done",
+                            true,
+                            |s, window, _| {
+                                s.cancel_learn();
+                                window.remove_window();
+                            },
+                            cx,
+                        )
+                        .min_w(px(76.))
+                        .font_weight(gpui::FontWeight::MEDIUM),
                     ),
             );
         if let Some(selector) = self.selector {
             root = root.child(
                 div()
                     .absolute()
-                    .top(px(72.))
+                    .top(px(96.))
                     .right(px(24.))
                     .w(px(500.))
                     .on_mouse_down(
@@ -1559,13 +1235,14 @@ pub fn open(core: Arc<AppCore>, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(760.), px(760.)),
+            size(px(940.), px(820.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some("mixless Preferences".into()),
             appears_transparent: true,
-            traffic_light_position: Some(gpui::point(px(16.), px(18.))),
+            // AppKit's 14-point controls share the title row's vertical center.
+            traffic_light_position: Some(gpui::point(px(16.), px((TITLEBAR_HEIGHT - 14.) / 2.))),
             ..Default::default()
         }),
         window_min_size: Some(size(px(720.), px(540.))),

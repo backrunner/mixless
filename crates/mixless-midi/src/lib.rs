@@ -101,6 +101,7 @@ pub struct MidiMessage {
 #[derive(Default)]
 struct InputState {
     learning: bool,
+    learn_target: Option<MidiTarget>,
     learned: Option<MidiMessage>,
     last: Option<MidiMessage>,
     queued: Vec<MidiAction>,
@@ -108,6 +109,15 @@ struct InputState {
 }
 
 impl InputState {
+    fn start_learning(&mut self, target: Option<MidiTarget>) {
+        self.learning = true;
+        self.learn_target = target;
+        self.learned = None;
+        self.queued
+            .retain(|action| action.value == MidiValue::Release);
+        self.release_held();
+    }
+
     fn release_held(&mut self) {
         for (_, target) in self.held.drain(..) {
             self.queued.push(MidiAction {
@@ -129,7 +139,15 @@ impl InputState {
         };
         self.last = Some(message.clone());
         if self.learning {
-            if self.learned.is_none() && !(kind == MidiSourceKind::Note && value == 0) {
+            let compatible = match self.learn_target.as_ref().map(MidiTarget::kind) {
+                Some(ControlKind::Continuous) => kind == MidiSourceKind::Cc,
+                Some(ControlKind::Encoder) => {
+                    kind == MidiSourceKind::Cc && !matches!(value, 0 | 64)
+                }
+                Some(ControlKind::Button | ControlKind::Momentary) => value > 0,
+                None => !(kind == MidiSourceKind::Note && value == 0),
+            };
+            if self.learned.is_none() && compatible {
                 self.learned = Some(message);
             }
             return;
@@ -260,12 +278,32 @@ impl MidiHub {
         if input.learning == on {
             return;
         }
-        input.learning = on;
+        if on {
+            input.start_learning(None);
+            return;
+        }
+        input.learning = false;
+        input.learn_target = None;
         input.learned = None;
         input
             .queued
             .retain(|action| action.value == MidiValue::Release);
         input.release_held();
+    }
+
+    /// Arm one target. Ignore touch notes for knobs/jogs and release messages
+    /// for buttons, so the first compatible gesture is the one that binds.
+    pub fn learn_target(&self, target: MidiTarget) -> Result<(), MidiError> {
+        if self.conns.lock().expect("MIDI connections").is_empty() {
+            return Err(error(
+                "No active MIDI input. Connect a controller and Apply inputs.",
+            ));
+        }
+        self.input
+            .lock()
+            .expect("MIDI input")
+            .start_learning(Some(target));
+        Ok(())
     }
 
     pub fn learned(&self) -> Option<MidiMessage> {
@@ -639,7 +677,7 @@ mod tests {
             },
         )
         .unwrap();
-        hub.set_learn(true);
+        hub.learn_target(MidiTarget::Master).unwrap();
         output.send(&[0xb0, 7, 100]).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         while hub.learned().is_none() && Instant::now() < deadline {

@@ -14,10 +14,12 @@ Open **Preferences → MIDI Mapping**. The page lists all supported controls, in
 ## Assign a control
 
 1. Enable the MIDI input device. Use **Apply inputs** to reconnect after changing devices.
-2. Select a control in the list or the wireframe.
-3. Choose its device, channel, and CC or note, then press **Assign**.
+2. Click a control in the wireframe. The message above it shows which control is waiting for input.
+3. Turn a hardware knob or fader, or press a button. The first compatible signal is saved automatically; the control turns green. There is no separate **Assign** step.
 
-To capture a signal instead, choose **Learn** and move the hardware control. Learning takes the first signal and suppresses performance commands until you assign or cancel it.
+Click another control to bind it next. **Cancel** or Escape stops waiting without changing the mapping. Button releases and jog touch notes are ignored when learning a rotation. If the captured device/channel/CC or note already controls another target, its binding moves to the selected target and the message identifies the previous one.
+
+For manual setup, select a control in the list, choose its device, channel, and CC or note, then press **Assign**. **Learn** in the editor captures a signal for review before **Assign**. Performance commands are suppressed while learning.
 
 ## Encoders and knobs
 

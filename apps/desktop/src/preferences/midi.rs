@@ -5,6 +5,10 @@ use mixless_midi::ControlKind;
 
 mod diagram;
 
+const MIDI_LABEL_WIDTH: f32 = 74.;
+const MIDI_FIELD_GAP: f32 = 12.;
+const MIDI_CONTROL_WIDTH: f32 = 194.;
+
 impl Preferences {
     fn midi_targets(&self) -> Vec<MidiTarget> {
         MidiTarget::all()
@@ -15,6 +19,7 @@ impl Preferences {
 
     pub(super) fn select_midi_target(&mut self, target: MidiTarget) {
         self.cancel_learn();
+        self.midi_feedback = None;
         self.selector = None;
         self.editing = self.bindings.iter().position(|b| b.target == target);
         self.binding = self
@@ -41,6 +46,129 @@ impl Preferences {
         }
     }
 
+    fn quick_learn_target(&mut self, target: MidiTarget) {
+        // A second click on the armed control must not discard a captured event.
+        if self.quick_learning && self.binding.target == target {
+            return;
+        }
+        self.select_midi_target(target.clone());
+        let result = if self.job.is_some() {
+            Err("Wait for the current settings operation to finish.".into())
+        } else {
+            self.core
+                .midi
+                .lock()
+                .expect("MIDI")
+                .as_ref()
+                .ok_or_else(|| "MIDI is unavailable".to_string())
+                .and_then(|hub| hub.learn_target(target).map_err(|e| e.to_string()))
+        };
+        match result {
+            Ok(()) => {
+                self.learning = true;
+                self.quick_learning = true;
+            }
+            Err(error) => self.midi_feedback = Some((error, true)),
+        }
+    }
+
+    pub(super) fn finish_quick_learn(&mut self, message: MidiMessage) {
+        // Preserve an explicitly chosen mode when relearning the same input.
+        // A new physical control starts with the target's normal default.
+        let same_input = self.binding.device_id.as_ref() == Some(&message.device_id)
+            && self.binding.kind == message.kind
+            && self.binding.channel == message.channel
+            && self.binding.number == message.number;
+        if !same_input {
+            self.binding.mode = MidiControlMode::Auto;
+        }
+        self.binding.device_id = Some(message.device_id);
+        self.binding.kind = message.kind;
+        self.binding.channel = message.channel;
+        self.binding.number = message.number;
+        let moved = self.source_conflict().map(|b| b.target.label());
+        let success = format!(
+            "Bound {} · {}{}",
+            self.binding.target.label(),
+            self.binding_text(&self.binding),
+            moved.map_or(String::new(), |from| format!(" · moved from {from}")),
+        );
+        // Keep performance commands suppressed through the write. Clear the
+        // automatic flag before polling, so a failed write cannot retry itself.
+        self.quick_learning = false;
+        self.save_binding();
+        self.cancel_learn();
+        self.midi_feedback = Some((
+            if self.error {
+                self.status.clone()
+            } else {
+                success
+            },
+            self.error,
+        ));
+    }
+
+    fn midi_learn_bar(&self, cx: &Context<Self>) -> gpui::AnyElement {
+        let (text, color) = if self.quick_learning {
+            let action = match self.binding.target.kind() {
+                ControlKind::Continuous => "Move a knob or fader to bind",
+                ControlKind::Encoder => "Turn the encoder to bind",
+                ControlKind::Button | ControlKind::Momentary => "Press a MIDI button to bind",
+            };
+            (
+                format!("{} · {action}…", self.binding.target.label()),
+                theme::ACCENT,
+            )
+        } else if let Some((feedback, error)) = &self.midi_feedback {
+            (
+                feedback.clone(),
+                if *error {
+                    theme::DANGER
+                } else {
+                    theme::LED_GREEN
+                },
+            )
+        } else {
+            (
+                "Click a control below, then move your MIDI hardware to bind it.".into(),
+                theme::MUTED,
+            )
+        };
+        let tip = text.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(32.))
+            .flex_none()
+            .min_w_0()
+            .px_2()
+            .rounded(px(4.))
+            .bg(theme::PANEL_INSET)
+            .text_size(px(11.))
+            .text_color(color)
+            .child(
+                div()
+                    .id("midi-learn-message")
+                    .flex_1()
+                    .min_w_0()
+                    .w_0()
+                    .h(px(16.))
+                    .child(ellipsized_text(text).w_full().h_full())
+                    .tooltip(move |_, cx| cx.new(|_| TextTip(tip.clone())).into()),
+            )
+            .when(self.quick_learning, |el| {
+                el.child(self.button(
+                    "midi-quick-cancel",
+                    "Cancel",
+                    true,
+                    |s, _, _| s.cancel_learn(),
+                    cx,
+                ))
+            })
+            .into_any_element()
+    }
+
     fn binding_text(&self, binding: &MidiBinding) -> String {
         format!(
             "Ch {} · {:?} {}",
@@ -59,7 +187,7 @@ impl Preferences {
         let width = if matches!(selector, Selector::MidiNumber) {
             58.
         } else {
-            194.
+            MIDI_CONTROL_WIDTH
         };
         let tip = value.clone();
         div()
@@ -209,6 +337,9 @@ impl Preferences {
         div()
             .flex()
             .flex_col()
+            .w_full()
+            .max_w(px(1000.))
+            .mx_auto()
             .gap_3()
             .py_3()
             .child(
@@ -258,6 +389,7 @@ impl Preferences {
                     )),
             )
             .when(self.midi_inputs_open, |el| el.child(self.midi_inputs(cx)))
+            .child(self.midi_learn_bar(cx))
             .child(self.midi_diagram(cx))
             .child(
                 div()
@@ -327,9 +459,14 @@ impl Preferences {
             div()
                 .flex()
                 .items_center()
-                .justify_between()
-                .gap_2()
-                .child(div().text_color(theme::MUTED).child(label.to_string()))
+                .gap(px(MIDI_FIELD_GAP))
+                .child(
+                    div()
+                        .w(px(MIDI_LABEL_WIDTH))
+                        .flex_none()
+                        .text_color(theme::MUTED)
+                        .child(label.to_string()),
+                )
                 .child(control)
         };
         let select = |selector, text| self.midi_select(selector, text, cx);
@@ -341,7 +478,7 @@ impl Preferences {
             .collect();
         let conflict = self.source_conflict();
         div()
-            .w(px(280.))
+            .w(px(MIDI_LABEL_WIDTH + MIDI_FIELD_GAP + MIDI_CONTROL_WIDTH))
             .flex_none()
             .flex()
             .flex_col()
@@ -400,14 +537,15 @@ impl Preferences {
                     format!("{}", self.binding.channel + 1),
                 ),
             ))
-            .child(
+            .child(field(
+                "Message",
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(div().text_color(theme::MUTED).child("Message"))
-                    .child(div().flex().gap_1().children(
+                    .w(px(MIDI_CONTROL_WIDTH))
+                    .flex_none()
+                    .gap_1()
+                    .children(
                         [(MidiSourceKind::Cc, "CC"), (MidiSourceKind::Note, "Note")].map(
                             |(kind, label)| {
                                 self.button(
@@ -422,6 +560,9 @@ impl Preferences {
                                     },
                                     cx,
                                 )
+                                .flex_1()
+                                .min_w_0()
+                                .px_0()
                                 .text_color(
                                     if kind == self.binding.kind {
                                         theme::ACCENT
@@ -431,12 +572,13 @@ impl Preferences {
                                 )
                             },
                         ),
-                    ))
+                    )
                     .child(select(
                         Selector::MidiNumber,
                         self.binding.number.to_string(),
-                    )),
-            )
+                    ))
+                    .into_any_element(),
+            ))
             .when(self.binding.kind == MidiSourceKind::Cc, |el| {
                 el.child(field(
                     "Mode",
@@ -482,7 +624,7 @@ impl Preferences {
                         self.button(
                             "midi-assign",
                             "Assign",
-                            enabled,
+                            enabled && !self.quick_learning,
                             |s, _, _| s.save_binding(),
                             cx,
                         )
