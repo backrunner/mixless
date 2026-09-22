@@ -39,8 +39,9 @@ const ROW_PAD: f32 = 14.;
 const SOURCE_ROW_HEIGHT: f32 = 24.;
 const SOURCE_ROW_PAD: f32 = 6.;
 const SOURCE_LIST_PAD: f32 = 4.;
-// The import button and every source count share the same right edge.
+// The import glyph and every source count share the same right edge.
 const SOURCE_TRAILING_WIDTH: f32 = 22.;
+const SOURCE_IMPORT_PAD: f32 = 7.;
 
 fn cover_placeholder(track: &Track) -> gpui::AnyElement {
     let color = theme::cue_color(track.id.0.unsigned_abs() as usize);
@@ -433,12 +434,15 @@ impl UiState {
                             .flex()
                             .flex_none()
                             .items_center()
-                            .justify_end()
-                            .w(px(SOURCE_TRAILING_WIDTH))
+                            .justify_center()
+                            .px(px(SOURCE_IMPORT_PAD))
+                            // Extend the hover background equally around the aligned glyph.
+                            .mr(px(-SOURCE_IMPORT_PAD))
                             .h(px(18.))
                             .rounded(px(3.))
                             .cursor_pointer()
                             .text_size(px(13.))
+                            .line_height(px(18.))
                             .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
                             .child("+")
                             .tooltip(|_, cx| cx.new(|_| TextTip("Import music".into())).into())
