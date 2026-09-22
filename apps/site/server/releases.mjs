@@ -8,16 +8,20 @@ function releaseUrl(value, prefix) {
 
 export function installer(release) {
   if (!release || release.draft || !Array.isArray(release.assets)) return null;
-  const asset = release.assets.find(asset =>
-    /^mixless-macos-.+\.dmg$/i.test(asset.name) && asset.size > 0 &&
+  const version = release.tag_name?.replace(/^v/, '');
+  const find = suffix => release.assets.find(asset =>
+    asset.name?.toLowerCase() === `mixless-macos-${version}${suffix}.dmg`.toLowerCase() && asset.size > 0 &&
     releaseUrl(asset.browser_download_url, `${RELEASES}/download/`));
+  const asset = find('');
   if (!asset) return null;
+  const bundled = find('-with-models');
   const checksum = release.assets.find(asset => asset.name === 'SHA256SUMS.txt');
   return {
     version: release.tag_name,
     channel: release.prerelease ? 'beta' : 'stable',
     url: asset.browser_download_url,
     size: asset.size,
+    bundled: bundled ? { url: bundled.browser_download_url, size: bundled.size } : null,
     notes: releaseUrl(release.html_url, `${RELEASES}/tag/`) ?? RELEASES,
     checksum: releaseUrl(checksum?.browser_download_url, `${RELEASES}/download/`),
     published: release.published_at
@@ -60,7 +64,9 @@ export async function handleReleaseRequest(request, fetcher = fetch) {
     }
     const channel = url.searchParams.get('channel');
     const release = channel === 'beta' ? data.beta : channel === 'stable' ? data.stable : data.recommended;
-    const destination = url.searchParams.get('asset') === 'checksum' ? release?.checksum : release?.url;
+    const variant = url.searchParams.get('variant') ?? 'standard';
+    const destination = url.searchParams.get('asset') === 'checksum' ? release?.checksum
+      : variant === 'bundled' ? release?.bundled?.url : variant === 'standard' ? release?.url : null;
     return new Response(null, { status: 302, headers: { Location: destination ?? RELEASES, 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.warn('mixless release lookup failed:', error instanceof Error ? error.message : 'Unknown error');

@@ -13,7 +13,7 @@ mixless 是原生 macOS DJ 工作台。你可以亲手混音，让 AutoMix 完�
 
 ## 安装
 
-前往 [直接下载](https://mixless.alkinum.com/download) 获取安装包。打开 DMG，将 **mixless** 拖入 **Applications（应用程序）**。应用面向 **macOS 12 及以上版本**，支持 Apple Silicon 和 Intel。下载优先提供最新正式版；尚无正式版时提供最新 beta。[其他下载选项](https://mixless.alkinum.com/zh#downloads)包含 beta、历史版本、校验文件与源码。
+前往 [直接下载](https://mixless.alkinum.com/download) 获取安装包。打开 DMG，将 **mixless** 拖入 **Applications（应用程序）**。应用面向 **macOS 12 及以上版本**，支持 Apple Silicon 和 Intel。下载优先提供最新正式版；尚无正式版时提供最新 beta。[其他下载选项](https://mixless.alkinum.com/zh#downloads)包含内置模型版、beta、历史版本、校验文件与源码。
 
 如果需要从源代码构建，请阅读[开发指南](/docs/development)。
 
@@ -21,7 +21,7 @@ mixless 是原生 macOS DJ 工作台。你可以亲手混音，让 AutoMix 完�
 
 在资料库中选择 **+ Files** 或 **+ Folder**。文件夹导入会包含子文件夹；重复导入同一路径不会重复添加曲目。每个文件夹都有独立的歌单。
 
-导入过程中，曲目会先出现在列表里，随后在后台准备波形、曲速、调性和音乐结构。原生分轨与音符分析会在首次使用时下载经过校验的模型；音频处理在你的 Mac 上完成。
+导入过程中，曲目会先出现在列表里，随后在后台准备波形、曲速、调性和音乐结构。在 Apple Silicon 上，原生分轨与音符分析使用经过校验的模型：内置模型版已附带，标准版在首次使用时下载。音频处理在你的 Mac 上完成。
 
 ## 检查输出设备
 

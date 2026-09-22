@@ -19,10 +19,12 @@ analytics, tracking, or crash reporting** of any kind.
   from Spotify. Missing covers for linked tracks may be fetched in the
   background from Spotify and its image CDN, then cached locally. mixless never
   receives decoded mixing audio from Spotify or uploads local audio for this.
-- **Model downloads.** The first time stem/note analysis runs, the app
-  downloads pinned ONNX model artifacts over HTTPS from Hugging Face
+- **Model downloads.** The standard installer downloads pinned ONNX model artifacts
+  the first time stem/note analysis runs over HTTPS from Hugging Face
   (`StemSplitio/htdemucs-onnx`) and GitHub (`spotify/basic-pitch`). No audio or
-  analysis results are uploaded; inference is fully on-device.
+  analysis results are uploaded; inference is fully on-device. The installer with
+  models loads the same verified artifacts directly from the app without a model
+  download. Clearing downloaded models does not remove bundled models.
 - **Optional acquisition.** When you explicitly acquire a playlist track,
   separately installed `yt-dlp`/`FFmpeg` may contact the services you select
   (e.g. YouTube Music). Those requests are made by the external tools under

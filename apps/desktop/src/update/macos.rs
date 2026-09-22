@@ -36,7 +36,7 @@ fn install(
     dest: &Path,
     report: &dyn Fn(Status),
 ) -> Result<Status, String> {
-    let platform = manifest.platform()?;
+    let platform = manifest.platform(has_bundled_models(ours))?;
     let work = tempfile::Builder::new()
         .prefix("mixless-update-")
         .tempdir()
@@ -151,6 +151,10 @@ fn update_target(ours: &Path) -> PathBuf {
     ours.to_path_buf()
 }
 
+fn has_bundled_models(app: &Path) -> bool {
+    app.join("Contents/Resources/models").is_dir()
+}
+
 /// Signed, notarized, from our developer, and actually the version the
 /// manifest promised — all four before anything is installed.
 fn verify_bundle(
@@ -188,6 +192,9 @@ fn verify_bundle(
     }
     if bundle_value(app, "MixlessReleaseChannel")? != channel {
         return Err("Update bundle channel does not match the manifest".into());
+    }
+    if has_bundled_models(app) != has_bundled_models(ours) {
+        return Err("Update model variant does not match the installed app".into());
     }
     Ok(())
 }

@@ -11,12 +11,10 @@ use std::{
     time::Duration,
 };
 
-pub const SEPARATOR_HASH: &str = "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a";
-pub const NOTES_HASH: &str = "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec";
+pub const SEPARATOR_HASH: &str = mixless_protocol::STEM_SEPARATOR.sha256;
+pub const NOTES_HASH: &str = mixless_protocol::STEM_NOTES.sha256;
 #[cfg(stems_ort)]
-const SEPARATOR_URL: &str = "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/d54ed9eb60e258ea82131c6ee14578628816456a/htdemucs_fp16weights.onnx";
-#[cfg(stems_ort)]
-const NOTES_URL: &str = "https://raw.githubusercontent.com/spotify/basic-pitch/v0.4.0/basic_pitch/saved_models/icassp_2022/nmp.onnx";
+use mixless_protocol::{ModelArtifact, STEM_NOTES, STEM_SEPARATOR};
 
 #[cfg(stems_ort)]
 pub struct Paths {
@@ -27,34 +25,38 @@ pub struct Paths {
 #[cfg(stems_ort)]
 pub fn ensure(
     dir: &Path,
+    bundled: Option<&Path>,
     download: bool,
     progress: &mut impl FnMut(Progress),
     active: &impl Fn() -> bool,
 ) -> Result<Paths> {
+    crate::check(active)?;
+    // Signed app resources are read-only, including on the installer DMG.
+    // Never put locks or temporary downloads inside the bundle.
+    if let Some(bundled) = bundled {
+        return Ok(Paths {
+            separator: bundled_artifact(bundled, &STEM_SEPARATOR)?,
+            notes: bundled_artifact(bundled, &STEM_NOTES)?,
+        });
+    }
     std::fs::create_dir_all(dir)?;
     let _lock = crate::lock::acquire(&dir.join(".models.lock"), active)?;
     Ok(Paths {
-        separator: artifact(
-            dir,
-            "htdemucs-fp16.onnx",
-            SEPARATOR_URL,
-            SEPARATOR_HASH,
-            165_612_636,
-            download,
-            progress,
-            active,
-        )?,
-        notes: artifact(
-            dir,
-            "basic-pitch.onnx",
-            NOTES_URL,
-            NOTES_HASH,
-            20_000_000,
-            download,
-            progress,
-            active,
-        )?,
+        separator: artifact(dir, &STEM_SEPARATOR, download, progress, active)?,
+        notes: artifact(dir, &STEM_NOTES, download, progress, active)?,
     })
+}
+
+#[cfg(stems_ort)]
+fn bundled_artifact(dir: &Path, model: &ModelArtifact) -> Result<PathBuf> {
+    let path = dir.join(model.name);
+    if !valid(&path, model.sha256)? {
+        return Err(Error::Model(format!(
+            "Bundled model missing or damaged: {}; reinstall the installer with models",
+            model.name
+        )));
+    }
+    Ok(path)
 }
 
 #[cfg(stems_ort)]
@@ -77,17 +79,19 @@ fn valid(path: &Path, expected: &str) -> Result<bool> {
 }
 
 #[cfg(stems_ort)]
-#[allow(clippy::too_many_arguments)]
 fn artifact(
     dir: &Path,
-    name: &str,
-    url: &str,
-    hash: &str,
-    max_size: u64,
+    model: &ModelArtifact,
     download: bool,
     progress: &mut impl FnMut(Progress),
     active: &impl Fn() -> bool,
 ) -> Result<PathBuf> {
+    let ModelArtifact {
+        name,
+        url,
+        sha256: hash,
+        max_size,
+    } = *model;
     crate::check(active)?;
     let path = dir.join(name);
     if valid(&path, hash)? {
@@ -150,10 +154,42 @@ mod tests {
     fn damaged_weights_never_reach_runtime_or_require_network_in_offline_mode() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("htdemucs-fp16.onnx"), b"broken").unwrap();
-        assert!(ensure(dir.path(), false, &mut |_| {}, &|| true).is_err());
+        assert!(ensure(dir.path(), None, false, &mut |_| {}, &|| true).is_err());
         assert!(matches!(
-            ensure(dir.path(), true, &mut |_| {}, &|| false),
+            ensure(dir.path(), None, true, &mut |_| {}, &|| false),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn bundled_models_are_read_only_and_never_fall_back_to_network() {
+        let bundled = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let download_dir = cache.path().join("unused");
+        let model = ModelArtifact {
+            name: "test.onnx",
+            url: "https://invalid.example",
+            max_size: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        };
+        std::fs::write(bundled.path().join(model.name), b"abc").unwrap();
+        assert_eq!(
+            bundled_artifact(bundled.path(), &model).unwrap(),
+            bundled.path().join(model.name)
+        );
+        std::fs::write(bundled.path().join(model.name), b"damaged").unwrap();
+        assert!(bundled_artifact(bundled.path(), &model).is_err());
+        let mut progress = Vec::new();
+        assert!(ensure(
+            &download_dir,
+            Some(bundled.path()),
+            true,
+            &mut |p| progress.push(p),
+            &|| true
+        )
+        .is_err());
+        assert!(progress.is_empty());
+        assert!(!download_dir.exists());
+        assert!(!bundled.path().join(".models.lock").exists());
     }
 }

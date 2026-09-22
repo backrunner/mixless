@@ -14,7 +14,7 @@ mixless contains no telemetry, analytics, tracking, or crash reporting. Your lib
 
 ## Network activity
 
-- **Models:** the first stem/note analysis downloads pinned, verified model files from Hugging Face and GitHub. Inference then runs on device.
+- **Models:** the standard installer downloads pinned, verified model files from Hugging Face and GitHub on first stem/note analysis. The installer with models reads the same files from the app without downloading them. Inference runs on device.
 - **Spotify:** importing a playlist requests metadata. Missing artwork for linked Spotify tracks can be fetched in the background from Spotify and its image CDN. Spotify does not supply decoded audio for mixing.
 - **Optional acquisition:** configured, separately installed tools such as yt-dlp and FFmpeg contact the services selected for acquiring audio. Those services have their own terms and privacy practices.
 - **Updates:** release builds check GitHub for updates at launch and when requested. An available update downloads its manifest and installer; it does not upload your music library.

@@ -26,6 +26,7 @@ fn busy(error: Error) -> Error {
 /// A bounded pool of independent model sessions; waiting jobs do not decode PCM.
 pub struct Processor {
     models: PathBuf,
+    bundled_models: Option<PathBuf>,
     cache: PathBuf,
     #[cfg_attr(not(stems_ort), allow(dead_code))]
     download: bool,
@@ -42,6 +43,7 @@ impl Processor {
     pub fn new(models: PathBuf, cache: PathBuf, download: bool) -> Self {
         Self {
             models,
+            bundled_models: None,
             cache,
             download,
             states: (0..mixless_protocol::BackgroundWorkers::detected().stems)
@@ -51,6 +53,16 @@ impl Processor {
     }
     pub fn parallelism(&self) -> usize {
         self.states.len()
+    }
+
+    /// Prefer immutable app resources; cache cleanup only touches downloads.
+    pub fn with_bundled_models(mut self, dir: Option<PathBuf>) -> Self {
+        self.bundled_models = dir;
+        self
+    }
+
+    pub fn has_bundled_models(&self) -> bool {
+        self.bundled_models.is_some()
     }
 
     pub fn cache_path(&self, content_hash: &str) -> PathBuf {
@@ -127,7 +139,13 @@ impl Processor {
         }
         cache::reserve(&self.cache, (duration as f64 * 44100. * 24.).ceil() as u64)?;
         if state.inference.is_none() {
-            match Inference::load(&self.models, self.download, progress, active) {
+            match Inference::load(
+                &self.models,
+                self.bundled_models.as_deref(),
+                self.download,
+                progress,
+                active,
+            ) {
                 Ok(i) => {
                     state.inference = Some(i);
                     state.failed = None;
@@ -285,5 +303,59 @@ impl Processor {
                 state.inference = None;
             }
         }
+    }
+}
+
+#[cfg(all(test, stems_ort))]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "Requires MIXLESS_TEST_BUNDLED_MODELS with real pinned weights; runs native inference offline"]
+    fn bundled_models_analyze_new_audio_offline_after_download_cache_cleanup() {
+        let bundled = PathBuf::from(
+            std::env::var_os("MIXLESS_TEST_BUNDLED_MODELS").expect("model directory"),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("models");
+        let processor = Processor::new(downloads.clone(), dir.path().join("stems"), false)
+            .with_bundled_models(Some(bundled.clone()));
+        let frames = 44100 * 8;
+        let samples = (0..frames)
+            .flat_map(|i| {
+                let value = (i as f32 * 440. * std::f32::consts::TAU / 44100.).sin() * 0.1;
+                [value, value]
+            })
+            .collect();
+        let audio = Arc::new(mixless_engine::AudioBuffer {
+            samples,
+            frames: frames as u64,
+            sample_rate: 44100,
+            loudness: Default::default(),
+        });
+        let mut progress = Vec::new();
+        let result = processor
+            .analyze(
+                "bundled-offline-smoke",
+                8.,
+                || Ok(audio),
+                &mut |p| progress.push(p),
+                &|| true,
+            )
+            .unwrap();
+        assert!(crate::is_current(&result));
+        assert!(progress.contains(&Progress::Saving));
+        assert!(!progress
+            .iter()
+            .any(|p| matches!(p, Progress::Downloading { .. })));
+        assert!(
+            !downloads.exists(),
+            "bundled inference must not populate downloaded models"
+        );
+        assert_eq!(processor.clear_models().unwrap(), 0);
+        assert!(bundled
+            .join(mixless_protocol::STEM_SEPARATOR.name)
+            .is_file());
+        crate::verify_bundled_models(&bundled).unwrap();
     }
 }

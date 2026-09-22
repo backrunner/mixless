@@ -15,6 +15,36 @@ const feed = (latest, recent, status = 200) => async url => url.endsWith('/lates
   ? latest ? Response.json(latest) : new Response(null, { status: 404 })
   : Response.json(recent, { status });
 
+function withModels(release) {
+  const asset = release.assets[0];
+  return { ...release, assets: [
+    { ...asset, name: asset.name.replace('.dmg', '-with-models.dmg'), size: 166000000,
+      browser_download_url: asset.browser_download_url.replace('.dmg', '-with-models.dmg') },
+    ...release.assets
+  ] };
+}
+
+test('model variant is explicit, independent of asset order, and never silently downgraded', async () => {
+  const both = withModels(stable);
+  assert.equal(installer(both).url, stable.assets[0].browser_download_url);
+  assert.equal(installer(both).bundled.url, both.assets[0].browser_download_url);
+  assert.equal(installer(stable).bundled, null);
+  assert.equal(installer({ ...both, assets: [both.assets[0]] }), null);
+  assert.equal(installer({ ...both, assets: [{ ...both.assets[0], browser_download_url: 'https://evil.example/model.dmg' }, ...stable.assets] }).bundled, null);
+  for (const [path, latest, recent, expected] of [
+    ['/download', both, [], stable.assets[0].browser_download_url],
+    ['/download?variant=bundled', both, [], both.assets[0].browser_download_url],
+    ['/download?variant=bundled&channel=beta', stable, [withModels(beta)], withModels(beta).assets[0].browser_download_url],
+    ['/download?variant=bundled', null, [withModels(beta)], withModels(beta).assets[0].browser_download_url],
+    ['/download?variant=bundled', stable, [withModels(beta)], RELEASES],
+    ['/download?variant=unknown', both, [], RELEASES],
+    ['/download?variant=bundled&asset=checksum', both, [], stable.assets[1].browser_download_url]
+  ]) {
+    const response = await handleReleaseRequest(new Request(`https://mixless.alkinum.com${path}`), feed(latest, recent));
+    assert.equal(response.headers.get('location'), expected, path);
+  }
+});
+
 test('stable remains preferred over a newer beta; stable is fetched independently of pagination', async () => {
   const data = await loadReleases(feed(stable, [beta]));
   assert.equal(data.recommended.version, 'v1.0.0');

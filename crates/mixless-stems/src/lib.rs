@@ -21,6 +21,23 @@ pub fn inference_supported() -> bool {
     cfg!(stems_ort)
 }
 
+/// Cold-load both bundled sessions without network access or cache writes.
+/// Used by the packaged-app release check, including from a read-only DMG.
+pub fn verify_bundled_models(dir: &std::path::Path) -> Result<()> {
+    #[cfg(stems_ort)]
+    {
+        Inference::load(dir, Some(dir), false, &mut |_| {}, &|| true)?;
+        Ok(())
+    }
+    #[cfg(not(stems_ort))]
+    {
+        let _ = dir;
+        Err(Error::Model(
+            "Stem separation requires Apple Silicon".into(),
+        ))
+    }
+}
+
 pub fn is_current(analysis: &mixless_protocol::StemAnalysis) -> bool {
     analysis.version == VERSION
         && analysis.separator_sha256 == models::SEPARATOR_HASH
@@ -89,11 +106,12 @@ pub struct Stems {
 impl Inference {
     pub fn load(
         model_dir: &Path,
+        bundled: Option<&Path>,
         download: bool,
         progress: &mut impl FnMut(Progress),
         active: &impl Fn() -> bool,
     ) -> Result<Self> {
-        let paths = models::ensure(model_dir, download, progress, active)?;
+        let paths = models::ensure(model_dir, bundled, download, progress, active)?;
         progress(Progress::Loading);
         // Each pooled session gets a share of the same CPU budget as basic
         // analysis; the override remains available for throughput benchmarks.

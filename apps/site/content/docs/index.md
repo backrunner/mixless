@@ -13,7 +13,7 @@ mixless is a native DJ workspace for macOS. You can mix by hand, let AutoMix han
 
 ## Install
 
-Get an installer from [the direct download](https://mixless.alkinum.com/download). Open the DMG and move **mixless** into **Applications**. The app targets **macOS 12 or later** on Apple Silicon and Intel. The download prefers the latest stable release and falls back to beta when none is available. [Other download options](https://mixless.alkinum.com/#downloads) include beta, older releases, checksums, and source.
+Get an installer from [the direct download](https://mixless.alkinum.com/download). Open the DMG and move **mixless** into **Applications**. The app targets **macOS 12 or later** on Apple Silicon and Intel. The download prefers the latest stable release and falls back to beta when none is available. [Other download options](https://mixless.alkinum.com/#downloads) include an installer with models, beta, older releases, checksums, and source.
 
 To build from source, follow the [development guide](/docs/development).
 
@@ -21,7 +21,7 @@ To build from source, follow the [development guide](/docs/development).
 
 Choose **+ Files** or **+ Folder** in the library. Folders include subfolders; importing the same path again does not duplicate the track. Each folder gets its own playlist.
 
-Rows appear while importing, before analysis is finished. Waveforms, tempo, key, and musical structure are prepared in the background. Native stem and note analysis downloads verified models on first use; your audio is processed on your Mac.
+Rows appear while importing, before analysis is finished. Waveforms, tempo, key, and musical structure are prepared in the background. On Apple Silicon, native stem and note analysis uses verified models included in the installer with models, or downloaded on first use by the standard installer. Your audio is processed on your Mac.
 
 ## Check your output
 

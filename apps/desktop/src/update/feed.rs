@@ -57,11 +57,16 @@ impl Manifest {
         Ok(remote.cmp_precedence(&current).is_gt())
     }
 
-    pub(super) fn platform(&self) -> Result<&Platform, String> {
+    pub(super) fn platform(&self, bundled_models: bool) -> Result<&Platform, String> {
+        let key = if bundled_models {
+            "darwin-universal-bundled"
+        } else {
+            "darwin-universal"
+        };
         let platform = self
             .platforms
-            .get("darwin-universal")
-            .ok_or("Manifest has no universal macOS build")?;
+            .get(key)
+            .ok_or_else(|| format!("Manifest has no {key} build"))?;
         if platform.sha256.len() != 64 || !platform.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Manifest has an invalid SHA-256 digest".into());
         }
@@ -172,14 +177,48 @@ mod tests {
                     .is_err()
             );
         }
-        assert!(manifest("1.1.0", "stable").platform().is_ok());
+        assert!(manifest("1.1.0", "stable").platform(false).is_ok());
         let mut invalid = manifest("1.1.0", "stable");
         invalid
             .platforms
             .get_mut("darwin-universal")
             .unwrap()
             .sha256 = "abc123".into();
-        assert!(invalid.platform().is_err());
+        assert!(invalid.platform(false).is_err());
+    }
+
+    #[test]
+    fn updates_preserve_bundled_models_and_never_fall_back_to_standard() {
+        let mut manifest = manifest("1.1.0", "stable");
+        assert!(manifest.platform(true).is_err());
+        manifest.platforms.insert(
+            "darwin-universal-bundled".into(),
+            Platform {
+                url: "https://example.test/Mixless-bundled.dmg".into(),
+                sha256: "a".repeat(64),
+            },
+        );
+        assert!(
+            manifest
+                .platform(true)
+                .unwrap()
+                .url
+                .ends_with("-bundled.dmg")
+        );
+        assert!(
+            manifest
+                .platform(false)
+                .unwrap()
+                .url
+                .ends_with("/Mixless.dmg")
+        );
+        manifest
+            .platforms
+            .get_mut("darwin-universal-bundled")
+            .unwrap()
+            .sha256 = "bad".into();
+        assert!(manifest.platform(true).is_err());
+        assert!(manifest.platform(false).is_ok());
     }
 
     #[test]

@@ -18,7 +18,8 @@ rights.
 
 Native model inference uses [ort](https://github.com/pykeio/ort) (MIT/Apache-2.0)
 and [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT), linked into
-the application. Model artifacts are downloaded separately: HTDemucs exported
+the application. Model artifacts are included in the installer with models, or
+downloaded on first use by the standard installer: HTDemucs exported
 by [StemSplit](https://github.com/StemSplit/demucs-onnx) (MIT), based on
 [Meta Demucs](https://github.com/facebookresearch/demucs) (MIT), and
 [Spotify Basic Pitch](https://github.com/spotify/basic-pitch) (Apache-2.0).

@@ -80,7 +80,7 @@ jobs:
     name: macOS desktop
     needs: resolve-release
     runs-on: macos-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -211,75 +211,80 @@ jobs:
             -output target/universal-apple-darwin/release/mixless
           lipo target/universal-apple-darwin/release/mixless -verify_arch arm64 x86_64
 
-      - name: Assemble app bundle
+      - name: Cache pinned models
+        uses: actions/cache@v4
+        with:
+          path: target/release-models
+          key: stem-models-${{ hashFiles('crates/mixless-protocol/src/models.rs') }}
+
+      - name: Prepare verified models
+        run: cargo run --locked -p mixless-tools -- download-models target/release-models
+
+      - name: Assemble both app variants
         run: |
           set -euo pipefail
-          cargo run --locked -p mixless-tools -- bundle \
-            target/universal-apple-darwin/release/mixless \
-            dist/Mixless.app \
-            --version "${{ needs.resolve-release.outputs.version }}" \
-            --build-number "${{ needs.resolve-release.outputs.build_number }}" \
-            --channel "${{ needs.resolve-release.outputs.channel }}"
+          for variant in standard bundled; do
+            bundle_args=(bundle
+              target/universal-apple-darwin/release/mixless
+              "dist/${variant}/Mixless.app"
+              --version "${{ needs.resolve-release.outputs.version }}"
+              --build-number "${{ needs.resolve-release.outputs.build_number }}"
+              --channel "${{ needs.resolve-release.outputs.channel }}")
+            if [[ "${variant}" == "bundled" ]]; then
+              bundle_args+=(--models target/release-models)
+            fi
+            cargo run --locked -p mixless-tools -- "${bundle_args[@]}"
+          done
 
-      - name: Sign app bundle
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
-          codesign --force --options runtime --timestamp \
-            --sign "${APPLE_SIGNING_IDENTITY}" \
-            dist/Mixless.app
-          codesign --verify --deep --strict --verbose=2 dist/Mixless.app
-
-      - name: Notarize and staple app bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          (cd dist && ditto -c -k --keepParent Mixless.app Mixless-notarized.zip)
-
-          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
-            notary_credentials=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}" --issuer "${APPLE_API_ISSUER}")
-          else
-            notary_credentials=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
-          fi
-
-          xcrun notarytool submit dist/Mixless-notarized.zip "${notary_credentials[@]}" --wait --timeout 30m
-          xcrun stapler staple dist/Mixless.app
-          spctl --assess --type execute --verbose=4 dist/Mixless.app
-          xcrun stapler validate dist/Mixless.app
-
-      - name: Build installer DMG
-        run: scripts/make-macos-dmg.sh dist/Mixless.app "dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg" "mixless"
-
-      - name: Sign, notarize and staple DMG
+      - name: Sign, notarize and staple both app variants
         shell: bash
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
-          dmg="dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg"
-          codesign --force --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${dmg}"
-
           if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
             notary_credentials=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}" --issuer "${APPLE_API_ISSUER}")
           else
             notary_credentials=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
           fi
+          for variant in standard bundled; do
+            app="dist/${variant}/Mixless.app"
+            codesign --force --options runtime --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${app}"
+            codesign --verify --deep --strict --verbose=2 "${app}"
+            ditto -c -k --keepParent "${app}" "dist/${variant}/Mixless-notarized.zip"
+            xcrun notarytool submit "dist/${variant}/Mixless-notarized.zip" "${notary_credentials[@]}" --wait --timeout 30m
+            xcrun stapler staple "${app}"
+            spctl --assess --type execute --verbose=4 "${app}"
+            xcrun stapler validate "${app}"
+          done
 
-          xcrun notarytool submit "${dmg}" "${notary_credentials[@]}" --wait --timeout 30m
-          xcrun stapler staple "${dmg}"
-          codesign --verify --verbose=4 "${dmg}"
-          spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg}"
-          xcrun stapler validate "${dmg}"
-
-      - name: Verify DMG install layout
-        run: scripts/verify-macos-dmg.sh "dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg"
-
-      - name: Stage release artifacts
+      - name: Build, sign, notarize and verify both installer DMGs
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          VERSION: ${{ needs.resolve-release.outputs.version }}
         run: |
           set -euo pipefail
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+            notary_credentials=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}" --issuer "${APPLE_API_ISSUER}")
+          else
+            notary_credentials=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
+          fi
           mkdir -p release-artifacts
-          cp "dist/Mixless-macOS-${{ needs.resolve-release.outputs.version }}.dmg" release-artifacts/
+          for variant in standard bundled; do
+            suffix=""
+            if [[ "${variant}" == "bundled" ]]; then suffix="-with-models"; fi
+            dmg="dist/Mixless-macOS-${VERSION}${suffix}.dmg"
+            scripts/make-macos-dmg.sh "dist/${variant}/Mixless.app" "${dmg}" "mixless"
+            codesign --force --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${dmg}"
+            xcrun notarytool submit "${dmg}" "${notary_credentials[@]}" --wait --timeout 30m
+            xcrun stapler staple "${dmg}"
+            codesign --verify --verbose=4 "${dmg}"
+            spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg}"
+            xcrun stapler validate "${dmg}"
+            scripts/verify-macos-dmg.sh "${dmg}" "${variant}"
+            cp "${dmg}" release-artifacts/
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -321,18 +326,25 @@ jobs:
           set -euo pipefail
           cd release-artifacts
           dmg="Mixless-macOS-${VERSION}.dmg"
-          shasum -a 256 -- "${dmg}" > SHA256SUMS.txt
-          digest="$(awk '{print $1}' SHA256SUMS.txt)"
-          url="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${dmg}"
+          bundled_dmg="Mixless-macOS-${VERSION}-with-models.dmg"
+          shasum -a 256 -- "${dmg}" "${bundled_dmg}" > SHA256SUMS.txt
+          digest="$(shasum -a 256 -- "${dmg}" | awk '{print $1}')"
+          bundled_digest="$(shasum -a 256 -- "${bundled_dmg}" | awk '{print $1}')"
+          base="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}"
           jq -n \
             --arg channel "${CHANNEL}" \
             --arg version "${VERSION}" \
             --arg tag "${RELEASE_TAG}" \
-            --arg url "${url}" \
+            --arg url "${base}/${dmg}" \
             --arg sha256 "${digest}" \
+            --arg bundled_url "${base}/${bundled_dmg}" \
+            --arg bundled_sha256 "${bundled_digest}" \
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{channel: $channel, version: $version, tag: $tag, pub_date: $date,
-              platforms: {"darwin-universal": {url: $url, sha256: $sha256, name: $url | split("/") | last}}}' \
+              platforms: {
+                "darwin-universal": {url: $url, sha256: $sha256, name: ($url | split("/") | last)},
+                "darwin-universal-bundled": {url: $bundled_url, sha256: $bundled_sha256, name: ($bundled_url | split("/") | last)}
+              }}' \
             > "mixless-${CHANNEL}-latest.json"
 
       - name: Create or update draft release
@@ -353,6 +365,14 @@ jobs:
           else
             printf 'Signed and notarized macOS installer on the %s channel. Double-click mixless inside the DMG to install, or drag it to Applications.\n' "${CHANNEL}" > "${notes_file}"
           fi
+          cat >> "${notes_file}" <<'NOTES'
+
+          Installers:
+          - `Mixless-macOS-VERSION.dmg`: standard; downloads models on first stem analysis.
+          - `Mixless-macOS-VERSION-with-models.dmg`: includes verified stem and note models for offline analysis on Apple Silicon. Intel Macs do not support model inference.
+
+          Both variants contain the same app and use the same library. Updates keep your installed variant.
+          NOTES
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             if [[ "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" != "true" ]]; then
               echo "::error::${RELEASE_TAG} is already published; refusing to overwrite it."

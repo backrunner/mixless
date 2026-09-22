@@ -179,6 +179,7 @@ pub fn app_core() -> Arc<AppCore> {
                 data_dir.join("stem-cache"),
                 std::env::var_os("MIXLESS_MODELS_OFFLINE").is_none(),
             )
+            .with_bundled_models(bundled_models())
         }),
         shutting_down: false.into(),
         acquired_dir,
@@ -190,6 +191,20 @@ pub fn app_core() -> Arc<AppCore> {
         library_notice,
         update: Mutex::new(None),
     })
+}
+
+fn bundled_models() -> Option<PathBuf> {
+    // Explicit development/test model directories remain fully isolated.
+    if std::env::var_os("MIXLESS_MODEL_DIR").is_some() {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let dir = crate::self_install::current_bundle()?.join("Contents/Resources/models");
+        dir.is_dir().then_some(dir)
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

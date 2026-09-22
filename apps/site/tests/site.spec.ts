@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 
-const beta = { version: 'v0.1.0-beta.2', channel: 'beta', size: 33843871, notes: 'https://github.com/backrunner/mixless/releases/tag/v0.1.0-beta.2', checksum: 'https://github.com/backrunner/mixless/releases/download/v0.1.0-beta.2/SHA256SUMS.txt' };
+const beta = { version: 'v0.1.0-beta.2', channel: 'beta', size: 33843871, bundled: { url: 'https://github.com/backrunner/mixless/releases/download/v0.1.0-beta.2/Mixless-macOS-0.1.0-beta.2-with-models.dmg', size: 199456507 }, notes: 'https://github.com/backrunner/mixless/releases/tag/v0.1.0-beta.2', checksum: 'https://github.com/backrunner/mixless/releases/download/v0.1.0-beta.2/SHA256SUMS.txt' };
 test.beforeEach(async ({ page }) => {
   // Deterministic browser coverage; the release resolver is also tested against live GitHub separately.
   await page.route('**/api/releases', route => route.fulfill({ json: { stable: null, beta, recommended: beta } }));
@@ -64,6 +64,8 @@ for (const locale of ['en', 'zh'] as const) {
     await expect(page.locator('#download-title')).toBeInViewport();
     expect(await page.locator('#downloads').evaluate(el => getComputedStyle(el).opacity)).toBe('1');
     await expect(page.locator('.mx-download-options a[href="/download?channel=beta"]')).toBeVisible();
+    await expect(page.locator('.mx-download-options a[href="/download?variant=bundled"]')).toContainText(locale === 'zh' ? '离线分轨' : 'Offline stem analysis');
+    await page.locator('#downloads').screenshot({ path: info.outputPath(`${locale}-downloads.png`), animations: 'disabled' });
     await expect(page.locator('.mx-download-options a[href="/download?asset=checksum"]')).toBeVisible();
 
     await page.locator('.mx-language').click();
@@ -179,4 +181,14 @@ test('stable release presentation and service failure remain usable', async ({ p
   await expect(page.locator('.mx-release-status')).toContainText('Release details unavailable');
   await expect(page.locator('.mx-download-main a')).toHaveAttribute('href', '/download');
   await expect(page.locator('.mx-download-options a', { hasText: 'All versions' })).toHaveAttribute('href', 'https://github.com/backrunner/mixless/releases');
+});
+
+
+test('older releases do not advertise an unavailable model installer', async ({ page }) => {
+  const standardOnly = { ...beta, bundled: null };
+  await page.route('**/api/releases', route => route.fulfill({ json: { stable: null, beta: standardOnly, recommended: standardOnly } }));
+  await page.goto('/');
+  await expect(page.locator('.mx-release-status')).toContainText(beta.version);
+  await expect(page.locator('.mx-download-options a[href*="variant=bundled"]')).toHaveCount(0);
+  await expect(page.locator('.mx-download-main a')).toHaveAttribute('href', '/download');
 });

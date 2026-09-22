@@ -26,7 +26,7 @@ mixless turns a folder of music into a continuous set. Mix by hand, let AutoMix 
 - **Your library.** Queue folder imports, organize playlists, reorder tracks by dragging, and bring in Spotify playlist metadata. Reconnect moved files automatically or locate them yourself while preserving playlists and manual cues.
 - **Your setup.** Separate master and headphone outputs, independent deck/master gain and limiters, persistent preferences, and MIDI learning and mapping for decks, mixer and library controls.
 
-Audio and analysis stay on your Mac. First use downloads verified models. Spotify supplies metadata, not mixing audio; optional audio acquisition requires separately installed tools. See [Privacy](PRIVACY.md).
+Audio and analysis stay on your Mac. Choose the standard installer (verified models download on first use) or the installer with models for offline stem analysis on Apple Silicon. Spotify supplies metadata, not mixing audio; optional audio acquisition requires separately installed tools. See [Privacy](PRIVACY.md).
 
 ## Current beta
 
@@ -42,7 +42,7 @@ Analysis and transition choices remain estimates: preview unfamiliar pairs befor
 
 ## Get started
 
-Download a macOS installer from [the direct download](https://mixless.alkinum.com/download), open the DMG, and move mixless to Applications. The app targets **macOS 12+**, with Apple Silicon and Intel release builds. The download selects the latest stable release, falling back to the latest beta when no stable release exists. [Other download options](https://mixless.alkinum.com/#downloads) include beta, previous releases, checksums, and source code.
+Download a macOS installer from [the direct download](https://mixless.alkinum.com/download), open the DMG, and move mixless to Applications. The app targets **macOS 12+**, with Apple Silicon and Intel release builds. The download selects the latest stable release, falling back to the latest beta when no stable release exists. [Other download options](https://mixless.alkinum.com/#downloads) include an installer with models, beta, previous releases, checksums, and source code. Both installers use the same app and library; automatic updates preserve the installed variant. Stem and note inference requires Apple Silicon; including models does not enable inference on Intel.
 
 Published installers are universal, Developer ID signed and Apple notarized. Release builds check their own stable or beta update channel; use **mixless → Check for Updates…** to check manually, then restart when prompted. Development builds do not install public updates. Open **About mixless** to see and copy the version, channel and build details.
 

@@ -616,8 +616,8 @@ impl Preferences {
             ))
             .child(self.storage_row(
                 "models",
-                "Analysis models",
-                "ONNX models, downloaded again when stem analysis runs",
+                "Downloaded analysis models",
+                "Downloaded copies only; models included in the app are kept",
                 report.models,
                 Some(ClearKind::Models),
                 cx,
@@ -947,8 +947,11 @@ impl Preferences {
         ))
         .child(info(
             "Analysis",
-            "Runs locally in the background. First use downloads models; playback stays available."
-                .into(),
+            if self.core.stems.as_ref().is_some_and(|s| s.has_bundled_models()) {
+                "Models are included in this app. Analysis runs locally, including offline."
+            } else {
+                "Runs locally in the background. First use downloads models; playback stays available."
+            }.into(),
         ))
         .child(row(
             "Library and preferences",

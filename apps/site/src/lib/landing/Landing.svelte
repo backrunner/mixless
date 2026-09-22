@@ -10,7 +10,7 @@
   const releases = 'https://github.com/backrunner/mixless/releases';
   const features = ['manual', 'stems', 'local'] as const;
   const guides = [{ key: 'start', href: '/docs' }, { key: 'audio', href: '/docs/audio' }, { key: 'midi', href: '/docs/midi' }];
-  type Release = { version: string; channel: 'stable' | 'beta'; size: number; notes: string; checksum: string | null };
+  type Release = { version: string; channel: 'stable' | 'beta'; size: number; notes: string; checksum: string | null; bundled?: { url: string; size: number } | null };
   let release = $state<Release | null>(null);
   let beta = $state<Release | null>(null);
   let status = $state<'loading' | 'ready' | 'unavailable'>('loading');
@@ -85,12 +85,15 @@
       <div class="mx-download-main">
         <div class="mx-download-heading"><Wordmark /><span class="mx-release-badge">{release ? context.t(`download.${release.channel}`) : 'macOS'}</span></div>
         <p class="mx-system">{context.t('download.platform')}<br />{context.t('download.arch')}</p>
-        <a class="mx-button mx-primary" href="/download" data-sveltekit-reload>{context.t('site.releases')} <span aria-hidden="true">↓</span></a>
+        <a class="mx-button mx-primary" href="/download" data-sveltekit-reload>{context.t('download.standard')} <span aria-hidden="true">↓</span></a>
+        <p class="mx-release-policy">{context.t('download.standardDetail')}</p>
         <p class="mx-release-status" aria-live="polite">{#if release}{release.version} · {(release.size / 1024 / 1024).toFixed(1)} MB · DMG{:else}{context.t(status === 'loading' ? 'download.loading' : 'download.unavailable')}{/if}</p>
         <p class="mx-release-policy">{context.t(release?.channel === 'beta' ? 'download.betaNotice' : 'download.policy')}</p>
       </div>
       <div class="mx-download-options"><h3>{context.t('download.other')}</h3>
+        {#if release?.bundled}<a href="/download?variant=bundled" data-sveltekit-reload><span>{context.t('download.bundled')}<small>{(release.bundled.size / 1024 / 1024).toFixed(1)} MB · {context.t('download.bundledDetail')}</small></span><span aria-hidden="true">↓</span></a>{/if}
         {#if beta}<a href="/download?channel=beta" data-sveltekit-reload><span>{context.t('download.latestBeta')}<small>{beta.version}</small></span><span aria-hidden="true">↓</span></a>{/if}
+        {#if beta?.bundled && release?.channel === 'stable'}<a href="/download?channel=beta&variant=bundled" data-sveltekit-reload><span>{context.t('download.betaBundled')}<small>{beta.version} · {(beta.bundled.size / 1024 / 1024).toFixed(1)} MB</small></span><span aria-hidden="true">↓</span></a>{/if}
         <a href={release?.notes ?? releases}><span>{context.t('download.notes')}</span><span aria-hidden="true">↗</span></a>
         <a href={releases}><span>{context.t('download.history')}</span><span aria-hidden="true">↗</span></a>
         {#if release?.checksum}<a href="/download?asset=checksum" data-sveltekit-reload><span>{context.t('download.checksum')}<small>SHA-256</small></span><span aria-hidden="true">↓</span></a>{/if}

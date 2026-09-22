@@ -34,6 +34,23 @@ use gpui::{
 const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--check-bundled-models") {
+        #[cfg(target_os = "macos")]
+        if let Some(bundle) = self_install::current_bundle() {
+            match mixless_stems::verify_bundled_models(&bundle.join("Contents/Resources/models")) {
+                Ok(()) => {
+                    println!("Bundled stem and note models loaded offline");
+                    return;
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        eprintln!("Expected a macOS app bundle with models");
+        std::process::exit(1);
+    }
     // Packaging reads the executable's identity before starting AppKit, audio
     // or self-installation. The bundle must never label a different build.
     if std::env::args().nth(1).as_deref() == Some("--build-info") {

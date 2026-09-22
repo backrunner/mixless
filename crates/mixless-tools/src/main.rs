@@ -1,4 +1,5 @@
 //! Small native packaging tool. No scripting-language runtime is required.
+mod models;
 use std::{
     fs,
     io::Write,
@@ -24,9 +25,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("bundle") => bundle(&root, &args[1..]),
+        Some("download-models" | "verify-models") => {
+            let dir = Path::new(args.get(1).ok_or("Expected a model directory")?);
+            if args[0] == "download-models" { models::download(dir) } else { models::verify(dir) }
+        }
         Some("set-version") => set_version(&root, args.get(1).map(String::as_str)),
         _ => Err(
-            "Usage: cargo run -p mixless-tools -- bundle [BINARY OUTPUT.app] [--version V] [--build-number N] [--channel C]\n       cargo run -p mixless-tools -- set-version SEMVER"
+            "Usage: cargo run -p mixless-tools -- bundle [BINARY OUTPUT.app] [--version V] [--build-number N] [--channel C] [--models DIR]\n       cargo run -p mixless-tools -- download-models DIR\n       cargo run -p mixless-tools -- verify-models DIR\n       cargo run -p mixless-tools -- set-version SEMVER"
                 .into(),
         ),
     }
@@ -145,6 +150,10 @@ fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>
     let resources = contents.join("Resources");
     fs::create_dir_all(&macos)?;
     fs::create_dir_all(&resources)?;
+    models::bundle(
+        option(args, "--models")?.map(Path::new),
+        &resources.join("models"),
+    )?;
     // Atomic replacement preserves an already-running executable's inode.
     atomic_copy(&binary, &macos.join("mixless"))?;
     atomic_copy(

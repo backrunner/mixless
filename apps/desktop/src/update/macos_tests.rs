@@ -27,12 +27,12 @@ fn published_package_roundtrip() {
         "Release feed changed during this audit"
     );
     assert_eq!(
-        live.platform().unwrap().sha256,
-        manifest.platform().unwrap().sha256
+        live.platform(false).unwrap().sha256,
+        manifest.platform(false).unwrap().sha256
     );
     let work = tempfile::tempdir().unwrap();
     let dmg = work.path().join("release.dmg");
-    let platform = manifest.platform().unwrap();
+    let platform = manifest.platform(false).unwrap();
     network::download(&platform.url, &dmg, |_| {}).unwrap();
     network::verify_sha256(&dmg, &platform.sha256).unwrap();
     let mounted = Mount::attach(&dmg, &work.path().join("mount")).unwrap();
