@@ -35,11 +35,15 @@ const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--check-bundled-models") {
+        tracing_subscriber::fmt()
+            .with_env_filter("mixless_stems=info,ort=warn")
+            .with_writer(std::io::stderr)
+            .init();
         #[cfg(target_os = "macos")]
         if let Some(bundle) = self_install::current_bundle() {
             match mixless_stems::verify_bundled_models(&bundle.join("Contents/Resources/models")) {
                 Ok(()) => {
-                    println!("Bundled stem and note models loaded offline");
+                    println!("Bundled stem and note models executed offline");
                     return;
                 }
                 Err(error) => {
@@ -67,7 +71,7 @@ fn main() {
         return;
     }
     tracing_subscriber::fmt()
-        .with_env_filter("mixless=info,mixless_engine=info")
+        .with_env_filter("mixless=info,mixless_engine=info,mixless_stems=info")
         .init();
     let build_id = format!(
         "{} · {} · {}",

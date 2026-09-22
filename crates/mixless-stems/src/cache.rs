@@ -124,7 +124,7 @@ pub fn dir_bytes(path: &Path) -> u64 {
     total
 }
 
-/// Remove every published entry and stale partial write, returning the freed
+/// Remove published entries, stale partials and compiled CoreML models, returning freed
 /// bytes. The caller holds the analysis lock, so no save can be in flight.
 pub fn clear_all(root: &Path) -> Result<u64> {
     let mut freed = 0;
@@ -133,7 +133,7 @@ pub fn clear_all(root: &Path) -> Result<u64> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !is_published(name) && !name.ends_with(".partial") {
+        if !is_published(name) && !name.ends_with(".partial") && name != ".coreml" {
             continue;
         }
         freed += dir_bytes(&path);
@@ -200,16 +200,20 @@ mod tests {
         fs::create_dir(&stale).unwrap();
         fs::write(stale.join("vocals.wav"), [0; 2]).unwrap();
         fs::write(root.path().join("cache/.analysis.lock"), b"").unwrap();
+        fs::create_dir(root.path().join("cache/.coreml")).unwrap();
+        fs::write(root.path().join("cache/.coreml/compiled"), [0; 11]).unwrap();
 
-        assert_eq!(processor.cache_usage(None), 10);
+        assert_eq!(processor.cache_usage(None), 21);
         assert_eq!(
             processor.cache_usage(Some(&["aaa".into(), "aaa".into(), "none".into()])),
             3
         );
         assert_eq!(processor.clear_cache(Some(&["aaa".into()])).unwrap(), 3);
         assert!(!processor.cache_path("aaa").exists());
-        assert_eq!(processor.cache_usage(None), 7);
-        assert_eq!(processor.clear_cache(None).unwrap(), 7);
+        assert!(root.path().join("cache/.coreml/compiled").exists());
+        assert_eq!(processor.cache_usage(None), 18);
+        assert_eq!(processor.clear_cache(None).unwrap(), 18);
+        assert!(!root.path().join("cache/.coreml").exists());
         assert!(processor.cache_path("bbb").read_dir().is_err());
         // The process lock and a foreign file survive a full clear.
         assert!(root.path().join("cache/.analysis.lock").exists());

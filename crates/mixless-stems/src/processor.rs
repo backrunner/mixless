@@ -139,10 +139,11 @@ impl Processor {
         }
         cache::reserve(&self.cache, (duration as f64 * 44100. * 24.).ceil() as u64)?;
         if state.inference.is_none() {
-            match Inference::load(
+            match Inference::load_with_cache(
                 &self.models,
                 self.bundled_models.as_deref(),
                 self.download,
+                Some(&self.cache.join(".coreml")),
                 progress,
                 active,
             ) {

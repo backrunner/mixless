@@ -18,7 +18,13 @@ rights.
 
 Native model inference uses [ort](https://github.com/pykeio/ort) (MIT/Apache-2.0)
 and [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT), linked into
-the application. Model artifacts are included in the installer with models, or
+the application. Apple Silicon builds also bundle ONNX Runtime 1.29 and
+[onnxruntime-ep-mlx](https://github.com/onnxruntime/onnxruntime-ep-mlx),
+[MLX](https://github.com/ml-explore/mlx), and
+[mlx-c](https://github.com/ml-explore/mlx-c) (all MIT) as optional native
+libraries and Metal kernels. Their licenses and the 1.29 third-party notices
+are included in `third-party/`. These components do not require Python.
+Model artifacts are included in the installer with models, or
 downloaded on first use by the standard installer: HTDemucs exported
 by [StemSplit](https://github.com/StemSplit/demucs-onnx) (MIT), based on
 [Meta Demucs](https://github.com/facebookresearch/demucs) (MIT), and

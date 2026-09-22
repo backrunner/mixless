@@ -211,6 +211,15 @@ jobs:
             -output target/universal-apple-darwin/release/mixless
           lipo target/universal-apple-darwin/release/mixless -verify_arch arm64 x86_64
 
+      - name: Cache pinned inference runtime
+        uses: actions/cache@v4
+        with:
+          path: target/inference-runtime
+          key: inference-runtime-${{ hashFiles('crates/mixless-protocol/src/inference_runtime.rs') }}
+
+      - name: Prepare verified native inference runtime
+        run: cargo run --locked -p mixless-tools -- prepare-inference-runtime target/inference-runtime
+
       - name: Cache pinned models
         uses: actions/cache@v4
         with:
@@ -249,6 +258,9 @@ jobs:
           fi
           for variant in standard bundled; do
             app="dist/${variant}/Mixless.app"
+            while IFS= read -r -d '' library; do
+              codesign --force --options runtime --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${library}"
+            done < <(find "${app}/Contents/Frameworks" -type f -name '*.dylib' -print0)
             codesign --force --options runtime --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${app}"
             codesign --verify --deep --strict --verbose=2 "${app}"
             ditto -c -k --keepParent "${app}" "dist/${variant}/Mixless-notarized.zip"

@@ -8,6 +8,7 @@ mod fx;
 mod ids;
 mod mixplan;
 mod models;
+pub mod inference_runtime;
 mod phrases;
 mod snapshot;
 mod stems;

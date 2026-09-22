@@ -31,10 +31,13 @@ impl Inference {
                     block[c * FRAMES + i] = mix[(start + i) * 2 + c];
                 }
             }
-            let output = self
-                .separator
-                .run(ort::inputs!["mix" => Tensor::from_array(([1usize, 2, FRAMES], block))?])?;
-            let (shape, values) = output["stems"].try_extract_tensor::<f32>()?;
+            let output = self.separator.run(
+                "mix",
+                Tensor::from_array(([1usize, 2, FRAMES], block))?,
+                &["stems"],
+                active,
+            )?;
+            let (shape, values) = output[0].try_extract_tensor::<f32>()?;
             if shape.as_ref() != [1, 4, 2, FRAMES as i64] || values.iter().any(|v| !v.is_finite()) {
                 return Err(Error::Model(
                     "Invalid separator output shape or samples".into(),

@@ -46,9 +46,14 @@ impl Inference {
                     *sample = mono[at as usize];
                 }
             }
-            let out = self.notes.run(ort::inputs!["serving_default_input_2:0" => Tensor::from_array(([1usize,SAMPLES,1],audio))?])?;
-            let (shape, note) = out["StatefulPartitionedCall:1"].try_extract_tensor::<f32>()?;
-            let (oshape, onset) = out["StatefulPartitionedCall:2"].try_extract_tensor::<f32>()?;
+            let out = self.notes.run(
+                "serving_default_input_2:0",
+                Tensor::from_array(([1usize, SAMPLES, 1], audio))?,
+                &["StatefulPartitionedCall:1", "StatefulPartitionedCall:2"],
+                active,
+            )?;
+            let (shape, note) = out[0].try_extract_tensor::<f32>()?;
+            let (oshape, onset) = out[1].try_extract_tensor::<f32>()?;
             if shape.len() != 3
                 || shape[0] != 1
                 || shape[2] != 88

@@ -72,11 +72,12 @@ export DEVELOPER_DIR
 export MIXLESS_CHANNEL=dev
 
 build_development() {
-    cargo build --locked -p mixless-desktop --bin mixless
     build_root="${CARGO_TARGET_DIR:-$project_dir/target}"
+    cargo run --locked -p mixless-tools -- prepare-inference-runtime "$build_root/inference-runtime"
+    cargo build --locked -p mixless-desktop --bin mixless
     desktop_bin="$(cd -- "$build_root/debug" && pwd)/mixless"
     desktop_app="$project_dir/target/app/Mixless.app"
-    cargo run --locked -p mixless-tools -- bundle "$desktop_bin" "$desktop_app" --channel dev
+    cargo run --locked -p mixless-tools -- bundle "$desktop_bin" "$desktop_app" --channel dev --runtime "$build_root/inference-runtime/ort-1.29.0-mlx-0.29.6"
 }
 
 printf '项目：%s\nXcode：%s\n' "$project_dir" "$DEVELOPER_DIR"
