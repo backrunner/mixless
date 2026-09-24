@@ -3,13 +3,16 @@
 
 mod channel;
 mod header;
+mod menu;
 mod performance;
 mod stems;
 mod tempo;
 mod wave;
 
-use gpui::{IntoElement, SharedString, prelude::*, px};
+use gpui::{IntoElement, MouseButton, SharedString, prelude::*, px};
 use mixless_protocol::DeckId;
+
+pub use menu::DeckMenu;
 
 use crate::{
     controls::{JogSpec, jog},
@@ -100,6 +103,12 @@ impl UiState {
 
         gpui::div()
             .id(SharedString::from(format!("deck-{:?}", deck)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |s, ev: &gpui::MouseDownEvent, window, cx| {
+                    s.open_deck_menu(deck, ev.position, window, cx);
+                }),
+            )
             .drag_over::<TrackDrag>(move |style, _, _, _| {
                 style.bg(theme::with_alpha(dc, 0.12)).border_color(dc)
             })

@@ -1,6 +1,63 @@
 use crate::{constraints::user_range, grid::Grid};
 use mixless_protocol::{Cue, CueKind, TrackAnalysis};
 
+/// An overlap-friendly passage is not permission to abandon a musical phrase.
+/// Zero-novelty periodic markers are timing hypotheses, not observed endings.
+pub(crate) fn exit_boundary(t: &TrackAnalysis, sec: f32) -> bool {
+    if sec >= t.duration_sec - 0.001 {
+        return true;
+    }
+    t.sections
+        .iter()
+        .any(|s| (s.start_sec - sec).abs() < 0.08 || (s.end_sec - sec).abs() < 0.08)
+        || t.phrase_boundaries
+            .iter()
+            .any(|p| (p.time_sec - sec).abs() < 0.08 && p.confidence >= 0.5 && p.novelty >= 0.15)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn periodic_or_recovery_markers_never_authorize_abandoning_a_phrase() {
+        for bpm in [90., 120., 175.] {
+            let mut t = crate::tests::track(
+                1,
+                bpm,
+                "8A",
+                mixless_protocol::SectionLabel::Outro,
+                32,
+                0.8,
+                0.2,
+            );
+            let interior = t.bars[16].start_sec;
+            assert!(
+                !exit_boundary(&t, interior),
+                "missing evidence is not an automatic eight-bar exit"
+            );
+            assert!(exit_boundary(&t, t.duration_sec));
+            for novelty in [0., 0.05, 0.14] {
+                t.phrase_boundaries = vec![mixless_protocol::PhraseBoundary {
+                    time_sec: interior,
+                    confidence: 0.9,
+                    novelty,
+                }];
+                assert!(!exit_boundary(&t, interior));
+                assert!(!points(&t, &[], true, 0.)
+                    .iter()
+                    .any(|p| (Grid(&t).sec(*p) - interior).abs() < 0.08));
+            }
+            for novelty in [0.16, 0.3, 0.8] {
+                t.phrase_boundaries[0].novelty = novelty;
+                assert!(exit_boundary(&t, interior));
+                assert!(!exit_boundary(&t, interior + 0.5));
+            }
+            t.phrase_boundaries[0].confidence = 0.3;
+            assert!(!exit_boundary(&t, interior));
+        }
+    }
+}
+
 pub(crate) fn boundary_quality(t: &TrackAnalysis, sec: f32) -> f32 {
     if !t.phrase_boundaries.is_empty() {
         return t
@@ -126,6 +183,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         b.is_finite()
             && sec >= 0.
             && sec <= audible_end + 0.001
+            && (!out || is_manual || exit_boundary(t, sec))
             && if out {
                 sec + 0.001 >= earliest && (is_manual || sec >= (t.duration_sec * 0.25).min(60.))
             } else {
@@ -227,7 +285,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
     };
     unique.truncate(8);
     for beat in window_points.into_iter().chain(rhythm_entries) {
-        if !unique.contains(&beat) {
+        if (!out || exit_boundary(t, g.sec(beat))) && !unique.contains(&beat) {
             unique.push(beat);
         }
     }

@@ -42,20 +42,23 @@ pub fn rows(
     if !on || tracks.is_empty() {
         return rows;
     }
-    for i in 0..tracks.len() {
-        let next = (i + 1) % tracks.len();
-        let pair = (tracks[i].id, tracks[next].id);
-        let plan = active
-            .filter(|p| p.summary.as_ref().is_some_and(|s| s.pair == pair))
-            .or_else(|| {
-                plans
-                    .get(i)?
-                    .as_deref()
-                    .filter(|p| p.summary.as_ref().is_some_and(|s| s.pair == pair))
-            });
-        if let Some((outgoing, incoming)) = plan.and_then(ranges) {
-            rows[i].outgoing = Some(outgoing);
-            rows[next].incoming = Some(incoming);
+    for plan in plans.iter().flatten() {
+        if let Some((outgoing, incoming)) = ranges(plan) {
+            let pair = plan.summary.as_ref().unwrap().pair;
+            if active.is_none()
+                && !(0..tracks.len())
+                    .any(|i| (tracks[i].id, tracks[(i + 1) % tracks.len()].id) == pair)
+            {
+                continue;
+            }
+            for (row, track) in rows.iter_mut().zip(tracks) {
+                if track.id == pair.0 {
+                    row.outgoing = Some(outgoing);
+                }
+                if track.id == pair.1 {
+                    row.incoming = Some(incoming);
+                }
+            }
         }
     }
     // Shuffle/late replanning can select a non-adjacent pair. The armed plan
@@ -68,6 +71,23 @@ pub fn rows(
             }
             if track.id == pair.1 {
                 row.incoming = Some(incoming);
+            }
+        }
+    }
+    // A changed live entrance invalidates a forecasted exit before it. Never
+    // draw two incompatible occurrences (including a playlist wrap) as if
+    // they belonged to one pass through this track.
+    for (row, track) in rows.iter_mut().zip(tracks) {
+        if let (Some((_, entered)), Some((leaving, _))) = (row.incoming, row.outgoing) {
+            if entered > leaving + 0.001 {
+                if active
+                    .and_then(|p| p.summary.as_ref())
+                    .is_some_and(|s| s.pair.0 == track.id)
+                {
+                    row.incoming = None;
+                } else {
+                    row.outgoing = None;
+                }
             }
         }
     }
@@ -216,6 +236,14 @@ mod tests {
                 .iter()
                 .all(|r| *r == Overlay::default())
         );
+        let conflict = vec![Some(plan(1, 2, 40., 88.)), Some(plan(2, 3, 20., 60.)), None];
+        let corrected = rows(true, &tracks, &conflict, None);
+        assert_eq!(corrected[1].incoming, Some((8., 56.)));
+        assert!(corrected[1].outgoing.is_none());
+        let actual = plan(2, 3, 20., 60.);
+        let corrected = rows(true, &tracks, &conflict, Some(&actual));
+        assert!(corrected[1].incoming.is_none());
+        assert_eq!(corrected[1].outgoing, Some((20., 60.)));
         let active = plan(1, 3, 42., 90.);
         let shuffled = rows(true, &tracks, &plans, Some(&active));
         assert_eq!(shuffled[0].outgoing, Some((42., 90.)));

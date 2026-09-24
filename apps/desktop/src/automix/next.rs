@@ -79,9 +79,9 @@ pub(super) fn stage(
                 }
                 let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
                 let lead = ((a.analysis.duration_sec - now) * 0.1).clamp(0.005, 0.75);
-                let stem_playback =
-                    core.engine.stems_ready(outgoing) && core.engine.stems_ready(incoming);
-                let plan = preparation::pair_from_entry(
+                let stem_playback = core.engine.four_stems_ready(outgoing)
+                    && core.engine.four_stems_ready(incoming);
+                let plan = pair::scheduled_pair(
                     core,
                     &a,
                     &b,
@@ -92,10 +92,10 @@ pub(super) fn stage(
                     Some(following),
                     stem_playback,
                 )?;
-                let display = Arc::new(plan.clone());
+                let display = plan.plan;
                 let prepared = core
                     .engine
-                    .prepare_plan_on(plan, outgoing)
+                    .prepare_plan_on((*display).clone(), outgoing)
                     .map_err(|e| e.to_string())?;
                 Ok(Some((display, prepared)))
             })?;
@@ -124,7 +124,7 @@ pub(super) fn stage(
 // Preparing can take longer than the remaining lead time. Publication belongs
 // to the same bounded retry as planning, so a missed start replans this pair
 // instead of stopping AUTO or consuming the next playlist entry.
-fn prepare_and_publish(
+pub(super) fn prepare_and_publish(
     core: &Arc<AppCore>,
     outgoing: DeckId,
     active: impl Fn() -> bool,
@@ -155,7 +155,11 @@ fn prepare_and_publish(
                         on: false,
                     },
                 )?;
-                core.engine.commit_plan(prepared).map_err(|e| e.to_string())
+                core.engine
+                    .commit_plan(prepared)
+                    .map_err(|e| e.to_string())?;
+                preparation::committed(core, plan.clone());
+                Ok(())
             })?;
             Ok(active().then_some(plan))
         })();

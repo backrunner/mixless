@@ -35,6 +35,10 @@ pub(super) struct Retries {
 }
 
 impl Retries {
+    pub(super) fn has_playlist(&self, playlist: i64) -> bool {
+        self.pending.iter().any(|key| key.playlist == playlist)
+            || self.selections.iter().any(|(id, _)| *id == playlist)
+    }
     fn enqueue(&mut self, key: Key) -> bool {
         if self.pending.is_empty() {
             self.total = 0;
@@ -133,6 +137,9 @@ impl Retries {
 
 impl UiState {
     pub fn retry_import_item(&mut self, playlist: i64, position: usize) {
+        if self.playlist_sync_pending(playlist) {
+            return;
+        }
         if self.playlist_sel != Some(playlist) {
             return;
         }
@@ -154,6 +161,9 @@ impl UiState {
     }
 
     pub fn retry_failed_imports(&mut self, playlist: i64) {
+        if self.playlist_sync_pending(playlist) {
+            return;
+        }
         if self
             .import_retries
             .selections
@@ -226,6 +236,9 @@ impl UiState {
             }
         }
         self.start_import_retries();
+        if self.import_rx.is_none() && !self.import_queue.is_empty() {
+            self.start_next_import();
+        }
         if refresh {
             self.refresh_tracks();
         }

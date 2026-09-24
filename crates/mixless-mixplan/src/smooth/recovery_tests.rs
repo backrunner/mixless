@@ -35,28 +35,37 @@ fn short_recovery_keeps_clock_and_carries_offset_instead_of_waiting_for_eof() {
         let p = pair(
             &ctx,
             &PlannerOptions::default(),
-            112.,
+            128.,
             0.,
             TransitionMode::BeatBlend,
             4,
             -1.,
         )
         .unwrap();
-        assert!(p.t_out_a < a.duration_sec);
+        assert!((p.t_out_a - a.duration_sec).abs() < 0.001);
+        assert!(pair(
+            &ctx,
+            &PlannerOptions::default(),
+            112.,
+            0.,
+            TransitionMode::BeatBlend,
+            4,
+            -1.
+        )
+        .is_none());
         assert_eq!(p.incoming_start_bar, 0.);
         assert!((p.incoming_offset_end.rate - 128. / 120.).abs() < 0.001);
-        assert!(
-            p.lanes
-                .rate_a
-                .nodes
-                .iter()
-                .all(|(_, rate)| (*rate - 1.).abs() < 0.001)
-        );
+        assert!(p
+            .lanes
+            .rate_a
+            .nodes
+            .iter()
+            .all(|(_, rate)| (*rate - 1.).abs() < 0.001));
         let explicit = PlannerOptions {
             strategy: Some(S::BassSwap),
             ..Default::default()
         };
-        assert!(pair(&ctx, &explicit, 112., 0., TransitionMode::BeatBlend, 4, -1.).is_none());
+        assert!(pair(&ctx, &explicit, 128., 0., TransitionMode::BeatBlend, 4, -1.).is_none());
     }
 }
 
@@ -129,4 +138,33 @@ fn independent_recovery_before_a_build_is_available_but_the_build_must_resolve()
     let opts = PlannerOptions::default();
     assert!(pair(&ctx, &opts, 112., 0., TransitionMode::BeatBlend, 4, -1.).is_some());
     assert!(pair(&ctx, &opts, 120., 0., TransitionMode::BeatBlend, 4, -1.).is_none());
+}
+
+#[test]
+fn recovery_overlap_quality_does_not_authorize_an_interior_instant_cut() {
+    let a = recovery_track(120.);
+    let b = crate::tests::track(2, 95., "3B", L::Intro, 64, 0.8, 0.2);
+    assert!(crate::recovery::quality(&a, 50.) >= 0.6);
+    assert!(boundary_quality(&a, 50.) < 0.6);
+    assert!(pair(
+        &context(&a, &b),
+        &PlannerOptions::default(),
+        100.,
+        0.,
+        TransitionMode::PhraseBridge,
+        0,
+        -1.
+    )
+    .is_none());
+    // The true end remains a valid boundary; do not reject every short handoff.
+    assert!(pair(
+        &context(&a, &b),
+        &PlannerOptions::default(),
+        128.,
+        0.,
+        TransitionMode::PhraseBridge,
+        0,
+        -1.
+    )
+    .is_some());
 }

@@ -20,6 +20,7 @@ impl Inference {
         let mix = crate::resample::convert(input, 2, sr, 44100);
         let total = mix.len() / 2;
         let mut audio: [Vec<f32>; 3] = std::array::from_fn(|_| vec![0.; mix.len()]);
+        let mut bass = vec![0.; mix.len()];
         let mut weights = vec![0f32; total];
         for start in (0..total).step_by(STRIDE) {
             check(active)?;
@@ -49,6 +50,7 @@ impl Inference {
                 weights[start + i] += weight;
                 for c in 0..2 {
                     let at = c * FRAMES + i;
+                    bass[(start + i) * 2 + c] += values[2 * FRAMES + at] * weight;
                     audio[0][(start + i) * 2 + c] += values[6 * FRAMES + at] * weight;
                     audio[1][(start + i) * 2 + c] += values[at] * weight;
                     audio[2][(start + i) * 2 + c] +=
@@ -63,6 +65,7 @@ impl Inference {
             }
             for c in 0..2 {
                 let at = i * 2 + c;
+                bass[at] /= weights[i];
                 for stem in &mut audio {
                     stem[at] /= weights[i];
                 }
@@ -72,6 +75,7 @@ impl Inference {
         progress(Progress::Separating(100));
         Ok(Stems {
             audio,
+            bass,
             residual_rms: (residual / mix.len().max(1) as f64).sqrt() as f32,
         })
     }

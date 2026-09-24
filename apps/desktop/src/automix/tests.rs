@@ -73,8 +73,8 @@ fn cached_boundary_plans_compile_for_every_adjacent_pair() {
         let b = crate::analysis::prepare(&core, tracks[(i + 1) % tracks.len()]).unwrap();
         load(&core, DeckId::A, a.track.id, &|| true).unwrap();
         load(&core, DeckId::B, b.track.id, &|| true).unwrap();
-        let p = super::preparation::pair(&core, &a, &b, 0., Default::default(), Default::default())
-            .unwrap();
+        let p =
+            super::pair::pair(&core, &a, &b, 0., Default::default(), Default::default()).unwrap();
         let result = core.engine.prepare_plan_on(p.clone(), DeckId::A);
         assert!(result.is_ok(), "pair {i}: {:?}, plan={p:?}", result.err());
     }
@@ -214,16 +214,15 @@ fn track_in_and_out_markers_apply_to_their_own_transition_side() {
             .set_cue(id, 7, 7 * 48000, CueKind::Out, true)
             .unwrap();
     }
-    let p = super::preparation::pair(&core, &a, &b, 0., Default::default(), Default::default())
-        .unwrap();
+    let p = super::pair::pair(&core, &a, &b, 0., Default::default(), Default::default()).unwrap();
     assert!(p.t_in_a <= 7. && p.t_out_a >= 7.);
     assert_eq!(p.t_in_b, 0.);
     assert!(
         p.t_end_b < 7.,
         "incoming OUT must not force its entire song into the entry mix"
     );
-    let late = super::preparation::pair(&core, &a, &b, 7.1, Default::default(), Default::default())
-        .unwrap();
+    let late =
+        super::pair::pair(&core, &a, &b, 7.1, Default::default(), Default::default()).unwrap();
     assert!(late.t_in_a >= 7.1 && late.t_out_a <= a.analysis.duration_sec);
     assert_eq!(late.t_in_b, 0.);
 }

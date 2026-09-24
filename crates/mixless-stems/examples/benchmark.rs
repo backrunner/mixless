@@ -81,7 +81,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{result}");
         results.push(result);
         if run + 1 == runs {
-            for (name, samples) in ["vocals", "drums", "instruments"].iter().zip(&stems.audio) {
+            let other: Vec<f32> = stems.audio[2]
+                .iter()
+                .zip(&stems.bass)
+                .map(|(all, bass)| all - bass)
+                .collect();
+            for (name, samples) in [
+                ("vocals", &stems.audio[0]),
+                ("drums", &stems.audio[1]),
+                ("instruments", &stems.audio[2]),
+                ("bass", &stems.bass),
+                ("other", &other),
+            ] {
                 let mut wav = hound::WavWriter::create(
                     output.join(format!("{name}.wav")),
                     hound::WavSpec {

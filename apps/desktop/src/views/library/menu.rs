@@ -21,19 +21,12 @@ impl UiState {
             self.core.analysis.statuses().get(&menu.track),
             Some(crate::analysis::Status::MissingFile(_))
         );
-        let width = 224.;
-        let height = 20. + 2. * 5. + (if missing { 6. } else { 3. }) * theme::MENU_ROW_HEIGHT + 8.;
-        let x = f32::from(menu.position.x)
-            .min(f32::from(window.viewport_size().width) - width - 8.)
-            .max(8.);
-        let y = f32::from(menu.position.y)
-            .min(f32::from(window.viewport_size().height) - height - 8.)
-            .max(8.);
         let mut panel = div()
-            .absolute()
-            .left(px(x))
-            .top(px(y))
-            .w(px(width))
+            .id("track-menu-panel")
+            .w(px(224.).min((window.viewport_size().width - px(16.)).max(px(0.))))
+            .max_h((window.viewport_size().height - px(16.)).max(px(0.)))
+            .overflow_y_scroll()
+            .overflow_x_hidden()
             .p(px(3.))
             .rounded(px(theme::POPUP_RADIUS))
             .bg(theme::PANEL_RAISED)
@@ -49,6 +42,7 @@ impl UiState {
                 div()
                     .px(px(7.))
                     .h(px(20.))
+                    .flex_shrink_0()
                     .line_height(px(20.))
                     .truncate()
                     .text_size(px(10.))
@@ -72,7 +66,14 @@ impl UiState {
         }
         for (action, label, enabled) in actions {
             if action < 2 {
-                panel = panel.child(div().h(px(1.)).my(px(2.)).mx(px(4.)).bg(theme::LINE));
+                panel = panel.child(
+                    div()
+                        .flex_shrink_0()
+                        .h(px(1.))
+                        .my(px(2.))
+                        .mx(px(4.))
+                        .bg(theme::LINE),
+                );
             }
             let track = menu.track;
             let playlist = menu.playlist;
@@ -80,6 +81,7 @@ impl UiState {
                 div()
                     .id(("track-menu-action", action as usize))
                     .h(px(theme::MENU_ROW_HEIGHT))
+                    .flex_shrink_0()
                     .px(px(7.))
                     .flex()
                     .items_center()
@@ -153,7 +155,12 @@ impl UiState {
                         cx.notify();
                     }),
                 )
-                .child(panel)
+                .child(
+                    gpui::anchored()
+                        .position(menu.position)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(panel),
+                )
                 .into_any_element(),
         )
     }

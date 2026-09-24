@@ -4,11 +4,13 @@ members = [
     "crates/mixless-protocol",
     "crates/mixless-engine",
     "crates/mixless-library",
+    "crates/mixless-pack",
     "crates/mixless-analyze",
     "crates/mixless-stems",
     "crates/mixless-tools",
     "crates/mixless-mixplan",
     "crates/mixless-spotify",
+    "crates/mixless-net",
     "crates/mixless-acquire",
     "crates/mixless-acquire-yt",
     "crates/mixless-midi",
@@ -26,6 +28,7 @@ rust-version = "1.88"
 mixless-protocol = { path = "crates/mixless-protocol" }
 mixless-engine = { path = "crates/mixless-engine" }
 mixless-library = { path = "crates/mixless-library" }
+mixless-pack = { path = "crates/mixless-pack" }
 mixless-analyze = { path = "crates/mixless-analyze" }
 mixless-stems = { path = "crates/mixless-stems" }
 mixless-mixplan = { path = "crates/mixless-mixplan" }

@@ -5,10 +5,13 @@ use mixless_protocol::StemAnalysis;
 use std::{fs, path::Path};
 
 pub fn key(content: &str) -> String {
+    key_version(content, crate::evidence::VERSION)
+}
+pub fn key_version(content: &str, version: u32) -> String {
     blake3::hash(
         format!(
             "{}:{}:{}:{content}",
-            crate::evidence::VERSION,
+            version,
             crate::models::SEPARATOR_HASH,
             crate::models::NOTES_HASH
         )
@@ -18,6 +21,12 @@ pub fn key(content: &str) -> String {
     .to_string()
 }
 pub fn read(dir: &Path, duration: f32) -> Result<Option<StemAnalysis>> {
+    read_version(dir, duration, crate::evidence::VERSION)
+}
+pub fn read_legacy(dir: &Path, duration: f32) -> Result<Option<StemAnalysis>> {
+    read_version(dir, duration, 1)
+}
+fn read_version(dir: &Path, duration: f32, version: u32) -> Result<Option<StemAnalysis>> {
     let data = match fs::read(dir.join("analysis.json")) {
         Ok(d) => d,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -27,7 +36,7 @@ pub fn read(dir: &Path, duration: f32) -> Result<Option<StemAnalysis>> {
         Ok(a) => a,
         Err(_) => return Ok(None),
     };
-    if analysis.version != crate::evidence::VERSION
+    if analysis.version != version
         || analysis.separator_sha256 != crate::models::SEPARATOR_HASH
         || analysis.notes_sha256 != crate::models::NOTES_HASH
         || !analysis.valid(duration)
@@ -35,13 +44,18 @@ pub fn read(dir: &Path, duration: f32) -> Result<Option<StemAnalysis>> {
         return Ok(None);
     }
     // A manifest alone cannot make an incomplete audio cache usable.
-    for name in ["vocals", "drums", "instruments"] {
+    for name in ["vocals", "drums", "instruments", "bass"] {
+        if version == 1 && name == "bass" {
+            continue;
+        }
         let path = dir.join(format!("{name}.wav"));
         let Ok(wav) = hound::WavReader::open(&path) else {
             return Ok(None);
         };
         if wav.spec().channels != 2
             || wav.spec().sample_rate != 44100
+            || wav.spec().bits_per_sample != 32
+            || wav.spec().sample_format != hound::SampleFormat::Float
             || (wav.duration() as f32 / 44100. - duration).abs() > 0.05
             || fs::metadata(path)?.len() < wav.duration() as u64 * 8
         {
@@ -65,7 +79,10 @@ pub fn save(dir: &Path, stems: &Stems, analysis: &StemAnalysis) -> Result<()> {
     }
     fs::create_dir(&temp)?;
     let result = (|| {
-        for (i, name) in ["vocals", "drums", "instruments"].iter().enumerate() {
+        for (i, name) in ["vocals", "drums", "instruments", "bass"]
+            .iter()
+            .enumerate()
+        {
             let path = temp.join(format!("{name}.wav"));
             let mut wav = hound::WavWriter::create(
                 &path,
@@ -76,7 +93,8 @@ pub fn save(dir: &Path, stems: &Stems, analysis: &StemAnalysis) -> Result<()> {
                     sample_format: hound::SampleFormat::Float,
                 },
             )?;
-            for &sample in &stems.audio[i] {
+            let samples = if i == 3 { &stems.bass } else { &stems.audio[i] };
+            for &sample in samples {
                 wav.write_sample(sample)?;
             }
             wav.finalize()?;
@@ -169,6 +187,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(key("a"));
         let stems = Stems {
+            bass: vec![0.; 4410],
             audio: std::array::from_fn(|_| vec![0.; 4410]),
             residual_rms: 0.,
         };

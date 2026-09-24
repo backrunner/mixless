@@ -6,6 +6,7 @@ mod folders;
 mod hash;
 mod imports;
 mod ordering;
+pub mod portable;
 mod schema;
 mod sources;
 mod spotify_artwork;
@@ -38,6 +39,7 @@ pub struct PlaylistSummary {
     pub tracks: u32,
     pub folder_path: Option<String>,
     pub failed_imports: u32,
+    pub spotify_id: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -98,6 +100,18 @@ impl Library {
         if stored <= SCHEMA_VERSION {
             conn.execute_batch(
                 "
+            CREATE TABLE IF NOT EXISTS library_identity (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                identity TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO library_identity VALUES(1, lower(hex(randomblob(16))));
+            CREATE TABLE IF NOT EXISTS package_tracks (
+                source TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                PRIMARY KEY(source, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS package_tracks_by_track ON package_tracks(track_id);
             CREATE TABLE IF NOT EXISTS tracks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
@@ -448,7 +462,8 @@ impl Library {
                      AND (missing.status NOT IN ('local','acquired') OR missing.track_id IS NULL)) AS n,
                     CASE WHEN e.source='folder' THEN e.external_id END AS folder_path,
                     (SELECT COUNT(*) FROM import_items failed WHERE failed.playlist_id=p.id
-                     AND e.source='spotify' AND failed.status IN ('missing','suspect'))
+                     AND e.source='spotify' AND failed.status IN ('missing','suspect')),
+                    CASE WHEN e.source='spotify' THEN e.external_id END
              FROM playlists p
              LEFT JOIN playlist_items i ON i.playlist_id = p.id
              LEFT JOIN external_playlists e ON e.playlist_id = p.id
@@ -462,6 +477,7 @@ impl Library {
                 tracks: r.get::<_, i64>(2)? as u32,
                 folder_path: r.get(3)?,
                 failed_imports: r.get::<_, i64>(4)? as u32,
+                spotify_id: r.get(5)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())

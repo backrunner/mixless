@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let version: u32 = args.get(1).map_or(Ok(14), |v| v.parse())?;
     let library = Library::open(Path::new(db))?;
-    let planner = Planner::with_options(PlannerOptions {
+    let mut planner = Planner::with_options(PlannerOptions {
         harmonic_key_shift: true,
         stem_playback: std::env::var("MIXLESS_AUDIT_STEM_PLAYBACK").as_deref() == Ok("1"),
         ..Default::default()
@@ -97,7 +97,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         }
         println!("\n== {} ({} tracks)", playlist.name, tracks.len());
-        for pair in tracks.windows(2) {
+        let sequential = std::env::var("MIXLESS_AUDIT_SEQUENTIAL").as_deref() == Ok("1");
+        let mut offset = Default::default();
+        let mut entry = 0.;
+        let mut earliest = 0.;
+        let mut plans = Vec::new();
+        for (pair_index, pair) in tracks.windows(2).enumerate() {
             let (a, b) = (&pair[0], &pair[1]);
             let (Some(ta), Some(tb)) = (
                 library.load_analysis(a.id, version)?,
@@ -117,14 +122,34 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .into_iter()
                 .filter(|c| c.kind != CueKind::Out)
                 .collect();
-            let plan = planner.plan_next(&PlanContext {
+            planner.options.outgoing_entry_sec = if sequential { entry } else { 0. };
+            planner.options.earliest_outgoing_sec = if sequential { earliest } else { 0. };
+            let context = PlanContext {
                 outgoing: &ta,
                 incoming: &tb,
                 cues_out: &cues_out,
                 cues_in: &cues_in,
-                offset_a: Default::default(),
+                offset_a: if sequential {
+                    offset
+                } else {
+                    Default::default()
+                },
                 offset_b: Default::default(),
-            });
+            };
+            let following = if sequential {
+                tracks
+                    .get(pair_index + 2)
+                    .map(|t| library.load_analysis(t.id, version))
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            let plan = planner.plan_with_following(&context, following.as_ref());
+            offset = plan.incoming_offset_end;
+            entry = plan.t_in_b;
+            earliest = plan.t_end_b;
+            plans.push(plan.clone());
             let stems = ta.stems.is_some() && tb.stems.is_some();
             stem_pairs += usize::from(stems);
             let Some(summary) = &plan.summary else {
@@ -155,8 +180,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 summary.strategy,
                 n,
                 summary.score,
-                if summary.used_fallback { " FALLBACK" } else { "" },
-                if plan.stem_mix.is_some() { " stem-env" } else { "" },
+                if summary.used_fallback {
+                    " FALLBACK"
+                } else {
+                    ""
+                },
+                if plan.stem_mix.is_some() {
+                    " stem-env"
+                } else {
+                    ""
+                },
                 plan.t_in_a,
                 exit,
                 ta.duration_sec,
@@ -168,14 +201,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                 vb,
                 vb_src,
                 stems,
-                if n < 4 && va >= 0.5 { " <-- SHORT CUT ON VOCAL" } else { "" }
+                if n < 4 && va >= 0.5 {
+                    " <-- SHORT CUT ON VOCAL"
+                } else {
+                    ""
+                }
             );
         }
+        if let Ok(dir) = std::env::var("MIXLESS_AUDIT_PLANS") {
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(
+                Path::new(&dir).join(format!("playlist-{}.json", playlist.id)),
+                serde_json::to_vec_pretty(&plans)?,
+            )?;
+        }
     }
-    println!("\n== Summary: {pairs} pairs, {failed} failed, {stem_pairs} with stem evidence on both sides");
+    println!(
+        "\n== Summary: {pairs} pairs, {failed} failed, {stem_pairs} with stem evidence on both sides"
+    );
     for (strategy, count) in strategies {
         println!("  {strategy}: {count}");
     }
-    println!("  short (<4 bars) transitions with the outgoing vocal still sounding past the exit: {short_with_vocal}");
+    println!(
+        "  short (<4 bars) transitions with the outgoing vocal still sounding past the exit: {short_with_vocal}"
+    );
     Ok(())
 }

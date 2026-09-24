@@ -178,6 +178,16 @@ impl UiState {
             }
         }
     }
+
+    pub(super) fn cancel_deck_transport_press(&mut self, deck: DeckId) {
+        if self
+            .transport_press
+            .as_ref()
+            .is_some_and(|press| press.deck == deck)
+        {
+            self.cancel_transport_press();
+        }
+    }
 }
 
 #[cfg(test)]

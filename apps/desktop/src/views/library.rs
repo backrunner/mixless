@@ -4,6 +4,7 @@
 mod drag;
 pub(crate) mod import_rows;
 mod menu;
+mod packages;
 mod playlist_menu;
 mod status;
 pub use drag::TrackDrag;
@@ -973,6 +974,8 @@ impl UiState {
 
         let panel = gpui::div()
             .id("import-modal-panel")
+            .max_h((window.viewport_size().height - px(32.)).max(px(0.)))
+            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_3()
@@ -1056,6 +1059,7 @@ impl UiState {
                             .child(self.download_dir_button(cx)),
                     ),
             )
+            .child(self.render_packages(cx))
             .when(!self.import_details.is_empty(), |el| {
                 el.child(
                     gpui::div()
@@ -1129,6 +1133,7 @@ mod tests {
                 tracks: 0,
                 folder_path: Some((*path).into()),
                 failed_imports: 0,
+                spotify_id: None,
             })
             .collect();
         let names: Vec<_> = folders
@@ -1159,6 +1164,7 @@ mod folder_display_tests {
             tracks: 14,
             folder_path: Some(path.into()),
             failed_imports: 0,
+            spotify_id: None,
         };
         let a = item(1, "/music/North/playlist_G7SAZ_DnB_");
         assert_eq!(folder_name(&a, std::slice::from_ref(&a)), "DnB");

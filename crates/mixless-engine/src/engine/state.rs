@@ -12,6 +12,7 @@ impl DeckSlot {
             title: Mutex::new(None),
             artist: Mutex::new(None),
             track_id: AtomicU64::new(0),
+            load_revision: AtomicU64::new(0),
             playing: AtomicBool::new(false),
             playhead: AtomicU64::new(0),
             rate_micro: AtomicU32::new(1_000_000),
@@ -136,6 +137,7 @@ impl Shared {
         for i in 0..2 {
             let s = &self.decks[i];
             let id = s.track_id.load(Ordering::Relaxed);
+            let frames = s.frames.load(Ordering::Relaxed);
             let mut cues = [None; 8];
             for (j, c) in s.cues.iter().enumerate() {
                 let v = c.load(Ordering::Relaxed);
@@ -147,6 +149,11 @@ impl Shared {
             let follower = self.sync_follower.load(Ordering::Acquire);
             snap.decks[i] = DeckSnapshot {
                 stems_ready: s.stems_ready(),
+                bass_ready: s
+                    .stems
+                    .try_lock()
+                    .ok()
+                    .is_some_and(|v| v.as_ref().is_some_and(|v| v.audio.has_bass())),
                 stem_gain: std::array::from_fn(|j| {
                     s.stem_gain[j].load(Ordering::Relaxed) as f32 / 1000.
                 }),
@@ -157,9 +164,13 @@ impl Shared {
                 },
                 title: s.title.lock().ok().and_then(|t| t.clone()),
                 artist: s.artist.lock().ok().and_then(|t| t.clone()),
-                playing: s.playing.load(Ordering::Relaxed),
-                frame: s.playhead_frames() as u64,
-                frames: s.frames.load(Ordering::Relaxed),
+                playing: frames > 0 && s.playing.load(Ordering::Relaxed),
+                frame: if frames == 0 {
+                    0
+                } else {
+                    s.playhead_frames() as u64
+                },
+                frames,
                 src_sample_rate: s.src_sr.load(Ordering::Relaxed),
                 beat,
                 bar,

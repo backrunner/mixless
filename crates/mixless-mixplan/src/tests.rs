@@ -5,6 +5,8 @@ mod catalog_tests;
 mod choreography_regressions;
 #[path = "continuity_regressions.rs"]
 mod continuity_regressions;
+#[path = "entry_regressions.rs"]
+mod entry_regressions;
 #[path = "recovery_regressions.rs"]
 mod recovery_regressions;
 #[path = "smooth_regressions.rs"]

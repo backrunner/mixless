@@ -31,6 +31,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         let previous = library.load_analysis(track.id, old)?;
+        if previous.is_none() {
+            println!(
+                "{}: source analysis version {old} missing, skipped",
+                track.title
+            );
+            continue;
+        }
         let mut analysis = if structure_only {
             let Some(mut analysis) = previous.clone() else {
                 println!("{}: previous analysis missing, skipped", track.title);

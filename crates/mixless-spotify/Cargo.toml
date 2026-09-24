@@ -6,6 +6,8 @@ license.workspace = true
 description = "Public playlist metadata via Spotify embed. No audio bytes."
 
 [dependencies]
+mixless-net = { path = "../mixless-net" }
+base64 = "0.22"
 mixless-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

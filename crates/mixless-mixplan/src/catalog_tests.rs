@@ -187,11 +187,8 @@ fn local_tempo_map_warps_incoming_and_clock() {
 }
 #[test]
 fn energy_hold_offset_is_carried_into_next_pair() {
-    let (a, mut b) = pair();
-    b.tempo.global_bpm = 110.;
-    for s in &mut b.tempo.segments {
-        s.bpm = 110.;
-    }
+    let (a, _) = pair();
+    let mut b = track(2, 110., "9A", S::Intro, 32, 0.8, 1.);
     b.tempo.beats.clear();
     b.tempo.downbeats.clear();
     let p = Planner::with_options(PlannerOptions {

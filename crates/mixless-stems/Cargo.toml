@@ -19,6 +19,7 @@ sha2 = "0.10"
 hound = "3"
 rustfft = "6"
 fs2 = "0.4"
+tempfile = "3"
 
 # ONNX Runtime ships no x86_64-apple-darwin prebuilt (dropped by upstream and
 # pyke ort after 1.23). Inference is gated off there; cached stems still play.
@@ -32,6 +33,3 @@ onnx-protobuf = "0.2.3"
 protobuf = "=3.4.0"
 libloading = "0.8"
 libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"

@@ -15,7 +15,7 @@ mod sources;
 mod stems;
 pub use deep::promote as promote_deep;
 pub use deep::schedule as schedule_deep;
-pub use playback::load_manual;
+pub use playback::{load_manual, unload};
 pub use reanalysis::reanalyze;
 pub use sources::{relink_file, remove_track};
 pub use stems::attach_stems;
@@ -228,6 +228,7 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
                     let Some(core) = core.upgrade() else { break };
                     if prepare(&core, id).is_ok() {
                         deep::schedule(&core, id);
+                        crate::automix::refresh_previews(&core);
                     }
                 }
             });
@@ -418,12 +419,55 @@ pub fn load(
     if !active() {
         return Ok(false);
     }
-    let prepared = prepare(core, id)?;
+    let ready = ready_load(core, id)?;
     if !active() {
         return Ok(false);
     }
+    publish_load(core, deck, ready, active)
+}
+
+pub struct ReadyLoad {
+    pub prepared: PreparedTrack,
+    pub buf: Arc<mixless_engine::AudioBuffer>,
+    pub stems: Option<Arc<mixless_engine::StemBuffer>>,
+}
+impl ReadyLoad {
+    pub fn four_stems_ready(&self) -> bool {
+        self.stems.as_ref().is_some_and(|s| s.has_bass())
+    }
+}
+
+/// Resolve every expensive source operation before replacing an armed deck.
+pub fn ready_load(core: &Arc<AppCore>, id: TrackId) -> Result<ReadyLoad, String> {
+    let prepared = prepare(core, id)?;
     let buf = decode(core, &prepared)?;
+    let stems = core.stems.as_ref().and_then(|processor| {
+        processor
+            .playback(&prepared.track.content_hash, buf.frames, buf.sample_rate)
+            .ok()
+            .flatten()
+    });
+    Ok(ReadyLoad {
+        prepared,
+        buf,
+        stems,
+    })
+}
+
+pub fn publish_load(
+    core: &Arc<AppCore>,
+    deck: DeckId,
+    ready: ReadyLoad,
+    accept: impl FnOnce() -> bool,
+) -> Result<bool, String> {
+    let ReadyLoad {
+        prepared,
+        buf,
+        stems,
+    } = ready;
+    let id = prepared.track.id;
     let track = &prepared.track;
+    let cues = core.library.cues(id).map_err(|e| e.to_string())?;
     if core
         .library
         .verified_content_hash(Path::new(&track.path))
@@ -451,20 +495,17 @@ pub fn load(
             prepared.wave.clone(),
             track.title.clone(),
             track.artist.clone(),
-            &active,
+            accept,
         )
         .map_err(|e| e.to_string())?;
     if !committed {
-        if active() {
-            core.analysis.forget(id);
-            return Err("File changed while loading; analysis will be refreshed".into());
-        }
         return Ok(false);
     }
     core.analysis
         .playback_revision
         .lock()
-        .expect("source revision")[deck.index()] = Some((source, track.content_hash.clone()));
+        .expect("source revision")[deck.index()] =
+        Some((source.clone(), track.content_hash.clone()));
     if prepared.analysis.tempo.beats.len() >= 2 {
         core.engine
             .set_beat_grid(deck, id, prepared.analysis.tempo.clone())
@@ -472,7 +513,7 @@ pub fn load(
     }
     core.engine
         .set_bpm(deck, prepared.analysis.tempo.global_bpm);
-    for cue in core.library.cues(id).map_err(|e| e.to_string())? {
+    for cue in cues {
         core.engine.set_cue_frame(deck, cue.index, cue.frame);
         let _ = core.engine.dispatch(mixless_protocol::Command::SetCueKind {
             track_id: id,
@@ -484,11 +525,20 @@ pub fn load(
             },
         });
     }
-    let hash = prepared.track.content_hash.clone();
     core.analysis.loaded.lock().expect("loaded analysis")[deck.index()] = Some(prepared);
     drop(_commit);
     drop(_load);
-    attach_stems(core, deck, id, &hash);
+    if let Some(stems) = stems {
+        if let Some(source) = source.upgrade() {
+            core.engine
+                .attach_stems(deck, id, &source, stems)
+                .map_err(|e| e.to_string())?;
+        }
+    } else {
+        // No disk reads in this publication path; preparation completion will
+        // attach stems later and request a safe plan refresh.
+        deep::retry_for_playback(core, id);
+    }
     deep::promote(core, id);
     Ok(true)
 }

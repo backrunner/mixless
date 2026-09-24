@@ -55,6 +55,11 @@ stay private; prefer `pub(super)` for interfaces used only inside a feature.
 | `apps/desktop/src/fx/` | Edit actions in `mod.rs`, value mapping in `params.rs`, selector/editor in `editor.rs`, deck slots in `bar.rs` |
 | `apps/desktop/src/views/deck/` | Header, tempo, performance controls and waveforms; `deck.rs` composes the panel |
 
+Deck-area layout and control changes must update the MIDI target catalogue and
+the Preferences MIDI wireframe in the same change. Keep the control count,
+order, labels and target semantics aligned, and update the MIDI mapping tests
+and user documentation when a control is added, removed, renamed or moved.
+
 When adding an FX kind, append its stable ID and update parsing, metadata,
 capabilities, defaults, DSP dispatch and the relevant editor parameters together.
 Keep the dispatch exhaustive. Update [FX_CATALOGUE.md](.agents/reference/FX_CATALOGUE.md) and

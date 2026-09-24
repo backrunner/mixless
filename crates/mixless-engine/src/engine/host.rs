@@ -254,12 +254,12 @@ impl Engine {
         // Publish identity after the waveform and labels; otherwise the UI can
         // cache the previous waveform under this track's ID for the whole load.
         slot.track_id.store(track_id.0 as u64, Ordering::Release);
+        slot.load_revision.fetch_add(1, Ordering::AcqRel);
         Ok(true)
     }
 
     pub fn eject(&self, deck: DeckId) {
-        self.clear_stems(deck);
-        self.automation_command(&Command::StopAutomix);
+        self.stop_automix_for_eject();
         self.shared.clear_sync();
         let slot = &self.shared.decks[deck.index()];
         if let Ok(mut grid) = slot.beat_grid.lock() {
@@ -277,10 +277,22 @@ impl Engine {
         }
         slot.track_id.store(0, Ordering::Relaxed);
         slot.frames.store(0, Ordering::Relaxed);
+        slot.src_sr.store(0, Ordering::Relaxed);
+        slot.bpm_milli.store(0, Ordering::Relaxed);
+        slot.loop_on.store(false, Ordering::Relaxed);
+        slot.loop_start.store(0, Ordering::Relaxed);
+        slot.loop_length_frames.store(0, Ordering::Relaxed);
+        slot.roll_start.store(0, Ordering::Relaxed);
+        for level in &slot.level {
+            level.store(0, Ordering::Relaxed);
+        }
         slot.set_playhead(0.0);
         if let Ok(mut buffer) = slot.buffer.lock() {
             self.retire_buffer(buffer.take());
         }
+        // attach_stems holds buffer through publication. Clear it only after
+        // removing the source, so an in-flight attachment cannot win afterwards.
+        self.clear_stems(deck);
         if let Ok(mut w) = slot.waveform.lock() {
             *w = None;
         }
@@ -293,6 +305,14 @@ impl Engine {
         for c in &slot.cues {
             c.store(0, Ordering::Relaxed);
         }
+        slot.load_revision.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Changes even when the same track and cached PCM are loaded again.
+    pub fn deck_load_revision(&self, deck: DeckId) -> u64 {
+        self.shared.decks[deck.index()]
+            .load_revision
+            .load(Ordering::Acquire)
     }
 
     pub fn set_bpm(&self, deck: DeckId, bpm: f32) {

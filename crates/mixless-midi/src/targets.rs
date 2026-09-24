@@ -219,8 +219,13 @@ impl MidiTarget {
                 targets.extend([Self::Eq { deck, band }, Self::EqKill { deck, band }]);
             }
             targets.extend(
-                [StemKind::Vocals, StemKind::Drums, StemKind::Instruments]
-                    .map(|stem| Self::Stem { deck, stem }),
+                [
+                    StemKind::Vocals,
+                    StemKind::Drums,
+                    StemKind::Bass,
+                    StemKind::Instruments,
+                ]
+                .map(|stem| Self::Stem { deck, stem }),
             );
             for index in 0..8 {
                 targets.extend([Self::Cue { deck, index }, Self::ClearCue { deck, index }]);
@@ -381,7 +386,15 @@ impl MidiTarget {
             LoopDouble { .. } => "Loop size × 2".into(),
             BeatBack { .. } => "Beat jump −1 bar".into(),
             BeatForward { .. } => "Beat jump +1 bar".into(),
-            Stem { stem, .. } => format!("Stem / {stem:?}"),
+            Stem { stem, .. } => format!(
+                "Stem / {}",
+                match stem {
+                    StemKind::Vocals => "Vocal",
+                    StemKind::Drums => "Drums",
+                    StemKind::Bass => "Bass",
+                    StemKind::Instruments => "Other",
+                }
+            ),
             FxMix { slot, .. } => format!("FX {} / Mix", slot + 1),
             FxOn { slot, .. } => format!("FX {} / On", slot + 1),
             FxPrevious { slot, .. } => format!("FX {} / Previous effect", slot + 1),

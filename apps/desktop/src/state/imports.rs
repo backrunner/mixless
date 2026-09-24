@@ -181,14 +181,64 @@ impl UiState {
     }
 
     pub fn import_spotify(&mut self, url: String) {
+        if let Some(id) = mixless_spotify::extract_playlist_id(&url) {
+            if self.active_spotify.as_deref() == Some(&id)
+                || self.import_queue.iter().any(|request| match request {
+                    ImportRequest::Spotify(url) => {
+                        mixless_spotify::extract_playlist_id(url).as_deref() == Some(id.as_str())
+                    }
+                    ImportRequest::SpotifySync(_, remote) => remote == &id,
+                    _ => false,
+                })
+            {
+                return;
+            }
+            if let Some(playlist) = self
+                .playlists
+                .iter()
+                .find(|p| p.spotify_id.as_deref() == Some(&id))
+            {
+                self.refresh_spotify_playlist(playlist.id);
+                return;
+            }
+        }
         self.show_import_modal = false;
         self.import_details.clear();
         self.import_queue.push_back(ImportRequest::Spotify(url));
         self.start_next_import();
     }
 
+    pub fn playlist_sync_pending(&self, playlist: i64) -> bool {
+        self.active_playlist_sync == Some(playlist)
+            || self.import_queue.iter().any(
+                |request| matches!(request, ImportRequest::SpotifySync(id, _) if *id == playlist),
+            )
+    }
+
+    pub fn refresh_spotify_playlist(&mut self, playlist: i64) {
+        if self.playlist_sync_pending(playlist) {
+            return;
+        }
+        let Some(remote) = self
+            .playlists
+            .iter()
+            .find(|p| p.id == playlist)
+            .and_then(|p| p.spotify_id.clone())
+        else {
+            return;
+        };
+        self.show_import_modal = false;
+        self.import_details.clear();
+        self.import_queue
+            .push_back(ImportRequest::SpotifySync(playlist, remote));
+        self.start_next_import();
+    }
+
     pub fn import_status(&self) -> SharedString {
         let mut parts = vec![self.acquire.to_string()];
+        if !self.package.status.is_empty() {
+            parts.push(self.package.status.clone());
+        }
         if !self.import_queue.is_empty() {
             parts.push(format!("{} imports queued", self.import_queue.len()));
         }
@@ -207,6 +257,11 @@ impl UiState {
         if self.import_rx.is_some() {
             return;
         }
+        if let Some(ImportRequest::SpotifySync(id, _)) = self.import_queue.front() {
+            if self.import_retries.has_playlist(*id) {
+                return;
+            }
+        }
         let Some(request) = self.import_queue.pop_front() else {
             self.busy = false;
             return;
@@ -216,14 +271,27 @@ impl UiState {
         self.acquire = match &request {
             ImportRequest::Local(_) => "Finding audio files",
             ImportRequest::Spotify(_) => "Reading playlist",
+            ImportRequest::SpotifySync(_, _) => "Updating Spotify playlist",
         }
         .into();
         let (tx, rx) = channel();
         self.import_rx = Some(rx);
+        self.active_spotify = match &request {
+            ImportRequest::Spotify(url) => mixless_spotify::extract_playlist_id(url),
+            ImportRequest::SpotifySync(_, remote) => Some(remote.clone()),
+            _ => None,
+        };
+        self.active_playlist_sync = match &request {
+            ImportRequest::SpotifySync(id, _) => Some(*id),
+            _ => None,
+        };
         let core = self.core.clone();
         std::thread::spawn(move || match request {
             ImportRequest::Local(paths) => import_files_blocking(&core, paths, &tx),
-            ImportRequest::Spotify(url) => import_spotify_blocking(&core, &url, &tx),
+            ImportRequest::Spotify(url) => import_spotify_blocking(&core, &url, None, &tx),
+            ImportRequest::SpotifySync(id, remote) => {
+                import_spotify_blocking(&core, &remote, Some(PlaylistId(id)), &tx)
+            }
         });
     }
 }
@@ -287,28 +355,39 @@ fn import_files_blocking(core: &Arc<AppCore>, paths: Vec<PathBuf>, tx: &Sender<I
     let _ = tx.send(ImportMsg::Done(Ok(report)));
 }
 
-fn import_spotify_blocking(core: &AppCore, url: &str, tx: &Sender<ImportMsg>) {
+fn import_spotify_blocking(
+    core: &AppCore,
+    url: &str,
+    sync: Option<PlaylistId>,
+    tx: &Sender<ImportMsg>,
+) {
     let result = (|| -> Result<ImportReport, String> {
-        let playlist = SpotifyClient::new()
-            .fetch_playlist(url)
-            .map_err(|e| e.to_string())?;
+        let client = SpotifyClient::new();
+        let playlist = if sync.is_some() {
+            client.fetch_complete_playlist(url)
+        } else {
+            client.fetch_playlist(url)
+        }
+        .map_err(|e| e.to_string())?;
         let service = ImportService {
             library: &core.library,
             analyzer: &core.analyzer,
         };
         let dest = mixless_acquire::playlist_download_dir(&core.download_dir(), &playlist.name);
         let provider = std::sync::OnceLock::new();
-        service.spotify_playlist(
-            &playlist,
-            |job| {
-                // Local-only imports work even if no downloader is installed.
-                match provider.get_or_init(YoutubeMusicAcquire::detect) {
-                    Ok(provider) => provider.fetch(job, &dest),
-                    Err(error) => Err(mixless_acquire::AcquireError::Msg(error.to_string())),
-                }
-            },
-            |event| publish_import_progress(tx, event),
-        )
+        let fetch = |job: &mixless_acquire::ResolveJob| {
+            // Local-only imports work even if no downloader is installed.
+            match provider.get_or_init(YoutubeMusicAcquire::detect) {
+                Ok(provider) => provider.fetch(job, &dest),
+                Err(error) => Err(mixless_acquire::AcquireError::Msg(error.to_string())),
+            }
+        };
+        let progress = |event| publish_import_progress(tx, event);
+        if let Some(pid) = sync {
+            service.sync_spotify_playlist(pid, &playlist, fetch, progress)
+        } else {
+            service.spotify_playlist(&playlist, fetch, progress)
+        }
     })();
     let _ = tx.send(ImportMsg::Done(result));
 }

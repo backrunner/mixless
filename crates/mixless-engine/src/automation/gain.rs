@@ -49,7 +49,7 @@ impl Probe {
         let sr = self.audio.sample_rate as f32;
         let gains = point
             .and_then(|p| p.stems)
-            .map_or([1.; 3], |s| s.map(|g| g as f32 / 1000.));
+            .map_or([1.; 4], |s| s.map(|g| g as f32 / 1000.));
         let source = StemSource::new(
             &self.audio,
             self.stems.as_ref().map(|s| s.audio.as_ref()),
@@ -159,13 +159,7 @@ fn smooth(values: &mut [f32], dt: f32) {
     }
 }
 
-pub(super) fn compile(
-    plan: &MixPlan,
-    outgoing: usize,
-    shared: &Shared,
-    points: &mut [Point],
-    sr: u32,
-) {
+pub(super) fn compile(plan: &MixPlan, slots: [&DeckSlot; 2], points: &mut [Point], sr: u32) {
     let Some(summary) = &plan.summary else {
         return;
     };
@@ -173,13 +167,10 @@ pub(super) fn compile(
     if overlap < 2. || plan.lanes.scratch_a.is_some() || plan.lanes.scratch_b.is_some() {
         return;
     }
-    let (Some(a), Some(b)) = (
-        Probe::from_slot(&shared.decks[outgoing]),
-        Probe::from_slot(&shared.decks[1 - outgoing]),
-    ) else {
+    let (Some(a), Some(b)) = (Probe::from_slot(slots[0]), Probe::from_slot(slots[1])) else {
         return;
     };
-    let slot = &shared.decks[outgoing];
+    let slot = slots[0];
     let initial_frame = slot.playhead_frames();
     let start_frame = plan.t_in_a as f64 * a.audio.sample_rate as f64;
     let incoming_end = source_time(plan, 1, overlap).0;

@@ -29,6 +29,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     // `apply_stems` rewrites bars/sections, so keep unmutated clones for
     // planning while the engine still receives the cached stem PCM.
     let planning_tracks = tracks.clone();
+    let supplied_plans: Option<Vec<mixless_protocol::MixPlan>> =
+        std::env::var("MIXLESS_AUDIT_PLAN_FILE")
+            .ok()
+            .map(|p| -> Result<_, Box<dyn Error>> {
+                Ok(serde_json::from_slice(&std::fs::read(p)?)?)
+            })
+            .transpose()?;
     let mut stem_hashes = vec![None; tracks.len()];
     if let Some(processor) = &processor {
         for (index, (track, path)) in tracks.iter_mut().zip(&paths).enumerate() {
@@ -53,6 +60,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     });
     for i in 0..tracks.len() {
+        if i + 1 == tracks.len() && std::env::var("MIXLESS_AUDIT_OPEN_SET").as_deref() == Ok("1") {
+            break;
+        }
         let j = (i + 1) % tracks.len();
         planner.options.stem_playback = stem_hashes[i].is_some() && stem_hashes[j].is_some();
         let (a, b) = (&planning_tracks[i], &planning_tracks[j]);
@@ -77,7 +87,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             offset_a: Default::default(),
             offset_b: Default::default(),
         };
-        let mut plan = planner.plan_next(&ctx);
+        let mut plan = if let Some(plans) = &supplied_plans {
+            plans.get(i).ok_or("Missing supplied pair plan")?.clone()
+        } else {
+            planner.plan_next(&ctx)
+        };
+        if plan
+            .summary
+            .as_ref()
+            .is_some_and(|s| s.pair != (a.track_id, b.track_id))
+        {
+            return Err("Supplied plan track mismatch".into());
+        }
         if plan.failure_reason.is_some() {
             plan = short_handoff(&ctx, 0.);
         }
@@ -118,6 +139,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             ((plan.t_in_a - before) * a.sample_rate as f32).round() as u64,
         )?;
         engine.dispatch(Command::SetCrossfader { value: -1. })?;
+        engine.dispatch(Command::SetKeyLock {
+            deck: DeckId::A,
+            on: true,
+        })?;
+        engine.dispatch(Command::SetRate {
+            deck: DeckId::A,
+            rate: plan.outgoing_offset.rate,
+        })?;
+        engine.dispatch(Command::SetPitchSemitones {
+            deck: DeckId::A,
+            semitones: plan.outgoing_offset.pitch_semitones,
+        })?;
         engine.dispatch(Command::PlayPause { deck: DeckId::A })?;
         let summary = plan.summary.clone().ok_or("Missing summary")?;
         // Record the outgoing deck's source frame per rendered block so a
@@ -237,7 +270,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         println!(
             "{}→{} {:?} {:.2}s peak={:.4} completed stem_blocks={} gain_max={:.2}dB prepare={:.1}ms",
-            a.track_id.0, b.track_id.0, summary.strategy, duration, peak, stem_blocks, gain_max, preparation_ms
+            a.track_id.0,
+            b.track_id.0,
+            summary.strategy,
+            duration,
+            peak,
+            stem_blocks,
+            gain_max,
+            preparation_ms
         );
     }
     Ok(())

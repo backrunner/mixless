@@ -135,7 +135,7 @@ pub(crate) fn voice_released(t: &TrackAnalysis, sec: f32) -> bool {
                 && n.start_sec < sec + 0.15
                 && n.end_sec > sec + 0.30
         });
-        if ended && !continues {
+        if ended && !continues && voice_active(t, sec + 0.15) < 0.35 {
             return true;
         }
     }

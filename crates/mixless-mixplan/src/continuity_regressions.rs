@@ -53,7 +53,7 @@ fn held_notes_are_not_cut_and_a_measured_breath_can_exit_within_a_vocal_section(
 }
 
 #[test]
-fn overlapping_vocals_can_exit_softly_without_waiting_for_the_entire_verse() {
+fn continuous_voice_without_phrase_evidence_uses_a_full_release_to_track_end() {
     let mut a = track(1, 128., "8A", S::Outro, 64, 0.8, 0.2);
     let mut b = track(2, 128., "9A", S::Intro, 64, 0.8, 0.2);
     moments(&mut a, 0.9);
@@ -76,7 +76,7 @@ fn overlapping_vocals_can_exit_softly_without_waiting_for_the_entire_verse() {
         previous = va;
     }
     assert!(previous < 0.0001);
-    assert!(p.t_out_a < a.duration_sec); // continuous voice still exists afterwards
+    assert!((p.t_out_a - a.duration_sec).abs() < 0.001);
 }
 
 #[test]

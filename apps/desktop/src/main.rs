@@ -87,6 +87,21 @@ fn main() {
     Application::new().run(|cx: &mut App| {
         branding::set_dock_icon();
         let core = state::app_core();
+        let shutdown_core = core.clone();
+        cx.on_app_quit(move |_| {
+            shutdown_core
+                .shutting_down
+                .store(true, std::sync::atomic::Ordering::Release);
+            async {}
+        })
+        .detach();
+        cx.on_window_closed(|cx| {
+            // AppKit keeps the process alive by default, even with no windows.
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
 
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         let options = WindowOptions {

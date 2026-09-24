@@ -5,6 +5,9 @@ use super::*;
 impl DeckRt {
     pub(super) fn new(sr: f32) -> Self {
         Self {
+            last_output: [0.; 2],
+            last_monitor: [0.; 2],
+            eject_tail: EjectTail::default(),
             presentation_step: 0.,
             cue_sample: [0.0; 2],
             trim: SmoothValue::new(1.0, sr, 0.003),
@@ -21,10 +24,11 @@ impl DeckRt {
             last_r: 0.0,
             position: 0.0,
             buffer_id: 0,
+            source_revision: 0,
             source: None,
             stems: None,
             stem_gain: std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15)),
-            stem_values: [1.; 3],
+            stem_values: [1.; 4],
             touching: false,
             scratch_speed: 0.0,
             slip_position: 0.0,
@@ -141,7 +145,9 @@ impl Shared {
         let slot = &self.decks[idx];
         rt.cue_sample = [0.0; 2];
         let Some(buf) = buf else {
-            return (0.0, 0.0);
+            let (output, monitor) = rt.eject_tail.next();
+            rt.cue_sample = monitor;
+            return (output[0], output[1]);
         };
         rt.stem_values = std::array::from_fn(|i| rt.stem_gain[i].next());
         let source = crate::source::StemSource::new(

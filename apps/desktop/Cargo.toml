@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 mixless-engine = { workspace = true }
 mixless-library = { workspace = true }
+mixless-pack = { workspace = true }
 mixless-protocol = { workspace = true }
 mixless-analyze = { workspace = true }
 mixless-stems = { workspace = true }

@@ -1,5 +1,5 @@
 use super::*;
-use mixless_protocol::{Command, EngineSnapshot};
+use mixless_protocol::{Command, EngineSnapshot, StemKind};
 
 fn cc(target: MidiTarget, mode: MidiControlMode) -> MidiBinding {
     MidiBinding {
@@ -125,6 +125,14 @@ fn catalogue_is_complete_unique_and_validates_every_default_binding() {
     for deck in [DeckId::A, DeckId::B] {
         assert!(targets.contains(&MidiTarget::LoadSelected { deck }));
         assert!(targets.contains(&MidiTarget::DeckGain { deck }));
+        for stem in [
+            StemKind::Vocals,
+            StemKind::Drums,
+            StemKind::Bass,
+            StemKind::Instruments,
+        ] {
+            assert!(targets.contains(&MidiTarget::Stem { deck, stem }));
+        }
     }
 }
 

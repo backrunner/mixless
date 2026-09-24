@@ -111,6 +111,24 @@ pub(super) fn audio(core: &AppCore, track: &Track) -> Result<Playback, String> {
     Ok(Playback { buf, wave })
 }
 
+/// Check fresh engine state and cancel the host's load generation under the
+/// publication lock. A rejected request must not alter playback or preparation.
+pub fn unload<E>(
+    core: &AppCore,
+    deck: DeckId,
+    check: impl FnOnce(&mixless_protocol::EngineSnapshot) -> Result<(), E>,
+) -> Result<(), E> {
+    let _commit = core.automix_commit.lock().expect("deck unload commit");
+    check(&core.engine.snapshot())?;
+    core.engine.eject(deck);
+    core.analysis.loaded.lock().expect("loaded analysis")[deck.index()] = None;
+    core.analysis
+        .playback_revision
+        .lock()
+        .expect("source revision")[deck.index()] = None;
+    Ok(())
+}
+
 /// Publish audio with a cheap envelope as soon as decode finishes. Full analysis is attached by
 /// a separate worker, guarded by the same load generation and track identity.
 pub fn load_manual(
@@ -167,4 +185,58 @@ pub fn load_manual(
         });
     }
     Ok(Some(track.content_hash))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unload_cancels_a_preparing_load_and_preserves_library_and_other_deck() {
+        use std::sync::{atomic::AtomicU64, mpsc::channel};
+        use std::time::Duration;
+
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        load(&core, DeckId::A, tracks[0], || true).unwrap();
+        load(&core, DeckId::B, tracks[1], || true).unwrap();
+        core.engine
+            .dispatch(mixless_protocol::Command::PlayPause { deck: DeckId::B })
+            .unwrap();
+        let cues = core.library.cues(tracks[0]).unwrap();
+        let other = core.engine.snapshot().decks[1].clone();
+
+        let epoch = Arc::new(AtomicU64::new(0));
+        let worker_epoch = epoch.clone();
+        let worker_core = core.clone();
+        let next = tracks[2];
+        let (ready_tx, ready_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let worker = std::thread::spawn(move || {
+            let checks = AtomicU64::new(0);
+            load_manual(&worker_core, DeckId::A, next, || {
+                if checks.fetch_add(1, Ordering::Relaxed) == 1 {
+                    // Decode completed; pause just before the publication step.
+                    ready_tx.send(()).unwrap();
+                    resume_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+                }
+                worker_epoch.load(Ordering::Acquire) == 0
+            })
+        });
+        ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        epoch.fetch_add(1, Ordering::AcqRel);
+        unload(&core, DeckId::A, |_| Ok::<_, ()>(())).unwrap();
+        resume_tx.send(()).unwrap();
+        assert!(worker.join().unwrap().unwrap().is_none());
+
+        assert!(core.engine.snapshot().decks[0].track_id.is_none());
+        assert!(core.analysis.loaded.lock().unwrap()[0].is_none());
+        assert!(core.analysis.playback_revision.lock().unwrap()[0].is_none());
+        assert_eq!(core.engine.snapshot().decks[1], other);
+        assert!(core.analysis.loaded.lock().unwrap()[1].is_some());
+        assert!(core.library.get_track(tracks[0]).is_ok());
+        assert_eq!(
+            serde_json::to_value(core.library.cues(tracks[0]).unwrap()).unwrap(),
+            serde_json::to_value(cues).unwrap()
+        );
+    }
 }

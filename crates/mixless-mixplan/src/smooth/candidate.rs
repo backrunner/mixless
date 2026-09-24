@@ -10,6 +10,20 @@ pub(super) fn pair(
     length: u16,
     minimum_score: f32,
 ) -> Option<MixPlan> {
+    direct(ctx, options, out, input, mode, length, minimum_score).or_else(|| {
+        super::preparation::candidate(ctx, options, out, input, mode, length, minimum_score)
+    })
+}
+
+pub(super) fn direct(
+    ctx: &PlanContext<'_>,
+    options: &PlannerOptions,
+    out: f32,
+    input: f32,
+    mode: TransitionMode,
+    length: u16,
+    minimum_score: f32,
+) -> Option<MixPlan> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
     let ga = Grid(a);
     let gb = Grid(b);
@@ -179,6 +193,21 @@ pub(super) fn pair(
     let start_phrase = boundary_quality(a, start).max(crate::recovery::quality(a, start));
     let explicit_out = user_range(ctx.cues_out, a.sample_rate).is_some();
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
+    // Every technique finishes A at an evidenced phrase edge. Recovery
+    // quality may authorize layering, never an internal exit, even with stems.
+    if !explicit_out && !crate::phrasing::exit_boundary(a, end) {
+        return None;
+    }
+    // A recovery interval can support an overlap, but its internal downbeats
+    // are not automatically phrase endings for a bridge or performance cut.
+    if !blend
+        && !loop_roll
+        && !explicit_out
+        && !a.phrase_boundaries.is_empty()
+        && boundary_quality(a, end) < 0.5
+    {
+        return None;
+    }
     // A hard cut or FX bridge may only land where the outgoing voice has
     // released — singing up to the boundary is fine, sounding past it is not.
     // A user's own OUT cue stays authoritative.
@@ -234,6 +263,10 @@ pub(super) fn pair(
         harmonic,
         explicit_in,
     )?;
+    let takeover = if blend || loop_roll { b_end } else { bin };
+    if !explicit_in && !crate::energy::handoff_supported(a, b, end, takeover) {
+        return None;
+    }
     // Exiting onto the downbeat that resolves A's build throws the tension
     // away unless B's own drop lands exactly where A leaves (a build-up
     // swap). A short suspension at a peak end still owes its next downbeat.
@@ -526,7 +559,8 @@ pub(super) fn pair(
             .any(|p| (p.0 - bin).abs() < 0.08)
         && feature(a, end - 0.01).is_some_and(|f| f.kick_salience >= 0.5 && f.vocal_presence < 0.5)
         && feature(b, bin + 0.01).is_some_and(|f| f.kick_salience >= 0.55)
-        && (options.strategy == Some(S::Spinback) || options.strategy.is_none());
+        && (options.strategy == Some(S::Spinback)
+            || (options.strategy.is_none() && options.live_moves == crate::LiveMoves::Active));
     if !explicit_out && crate::arrangement::breaks_build(a, end, b, if blend { b_end } else { bin })
     {
         return None;
@@ -553,6 +587,9 @@ pub(super) fn pair(
         && !scratch_cut
         && !spinback
         && out_phrase >= 0.6
+        // Recovery quality permits overlap inside a released interval. It is
+        // not independent evidence of a completed phrase for a hard cut.
+        && (explicit_out || boundary_quality(a, end) >= 0.6)
         && in_phrase >= 0.6
         && crate::continuity::cut_safe(a, end, false)
         && !matches!(sa, mixless_protocol::SectionLabel::BuildUp);
@@ -664,7 +701,9 @@ pub(super) fn pair(
         average_rms(
             b,
             bin,
-            (bin + 4. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec),
+            // B takes over immediately in a bridge. Later loud bars cannot
+            // make its first, fading-in bar sound established at the handoff.
+            gb.sec(input + gb.meter()).min(b.duration_sec),
         )
     };
     let score = ranking::Evidence {

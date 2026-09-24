@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod artwork;
+mod page;
 pub use artwork::ArtworkClient;
 
 #[derive(Debug, Error)]
@@ -57,15 +58,14 @@ impl SpotifyClient {
     }
     pub fn fetch_playlist(&self, input: &str) -> Result<SpotifyPlaylistMeta, SpotifyError> {
         let id = extract_playlist_id(input).ok_or(SpotifyError::Url)?;
-        let agent = ureq::AgentBuilder::new()
-            .timeout(std::time::Duration::from_secs(25))
-            .build();
         if let Some(token) = &self.access_token {
             return fetch_api(&id, |url| {
                 // Never forward a bearer token to a host from an untrusted next URL.
                 if !url.starts_with("https://api.spotify.com/v1/") {
                     return Err(SpotifyError::Parse("invalid pagination URL".into()));
                 }
+                let agent = mixless_net::agent(url, std::time::Duration::from_secs(25))
+                    .map_err(SpotifyError::Http)?;
                 let response = agent
                     .get(url)
                     .set("Authorization", &format!("Bearer {token}"))
@@ -75,14 +75,39 @@ impl SpotifyClient {
                     .map_err(|e| SpotifyError::Parse(e.to_string()))
             });
         }
+        let url = format!("https://open.spotify.com/embed/playlist/{id}");
+        let agent = mixless_net::agent(&url, std::time::Duration::from_secs(25))
+            .map_err(SpotifyError::Http)?;
         let html = agent
-            .get(&format!("https://open.spotify.com/embed/playlist/{id}"))
+            .get(&url)
             .set("User-Agent", "Mozilla/5.0 Mixless/0.1")
             .call()
             .map_err(http_error)?
             .into_string()
             .map_err(|e| SpotifyError::Http(e.to_string()))?;
         parse_embed(&html, &id)
+    }
+
+    /// Sync can remove rows only after verifying the whole remote snapshot.
+    pub fn fetch_complete_playlist(
+        &self,
+        input: &str,
+    ) -> Result<SpotifyPlaylistMeta, SpotifyError> {
+        if self.access_token.is_some() {
+            return self.fetch_playlist(input);
+        }
+        let id = extract_playlist_id(input).ok_or(SpotifyError::Url)?;
+        let url = format!("https://open.spotify.com/playlist/{id}");
+        let agent = mixless_net::agent(&url, std::time::Duration::from_secs(25))
+            .map_err(SpotifyError::Http)?;
+        let html = agent
+            .get(&url)
+            .set("User-Agent", "Mozilla/5.0 Mixless/0.1")
+            .call()
+            .map_err(http_error)?
+            .into_string()
+            .map_err(|e| SpotifyError::Http(e.to_string()))?;
+        page::parse(&html, &id)
     }
 }
 fn http_error(error: ureq::Error) -> SpotifyError {
@@ -312,6 +337,18 @@ mod tests {
         assert!(p.tracks[1].id.is_empty());
         assert!(p.warning.is_none());
     }
+    #[test]
+    #[ignore = "live Spotify complete public playlist snapshot"]
+    fn live_complete_playlist() {
+        let p = SpotifyClient::new()
+            .fetch_complete_playlist("0bjQ85Dl4WPRHyWzsJNBA1")
+            .unwrap();
+        assert_eq!(p.total_tracks, Some(p.tracks.len()));
+        assert!(p.warning.is_none());
+        assert!(p.tracks.iter().any(|t| t.id == "6Mu3CIPbtoPh1kEyBMLRJz"));
+        eprintln!("{}: complete snapshot of {} tracks", p.name, p.tracks.len());
+    }
+
     #[test]
     #[ignore = "live Spotify service smoke test; run explicitly"]
     fn fetch_public_playlist() {

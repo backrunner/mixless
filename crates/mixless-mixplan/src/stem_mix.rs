@@ -86,7 +86,12 @@ pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
     } else {
         0.
     };
-    let enabled = [vocals > 2, drums > 8, clash > 0.55];
+    let enabled = [
+        vocals > 2,
+        drums > 8,
+        clash > 0.55,
+        drums > 8 || clash > 0.55,
+    ];
     if !enabled.iter().any(|v| *v) {
         return;
     }
@@ -104,24 +109,35 @@ pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
     for i in 0..=128 {
         let u = n * i as f32 / 128.;
         let time = plan.clock.sample(u);
-        for stem in 0..3 {
+        for stem in 0..4 {
             let center_sec = plan
                 .clock
                 .sample(if stem == 0 { voice_center } else { center });
             // Envelope duration scales with the chosen overlap and is bounded
             // in seconds for smooth controls, not a musical entry constraint.
-            let width = (duration * 0.25).clamp(0.15, 8.).min(duration);
+            let width = if stem == StemKind::Bass.index() {
+                (plan.clock.sample((center + 0.125).min(n))
+                    - plan.clock.sample((center - 0.125).max(0.)))
+                .max(0.01)
+            } else {
+                (duration * 0.25).clamp(0.15, 8.).min(duration)
+            };
             let x = ((time - center_sec) / width + 0.5).clamp(0., 1.);
             let x = x * x * (3. - 2. * x);
-            let floor = [0.18, 0.35, 0.25][stem];
+            let floor = [0.18, 0.35, 0.25, 0.][stem];
             let (ga, gb) = if enabled[stem] {
                 (1. - (1. - floor) * x, floor + (1. - floor) * x)
             } else {
                 (1., 1.)
             };
-            result.outgoing[stem]
-                .nodes
-                .push((u, if i == 0 { 1. } else { ga }));
+            result.outgoing[stem].nodes.push((
+                u,
+                if i == 0 || u <= plan.incoming_start_bar {
+                    1.
+                } else {
+                    ga
+                },
+            ));
             result.incoming[stem]
                 .nodes
                 .push((u, if i == 128 { 1. } else { gb }));
@@ -173,7 +189,14 @@ pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
         } else {
             handoff + 0.5
         };
-        if stem == 1 {
+        if stem == StemKind::Bass.index() {
+            let x = ease((u - handoff) / 0.25);
+            if incoming {
+                x
+            } else {
+                1. - x
+            }
+        } else if stem == 1 {
             1.
         } else if incoming {
             ease((u - (handoff - 0.5)) / 2.)
@@ -183,7 +206,7 @@ pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
     };
     for i in 0..=128 {
         let u = n * i as f32 / 128.;
-        for stem in 0..3 {
+        for stem in 0..4 {
             result.incoming[stem].nodes.push((u, gain(u, stem, true)));
             result.outgoing[stem].nodes.push((u, gain(u, stem, false)));
         }
@@ -195,7 +218,7 @@ pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
         .map(|node| node.0)
         .filter(|last| *last > n)
     {
-        for stem in 0..3 {
+        for stem in 0..4 {
             result.incoming[stem]
                 .nodes
                 .push((last, gain(last, stem, true)));
@@ -229,6 +252,10 @@ pub(super) fn loop_out(plan: &mut MixPlan) {
     mix.incoming[StemKind::Vocals.index()] =
         line(&[(0., 0.), (n / 2., 0.), (n / 2. + 1., 1.), (n, 1.)]);
     mix.incoming[StemKind::Instruments.index()] = mix.incoming[StemKind::Vocals.index()].clone();
+    mix.outgoing[StemKind::Bass.index()] =
+        line(&[(0., 1.), (n / 2., 1.), (n / 2. + 0.25, 0.), (n, 0.)]);
+    mix.incoming[StemKind::Bass.index()] =
+        line(&[(0., 0.), (n / 2., 0.), (n / 2. + 0.25, 1.), (n, 1.)]);
     plan.requires_stems = true;
     plan.stem_mix = Some(mix);
 }

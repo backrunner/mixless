@@ -102,6 +102,7 @@ impl Library {
         let tracks = {
             let mut stmt = tx.prepare(
                 "SELECT t.id,t.path FROM tracks t WHERE t.analyzed=1
+                 AND NOT EXISTS (SELECT 1 FROM package_tracks p WHERE p.track_id=t.id)
                  AND NOT EXISTS (
                      SELECT 1 FROM playlist_items i
                      JOIN external_playlists e ON e.playlist_id=i.playlist_id
@@ -130,6 +131,14 @@ fn add_folder_track(
     track: TrackId,
     path: &Path,
 ) -> Result<Option<PlaylistId>, LibraryError> {
+    let imported: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM package_tracks WHERE track_id=?1)",
+        [track.0],
+        |row| row.get(0),
+    )?;
+    if imported {
+        return Ok(None);
+    }
     add_folder_member(conn, track, path.parent().ok_or(LibraryError::NotFound)?)
 }
 

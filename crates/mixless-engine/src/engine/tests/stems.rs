@@ -7,18 +7,21 @@ pub(super) fn stem_fixture(sr: u32, isolated: bool, attach: bool) -> Engine {
         let frames = sr as usize * 12;
         let mut vocals = Vec::with_capacity(frames * 2);
         let mut drums = Vec::with_capacity(frames * 2);
+        let mut bass = Vec::with_capacity(frames * 2);
         let mut mix = Vec::with_capacity(frames * 2);
         for i in 0..frames {
             let t = i as f32 / sr as f32;
             let v = 0.12 * (std::f32::consts::TAU * 440. * t).sin();
             let d = 0.08 * (std::f32::consts::TAU * 80. * t).sin();
+            let b = 0.07 * (std::f32::consts::TAU * 55. * t).sin();
+            bass.extend([b, b]);
             let instrument = 0.10 * (std::f32::consts::TAU * 880. * t).sin();
             vocals.extend([v, v * 0.8]);
             drums.extend([d, d]);
             mix.extend(if isolated {
                 [v, v * 0.8]
             } else {
-                [v + d + instrument, v * 0.8 + d + instrument]
+                [v + d + b + instrument, v * 0.8 + d + b + instrument]
             });
         }
         let source = Arc::new(AudioBuffer {
@@ -45,7 +48,7 @@ pub(super) fn stem_fixture(sr: u32, isolated: bool, attach: bool) -> Engine {
                     deck,
                     TrackId(deck.index() as i64 + 1),
                     &source,
-                    Arc::new(crate::StemBuffer::new(sr, vocals, drums).unwrap()),
+                    Arc::new(crate::StemBuffer::with_bass(sr, vocals, drums, bass).unwrap()),
                 )
                 .unwrap();
         }
@@ -94,7 +97,7 @@ fn unity_stems_are_the_original_with_resampling_pitch_and_tempo() {
 fn isolated_voice_shares_cues_loops_reverse_and_keylock_clock() {
     let reference = stem_fixture(48000, true, false);
     let stems = stem_fixture(48000, false, true);
-    for stem in [StemKind::Drums, StemKind::Instruments] {
+    for stem in [StemKind::Drums, StemKind::Instruments, StemKind::Bass] {
         stems
             .dispatch(Command::SetStemGain {
                 deck: DeckId::A,
@@ -182,7 +185,12 @@ fn missing_stale_or_contended_stems_keep_transport_safe_and_all_mute_is_silent()
         assert!(energy(&audio) > 0.001);
     }
     assert!(engine.snapshot().decks[0].frame > before);
-    for stem in [StemKind::Vocals, StemKind::Drums, StemKind::Instruments] {
+    for stem in [
+        StemKind::Vocals,
+        StemKind::Drums,
+        StemKind::Instruments,
+        StemKind::Bass,
+    ] {
         engine
             .dispatch(Command::SetStemGain {
                 deck: DeckId::A,
@@ -295,6 +303,8 @@ fn stems_callback_budget() {
     timings.sort_by(f64::total_cmp);
     let p99 = timings[3960];
     let max = timings[3999];
-    eprintln!("stems dual decks + pitch + FX + recording + cues: p99={p99:.3} ms max={max:.3} ms / 2.667 ms");
+    eprintln!(
+        "stems dual decks + pitch + FX + recording + cues: p99={p99:.3} ms max={max:.3} ms / 2.667 ms"
+    );
     assert!(p99 < 2.667 * 0.5, "Insufficient 128-frame callback margin");
 }

@@ -1,7 +1,7 @@
 use super::*;
 
 /// Every remote row is retained, including unavailable recordings and repeated songs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct ImportItem {
     pub position: usize,
     pub external_id: String,
@@ -135,14 +135,45 @@ impl Library {
         playlist: PlaylistId,
         items: &[ImportItem],
     ) -> Result<(), LibraryError> {
+        self.replace_import_items(playlist, items, None)
+    }
+
+    /// Apply an authoritative remote order and name without deleting audio,
+    /// cues or analysis. Verify identity inside the replacement transaction.
+    pub fn sync_import_items(
+        &self,
+        playlist: PlaylistId,
+        remote: &str,
+        name: &str,
+        items: &[ImportItem],
+    ) -> Result<(), LibraryError> {
+        self.replace_import_items(playlist, items, Some((remote, name)))
+    }
+
+    fn replace_import_items(
+        &self,
+        playlist: PlaylistId,
+        items: &[ImportItem],
+        remote: Option<(&str, &str)>,
+    ) -> Result<(), LibraryError> {
         let mut conn = self.conn.lock().expect("library mutex");
         let tx = conn.transaction()?;
+        if let Some((id, name)) = remote {
+            if tx.execute("UPDATE playlists SET name=?1 WHERE id=?2 AND EXISTS (
+                SELECT 1 FROM external_playlists WHERE playlist_id=?2 AND source='spotify' AND external_id=?3)", params![name, playlist.0, id])? != 1 {
+                return Err(LibraryError::NotFound);
+            }
+        }
         let ready: Vec<_> = items
             .iter()
             .filter(|i| matches!(i.status.as_str(), "local" | "acquired"))
             .filter_map(|i| i.track_id)
             .collect();
-        let ordered = super::ordering::refreshed_order(&tx, playlist, &ready)?;
+        let ordered = if remote.is_some() {
+            ready
+        } else {
+            super::ordering::refreshed_order(&tx, playlist, &ready)?
+        };
         tx.execute(
             "DELETE FROM playlist_items WHERE playlist_id=?1",
             [playlist.0],
@@ -155,13 +186,25 @@ impl Library {
             tx.execute("INSERT INTO import_items(playlist_id,position,external_id,title,artist,duration_ms,status,track_id,error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![playlist.0,item.position as i64,item.external_id,item.title,item.artist,item.duration_ms,item.status,item.track_id.map(|id|id.0),item.error])?;
         }
+        let remote_positions: Vec<_> = items
+            .iter()
+            .filter(|row| row.is_ready())
+            .map(|row| row.position)
+            .collect();
         for (position, id) in ordered.iter().enumerate() {
+            let position = if remote.is_some() {
+                remote_positions[position]
+            } else {
+                position
+            };
             tx.execute(
                 "INSERT INTO playlist_items(playlist_id,position,track_id) VALUES (?1,?2,?3)",
                 params![playlist.0, position as i64, id.0],
             )?;
         }
-        align_import_order(&tx, playlist, &ordered)?;
+        if remote.is_none() {
+            align_import_order(&tx, playlist, &ordered)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -262,7 +305,7 @@ impl Library {
     }
 }
 
-fn read_import_items(
+pub(super) fn read_import_items(
     conn: &Connection,
     playlist: PlaylistId,
 ) -> Result<Vec<ImportItem>, LibraryError> {

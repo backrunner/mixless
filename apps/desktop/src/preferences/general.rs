@@ -151,7 +151,7 @@ impl Preferences {
                             .text_size(px(11.))
                             .line_height(px(16.))
                             .text_color(theme::MUTED)
-                            .child("Filter and stem gestures between transitions."),
+                            .child("Gentle filter and drum moves. Active also permits spinback accents."),
                     ),
             ],
         );
@@ -164,7 +164,9 @@ impl Preferences {
             vec![
                 setting_detail(
                     "Stem & note analysis",
-                    if self
+                    if !mixless_stems::inference_supported() {
+                        "This Mac can play stems imported from a package. Separation requires Apple Silicon."
+                    } else if self
                         .core
                         .stems
                         .as_ref()

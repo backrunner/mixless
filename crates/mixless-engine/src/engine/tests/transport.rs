@@ -1,6 +1,145 @@
 use super::*;
 
 #[test]
+fn eject_clears_track_state_and_keeps_the_other_deck_playing() {
+    for deck in [DeckId::A, DeckId::B] {
+        let engine = test_engine(48_000);
+        for loaded in [DeckId::A, DeckId::B] {
+            let buffer = sine_buffer(48_000, 440., 4.);
+            let wave = Arc::new(crate::waveform::compute_waveform(&buffer, 128));
+            engine
+                .load_buffer_if(
+                    loaded,
+                    TrackId(loaded.index() as i64 + 1),
+                    buffer,
+                    wave,
+                    "Title".into(),
+                    "Artist".into(),
+                    || true,
+                )
+                .unwrap();
+            engine.set_bpm(loaded, 120.);
+            engine
+                .dispatch(Command::PlayPause { deck: loaded })
+                .unwrap();
+        }
+        engine.set_cue_frame(deck, 0, 1_000);
+        engine
+            .dispatch(Command::SetLoopBeats {
+                deck,
+                beats: 1.,
+                on: true,
+            })
+            .unwrap();
+        engine.render_offline(512);
+        let other = 1 - deck.index();
+        let before = engine.snapshot().decks[other].clone();
+
+        engine.dispatch(Command::Eject { deck }).unwrap();
+        let snapshot = engine.snapshot();
+        let empty = snapshot.deck(deck);
+        assert!(empty.track_id.is_none() && empty.title.is_none() && empty.artist.is_none());
+        assert!(!empty.playing && !empty.loop_on && !empty.roll && !empty.brake);
+        assert_eq!(
+            (empty.frame, empty.frames, empty.src_sample_rate),
+            (0, 0, 0)
+        );
+        assert_eq!(empty.sounding_bpm, 0.);
+        assert_eq!((empty.loop_start_frame, empty.loop_end_frame), (0, 0));
+        assert!(empty.cues.iter().all(Option::is_none));
+        assert!(empty.temporary_cue_frame.is_none());
+        assert!(engine.deck_waveform(deck).is_none());
+        assert_eq!(snapshot.decks[other], before);
+        assert!(energy(&engine.render_offline(512)) > 0.001);
+        let after = engine.snapshot();
+        assert!(after.decks[other].playing && after.decks[other].frame > before.frame);
+        assert_eq!(after.deck(deck).frame, 0);
+        // Unloading an already empty deck is harmless.
+        engine.dispatch(Command::Eject { deck }).unwrap();
+        assert_eq!(engine.snapshot().deck(deck).frames, 0);
+    }
+}
+
+#[test]
+fn eject_has_a_bounded_declick_tail_and_preview_never_leaks_to_master() {
+    for sample_rate in [44_100, 48_000] {
+        for preview in [false, true] {
+            let engine = test_engine(sample_rate);
+            if preview {
+                engine
+                    .dispatch(Command::BeginCuePreview {
+                        deck: DeckId::A,
+                        frame: 0,
+                    })
+                    .unwrap();
+            } else {
+                engine
+                    .dispatch(Command::PlayPause { deck: DeckId::A })
+                    .unwrap();
+            }
+            let before = engine.render_offline(1000);
+            let last = before[before.len() - 2];
+            engine.eject(DeckId::A);
+            let after = engine.render_offline(sample_rate as usize / 100);
+            assert!((after[0] - last).abs() < 0.02, "eject discontinuity");
+            assert!(after.iter().all(|s| s.is_finite()));
+            if preview {
+                assert!(
+                    after.iter().all(|s| s.abs() < 1e-8),
+                    "monitor leaked to master"
+                );
+            }
+            assert!(after[after.len() / 2..].iter().all(|s| s.abs() < 1e-8));
+            assert!(!engine.snapshot().decks[0].cue_previewing);
+            assert!(engine.render_offline(512).iter().all(|s| s.abs() < 1e-8));
+        }
+    }
+}
+
+#[test]
+fn immediate_reload_of_the_same_cached_pcm_starts_from_zero_without_old_transport() {
+    let engine = test_engine(48_000);
+    let buffer = sine_buffer(48_000, 440., 4.);
+    let wave = Arc::new(crate::waveform::compute_waveform(&buffer, 128));
+    let load = || {
+        engine
+            .load_buffer_if(
+                DeckId::A,
+                TrackId(1),
+                buffer.clone(),
+                wave.clone(),
+                "Same track".into(),
+                "Artist".into(),
+                || true,
+            )
+            .unwrap()
+    };
+    load();
+    engine
+        .dispatch(Command::PlayPause { deck: DeckId::A })
+        .unwrap();
+    engine.render_offline(20_000);
+    engine
+        .dispatch(Command::SetBrake {
+            deck: DeckId::A,
+            on: true,
+        })
+        .unwrap();
+    engine.render_offline(1000);
+    engine.eject(DeckId::A);
+    load(); // No callback runs between eject and loading the exact same Arc.
+    engine.render_offline(256);
+    let deck = &engine.snapshot().decks[0];
+    assert!(!deck.playing && !deck.brake && !deck.loop_on);
+    assert_eq!(deck.frame, 0);
+    engine
+        .dispatch(Command::PlayPause { deck: DeckId::A })
+        .unwrap();
+    engine.render_offline(256);
+    assert!(engine.snapshot().decks[0].frame < 512);
+}
+
+#[test]
 fn roll_loops_the_selected_fraction_and_brake_ramps_to_stop() {
     let engine = test_engine(48_000);
     engine.set_bpm(DeckId::A, 120.0);

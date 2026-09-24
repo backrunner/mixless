@@ -1,6 +1,6 @@
 //! Small gestures on the outgoing deck before the transition starts, so an
 //! unattended AutoMix pass still sounds played: a filter riser into each real
-//! drop and a one-beat drum pull-out on phrase boundaries inside long drops.
+//! drop and a restrained drum dip on measured phrase boundaries inside long drops.
 //! Every curve starts and ends on the lane's neutral value; the host owns the
 //! playhead, takeover detection and neutral restoration.
 use crate::grid::Grid;
@@ -14,6 +14,8 @@ pub enum PerformanceLane {
     Filter,
     /// Stem gain 0..=1; neutral 1.
     Stem(StemKind),
+    /// Section-local tonal attenuation in dB; neutral 0.
+    Eq(mixless_protocol::EqBand),
 }
 
 #[derive(Debug, Clone)]
@@ -27,10 +29,21 @@ pub struct PerformanceMove {
     pub label: &'static str,
 }
 
-// Engine `ChannelFilter::cutoff` maps a positive amount to a high-pass corner
-// of 30 Hz * 600^amount (the 18 kHz upper clamp is below sr*0.45 at every real
-// rate). ln(400/30) / ln(600) puts the riser's resting corner near 400 Hz.
-const RISER_DEPTH: f32 = 0.405;
+// At Subtle the high-pass corner reaches 90 Hz (bass shading); Active can
+// reach 180 Hz. Neither removes the whole low midrange as the old 400 Hz sweep did.
+fn riser_depth(level: LiveMoves) -> f32 {
+    let cutoff: f32 = if level == LiveMoves::Active {
+        180.
+    } else {
+        90.
+    };
+    (cutoff / 30.).ln() / 600f32.ln()
+}
+
+fn ease(t: f32) -> f32 {
+    let t = t.clamp(0., 1.);
+    t * t * (3. - 2. * t)
+}
 
 pub fn performance_moves(
     t: &TrackAnalysis,
@@ -43,12 +56,11 @@ pub fn performance_moves(
         return Vec::new();
     }
     let grid = Grid(t);
-    let beat = 60. / t.tempo.global_bpm.max(20.);
     // Never clip a gesture: it must start after the current playhead and land
     // fully before the transition's own automation begins.
     let fits = |start: f32, end: f32| {
         start >= from_sec + 0.5
-            && end <= until_sec - beat
+            && end <= until_sec - 60. / grid.bpm(grid.beat(end))
             && start < end
             && crate::smooth::grid_reliable(t, start, end)
     };
@@ -58,14 +70,17 @@ pub fn performance_moves(
     }
     moves.sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec));
     // One gesture per lane at a time; a crowded boundary keeps the earlier move.
-    let mut ends = std::collections::HashMap::new();
-    moves.retain(|m| match ends.get(&m.lane) {
-        Some(&end) if m.start_sec < end - 0.001 => false,
-        _ => {
-            ends.insert(m.lane, m.end_sec);
-            true
+    // Leave a phrase of neutral playback between gestures, across all lanes.
+    // Layered filter + drum moves can otherwise become an unintended bass cut.
+    let mut next = f32::NEG_INFINITY;
+    moves.retain(|m| {
+        if m.start_sec < next {
+            return false;
         }
+        next = m.end_sec + 8. * bar_seconds(t, m.end_sec);
+        true
     });
+    moves.extend(crate::eq::solo(t, from_sec, until_sec));
     moves
 }
 
@@ -86,15 +101,20 @@ fn bars_inside<'a>(
         .collect()
 }
 
-fn mean(
-    bars: &[&mixless_protocol::BarFeature],
-    f: impl Fn(&mixless_protocol::BarFeature) -> f32,
-) -> f32 {
-    if bars.is_empty() {
-        0.
-    } else {
-        bars.iter().map(|b| f(b)).sum::<f32>() / bars.len() as f32
+/// Require continuous measurements; absence is not permission for an accent.
+fn covered(t: &TrackAnalysis, start: f32, end: f32) -> bool {
+    let mut cursor = start;
+    for b in t
+        .bars
+        .iter()
+        .filter(|b| b.start_sec < end && b.end_sec > start)
+    {
+        if b.start_sec > cursor + 0.01 || b.rms <= 0.001 {
+            return false;
+        }
+        cursor = b.end_sec;
     }
+    cursor >= end - 0.01
 }
 
 /// A long build or a quiet break releases tension into the peak; riding the
@@ -120,16 +140,8 @@ fn filter_risers(
         if section_len < 4. * bar - 0.05 {
             continue;
         }
-        let inside = bars_inside(t, section.start_sec, section.end_sec);
-        let rising_onsets = inside.len() >= 4 && {
-            let first = mean(&inside[..4], |b| b.onset_density);
-            let last = mean(&inside[inside.len() - 4..], |b| b.onset_density);
-            last >= first * 1.2 && last >= 0.1
-        };
-        let builds = section.label == S::BuildUp
-            || rising_onsets
-            || mixless_protocol::has_buildup(&t.bars, section.start_sec, section.end_sec);
-        if !builds {
+        // The section name is not independent evidence for a filter move.
+        if !mixless_protocol::has_buildup(&t.bars, section.start_sec, section.end_sec) {
             continue;
         }
         let end_beat = grid.beat(p0);
@@ -139,21 +151,26 @@ fn filter_risers(
         if rise_end <= start + 0.05 {
             continue;
         }
-        let depth = if mean(&bars_inside(t, start, p0), |b| b.vocal_presence) > 0.6 {
-            RISER_DEPTH * 0.6
-        } else {
-            RISER_DEPTH
-        };
-        // A slow t^3 climb keeps the first bars imperceptible, then the corner
-        // holds through the last beat and snaps open on the downbeat.
-        let mut nodes = vec![(start, 0.)];
-        for k in 1..9 {
-            let f = k as f32 / 9.;
-            nodes.push((start + (rise_end - start) * f, depth * f * f * f));
+        if !covered(t, start, p0) {
+            continue;
         }
-        nodes.push((rise_end, depth));
-        nodes.push((p0 - 0.03, depth));
-        nodes.push((p0 - 0.005, 0.));
+        let vocal = bars_inside(t, start, p0)
+            .iter()
+            .map(|b| crate::vocals::risk(b))
+            .fold(0f32, f32::max);
+        // Sustained vocals get at most half of the already restrained move.
+        let depth = riser_depth(level) * if vocal >= 0.45 { 0.5 } else { 1. };
+        // Recover through the last beat, reaching neutral on the downbeat;
+        // do not snap a 400 Hz high-pass open in 25 ms.
+        let mut nodes = Vec::new();
+        for k in 0..=32 {
+            let f = k as f32 / 32.;
+            nodes.push((start + (rise_end - start) * f, depth * ease(f)));
+        }
+        for k in 1..=16 {
+            let f = k as f32 / 16.;
+            nodes.push((rise_end + (p0 - rise_end) * f, depth * (1. - ease(f))));
+        }
         if !fits(start, p0) {
             continue;
         }
@@ -168,8 +185,7 @@ fn filter_risers(
     moves
 }
 
-/// Pull the drums for the final beat of a phrase inside a long drop; the kick
-/// slamming back on the next eight-bar boundary reads as a live accent.
+/// Shade the last beat of a measured phrase, then return on its downbeat.
 fn drum_pulls(
     t: &TrackAnalysis,
     grid: &Grid,
@@ -200,7 +216,17 @@ fn drum_pulls(
             let b = grid.sec(boundary_beat);
             let driven = bar_at(b - 0.5 * bar).is_some_and(|x| x.kick_salience >= 0.6)
                 && bar_at(b + 0.5 * bar).is_some_and(|x| x.kick_salience >= 0.6);
-            if driven && fits(grid.sec(boundary_beat - 1.), b) {
+            let start = grid.sec(boundary_beat - 1.);
+            let measured_phrase = t
+                .phrase_boundaries
+                .iter()
+                .any(|p| p.confidence >= 0.6 && (p.time_sec - b).abs() < 0.08);
+            let clean = covered(t, start, b + 0.5 * bar)
+                && t.bars
+                    .iter()
+                    .filter(|x| x.start_sec < b + 0.5 * bar && x.end_sec > start)
+                    .all(|x| crate::vocals::risk(x) < 0.35);
+            if driven && measured_phrase && clean && fits(start, b) {
                 boundaries.push((boundary_beat, b));
             }
             k += 1.;
@@ -217,14 +243,21 @@ fn drum_pulls(
                 start_sec: start,
                 end_sec: b,
                 curve: Polyline {
-                    nodes: vec![
-                        (start, 1.),
-                        (start + 0.02, 0.),
-                        (b - 0.03, 0.),
-                        (b - 0.005, 1.),
-                    ],
+                    // -3 dB in Subtle, -6 dB in Active; never an automatic mute.
+                    nodes: (0..=32)
+                        .map(|i| {
+                            let phase = i as f32 / 32.;
+                            let db = if level == LiveMoves::Active { -6. } else { -3. };
+                            let depth = if phase < 0.5 {
+                                ease(phase * 2.)
+                            } else {
+                                ease((1. - phase) * 2.)
+                            };
+                            (start + (b - start) * phase, 10f32.powf(db * depth / 20.))
+                        })
+                        .collect(),
                 },
-                label: "Drum drop-out",
+                label: "Drum dip",
             });
         }
     }
@@ -255,6 +288,12 @@ mod tests {
         })
         .collect();
         for b in &mut t.bars {
+            b.vocal_presence = 0.1;
+            b.vocal_confidence = Some(0.1);
+            if (16..32).contains(&b.bar_index) {
+                b.rms = 0.1 + (b.bar_index - 16) as f32 * 0.02;
+                b.onset_density = 0.1 + (b.bar_index - 16) as f32 * 0.06;
+            }
             b.section = t
                 .sections
                 .iter()
@@ -282,7 +321,10 @@ mod tests {
                     .sample(m.start_sec + (m.end_sec - m.start_sec) * i as f32 / 100.)
             })
             .fold(0f32, f32::max);
-        assert!(max >= 0.3, "depth {max}");
+        assert!(
+            max > 0.16 && max <= riser_depth(LiveMoves::Subtle) + 0.001,
+            "depth {max}"
+        );
         // The Active level sweeps the build's last eight bars; the plain Break
         // before the second drop shows no build evidence and gets nothing.
         let active = performance_moves(&t, 0., 200., false, LiveMoves::Active);
@@ -315,6 +357,18 @@ mod tests {
         ];
         // A weak bar before the 8-bar boundary drops that candidate, leaving
         // the 16- and 24-bar accents.
+        for b in &mut t.bars {
+            b.vocal_presence = 0.1;
+            b.vocal_confidence = Some(0.1);
+        }
+        t.phrase_boundaries = [8., 16., 24.]
+            .into_iter()
+            .map(|b| mixless_protocol::PhraseBoundary {
+                time_sec: b * bar,
+                confidence: 0.9,
+                novelty: 0.5,
+            })
+            .collect();
         t.bars[7].kick_salience = 0.4;
         let subtle = performance_moves(&t, 0., 70., true, LiveMoves::Subtle);
         assert_eq!(subtle.len(), 1, "{subtle:?}");
@@ -328,9 +382,75 @@ mod tests {
         assert_eq!(subtle[0].curve.sample(subtle[0].end_sec), 1.);
         let active = performance_moves(&t, 0., 70., true, LiveMoves::Active);
         let ends: Vec<f32> = active.iter().map(|m| m.end_sec / bar).collect();
-        assert_eq!(ends, vec![16., 24.], "{active:?}");
+        assert_eq!(ends, vec![16.], "{active:?}");
         // No stems attached to the deck: the drum lane stays untouched.
         assert!(performance_moves(&t, 0., 70., false, LiveMoves::Active).is_empty());
+        let mut sung = t.clone();
+        for b in &mut sung.bars {
+            b.vocal_confidence = Some(0.8);
+        }
+        assert!(performance_moves(&sung, 0., 70., true, LiveMoves::Active).is_empty());
+        t.phrase_boundaries.clear();
+        assert!(performance_moves(&t, 0., 70., true, LiveMoves::Active).is_empty());
+    }
+
+    #[test]
+    fn labels_missing_coverage_and_a_lone_final_impact_do_not_authorize_risers() {
+        let mut t = build_to_drop();
+        for b in &mut t.bars {
+            b.rms = 0.2;
+            b.onset_density = 0.2;
+        }
+        assert!(performance_moves(&t, 0., 200., false, LiveMoves::Active).is_empty());
+        t.bars[31].rms = 0.8;
+        t.bars[31].onset_density = 0.9;
+        assert!(performance_moves(&t, 0., 200., false, LiveMoves::Active).is_empty());
+        let mut t = build_to_drop();
+        t.bars.retain(|b| b.bar_index != 30);
+        assert!(performance_moves(&t, 0., 200., false, LiveMoves::Active).is_empty());
+    }
+
+    #[test]
+    fn measured_gain_time_shift_and_tempo_scaling_preserve_the_gesture() {
+        let base = build_to_drop();
+        let reference = performance_moves(&base, 0., 200., false, LiveMoves::Subtle);
+        for scale in [0.75, 1., 1.25] {
+            for gain in [0.5f32, 2.] {
+                let shift = 9.;
+                let mut t = base.clone();
+                t.duration_sec = t.duration_sec * scale + shift;
+                t.tempo.global_bpm /= scale;
+                for segment in &mut t.tempo.segments {
+                    segment.bpm /= scale;
+                }
+                for time in t.tempo.beats.iter_mut().chain(&mut t.tempo.downbeats) {
+                    *time = *time * scale + shift;
+                }
+                for section in &mut t.sections {
+                    section.start_sec = section.start_sec * scale + shift;
+                    section.end_sec = section.end_sec * scale + shift;
+                }
+                for b in &mut t.bars {
+                    b.start_sec = b.start_sec * scale + shift;
+                    b.end_sec = b.end_sec * scale + shift;
+                    b.rms *= gain;
+                    for db in [&mut b.low_db, &mut b.mid_db, &mut b.high_db] {
+                        *db += 20. * gain.log10();
+                    }
+                }
+                let result =
+                    performance_moves(&t, shift, 200. * scale + shift, false, LiveMoves::Subtle);
+                assert_eq!(result.len(), reference.len());
+                for (actual, expected) in result.iter().zip(&reference) {
+                    assert!((actual.start_sec - (expected.start_sec * scale + shift)).abs() < 0.01);
+                    assert!((actual.end_sec - (expected.end_sec * scale + shift)).abs() < 0.01);
+                    let peak = |m: &PerformanceMove| {
+                        m.curve.nodes.iter().map(|p| p.1).fold(0f32, f32::max)
+                    };
+                    assert!((peak(actual) - peak(expected)).abs() < 0.001);
+                }
+            }
+        }
     }
 
     #[test]

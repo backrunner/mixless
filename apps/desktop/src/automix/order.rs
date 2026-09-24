@@ -7,6 +7,7 @@ pub(super) struct TrackOrder {
     bag: Vec<usize>,
     shuffle: bool,
     random: u64,
+    deferred: std::collections::VecDeque<TrackId>,
 }
 impl TrackOrder {
     pub fn new(tracks: Vec<TrackId>, current: Option<TrackId>, seed: u64) -> Self {
@@ -17,6 +18,7 @@ impl TrackOrder {
             bag: vec![],
             shuffle: false,
             random: seed.max(1),
+            deferred: Default::default(),
         }
     }
     pub fn replace(&mut self, tracks: Vec<TrackId>) {
@@ -26,10 +28,45 @@ impl TrackOrder {
         let current = self.position.map(|i| self.tracks[i]);
         self.position = tracks.iter().position(|id| Some(*id) == current);
         self.tracks = tracks;
+        self.deferred.retain(|id| self.tracks.contains(id));
         self.bag.clear();
     }
 
+    pub fn rebase(&mut self, tracks: Vec<TrackId>, current: TrackId) {
+        self.replace(tracks);
+        self.position = self.tracks.iter().position(|id| *id == current);
+        self.deferred.clear();
+    }
+
+    pub fn matches(&self, tracks: &[TrackId]) -> bool {
+        self.tracks == tracks
+    }
+    pub fn has_deferred(&self) -> bool {
+        !self.deferred.is_empty()
+    }
+
+    pub fn defer(&mut self, id: TrackId) {
+        if !self.deferred.contains(&id) && self.position.is_none_or(|i| self.tracks[i] != id) {
+            self.deferred.push_front(id);
+        }
+    }
+
+    pub fn preview(&self, count: usize, shuffle: bool) -> Vec<TrackId> {
+        let mut copy = self.clone();
+        (0..count).map(|_| copy.next(shuffle)).collect()
+    }
+
     pub fn next(&mut self, shuffle: bool) -> TrackId {
+        if let Some(id) = self.deferred.pop_front() {
+            self.bag.retain(|i| self.tracks[*i] != id);
+            if self
+                .position
+                .is_none_or(|i| self.tracks[(i + 1) % self.tracks.len()] == id)
+            {
+                self.position = self.tracks.iter().position(|t| *t == id);
+            }
+            return id;
+        }
         if shuffle != self.shuffle {
             self.bag.clear();
             self.shuffle = shuffle;

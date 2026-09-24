@@ -1,0 +1,23 @@
+[package]
+name = "mixless-pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Incremental portable music library packages"
+
+[dependencies]
+mixless-library.workspace = true
+mixless-protocol.workspace = true
+mixless-stems.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+fs2 = "0.4"
+tempfile = "3"
+zstd = "0.13"
+
+[dev-dependencies]
+mixless-analyze.workspace = true
+mixless-engine.workspace = true
+hound = "3"

@@ -8,6 +8,7 @@ mod models;
 #[cfg(stems_ort)]
 mod notes;
 mod playback;
+mod portable;
 mod priority;
 mod processor;
 mod resample;
@@ -20,6 +21,7 @@ mod session;
 #[cfg(stems_ort)]
 mod worker;
 pub use evidence::VERSION;
+pub use portable::FILES as PORTABLE_FILES;
 pub use processor::Processor;
 
 /// False on Intel macOS: no ONNX Runtime build exists for
@@ -65,6 +67,15 @@ pub fn verify_bundled_models(dir: &std::path::Path) -> Result<()> {
 
 pub fn is_current(analysis: &mixless_protocol::StemAnalysis) -> bool {
     analysis.version == VERSION
+        && analysis.separator_sha256 == models::SEPARATOR_HASH
+        && analysis.notes_sha256 == models::NOTES_HASH
+        && analysis.valid(analysis.duration_sec)
+}
+
+/// v2 adds bass PCM, but preserves the v1 combined-instrument measurements.
+/// Rebuilding PCM must not apply those measurements to adjusted bars twice.
+pub fn compatible_evidence(analysis: &mixless_protocol::StemAnalysis) -> bool {
+    matches!(analysis.version, 1 | 2)
         && analysis.separator_sha256 == models::SEPARATOR_HASH
         && analysis.notes_sha256 == models::NOTES_HASH
         && analysis.valid(analysis.duration_sec)
@@ -124,6 +135,8 @@ pub struct Inference {
 pub struct Stems {
     /// Interleaved stereo at 44.1 kHz, in vocals / drums / instruments order.
     pub audio: [Vec<f32>; 3],
+    /// Independent model bass, also included in audio[2] for legacy evidence.
+    pub bass: Vec<f32>,
     pub residual_rms: f32,
 }
 

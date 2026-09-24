@@ -12,10 +12,16 @@ const STEM_TOUCH: f32 = 0.05;
 // Below this, consecutive sends are inaudible churn on the command channel.
 const SEND_EPSILON: f32 = 0.004;
 
+pub(super) fn eq_snapshot(d: &mixless_protocol::DeckSnapshot) -> [f32; 3] {
+    // A killed band is a deliberate user choice even when its knob reads zero.
+    std::array::from_fn(|i| if d.eq_kill[i] { -96. } else { d.eq_db[i] })
+}
+
 fn neutral(lane: PerformanceLane) -> f32 {
     match lane {
         PerformanceLane::Filter => 0.,
         PerformanceLane::Stem(_) => 1.,
+        PerformanceLane::Eq(_) => 0.,
     }
 }
 
@@ -26,6 +32,11 @@ fn command(deck: DeckId, lane: PerformanceLane, value: f32) -> Command {
             amount: value,
         },
         PerformanceLane::Stem(stem) => Command::SetStemGain { deck, stem, value },
+        PerformanceLane::Eq(band) => Command::SetEq {
+            deck,
+            band,
+            db: value,
+        },
     }
 }
 
@@ -52,10 +63,12 @@ impl Performer {
         &mut self,
         seconds: f32,
         filter_amount: f32,
-        stem_gain: [f32; 3],
+        stem_gain: [f32; 4],
+        eq_db: [f32; 3],
         deck: DeckId,
     ) -> Vec<Command> {
         let mut out = Vec::new();
+        self.observe_touch(filter_amount, stem_gain, eq_db);
         let mut engaged = HashSet::new();
         for i in 0..self.moves.len() {
             let lane = self.moves[i].lane;
@@ -70,6 +83,7 @@ impl Performer {
             let (snapshot, touch) = match lane {
                 PerformanceLane::Filter => (filter_amount, FILTER_TOUCH),
                 PerformanceLane::Stem(stem) => (stem_gain[stem.index()], STEM_TOUCH),
+                PerformanceLane::Eq(band) => (eq_db[band.index()], 0.1),
             };
             let value = m.curve.sample(seconds);
             match self.last_sent.get(&lane) {
@@ -114,6 +128,43 @@ impl Performer {
         out
     }
 
+    fn observe_touch(&mut self, filter_amount: f32, stem_gain: [f32; 4], eq_db: [f32; 3]) {
+        // Detect a touch even on the tick after a gesture ends. Otherwise the
+        // neutral restoration would overwrite the user's last-beat adjustment.
+        for lane in self.active.clone() {
+            let (value, touch) = match lane {
+                PerformanceLane::Filter => (filter_amount, FILTER_TOUCH),
+                PerformanceLane::Stem(stem) => (stem_gain[stem.index()], STEM_TOUCH),
+                PerformanceLane::Eq(band) => (eq_db[band.index()], 0.1),
+            };
+            if self
+                .last_sent
+                .get(&lane)
+                .is_some_and(|sent| (value - sent).abs() > touch)
+            {
+                self.taken_over.insert(lane);
+                self.active.remove(&lane);
+            }
+        }
+    }
+
+    pub fn release_owned(
+        &mut self,
+        deck: DeckId,
+        filter_amount: f32,
+        stem_gain: [f32; 4],
+        eq_db: [f32; 3],
+    ) -> Vec<Command> {
+        self.observe_touch(filter_amount, stem_gain, eq_db);
+        self.release(deck)
+    }
+
+    /// The engine already owns these lanes. A late host tick must not restore
+    /// neutral on top of the transition's EQ/filter/stem automation.
+    pub fn handoff(&mut self) {
+        self.active.clear();
+    }
+
     /// Neutral-restoring commands for lanes currently mid-move — used when the
     /// transition starts or AUTO stops. Lanes the user took are left alone.
     pub fn release(&mut self, deck: DeckId) -> Vec<Command> {
@@ -132,6 +183,37 @@ impl Performer {
 mod tests {
     use super::*;
     use mixless_protocol::Polyline;
+
+    #[test]
+    fn section_eq_yields_to_manual_knob_and_kill_without_resetting_them() {
+        let make = || {
+            Performer::new(vec![PerformanceMove {
+                lane: PerformanceLane::Eq(mixless_protocol::EqBand::High),
+                start_sec: 0.,
+                end_sec: 10.,
+                curve: Polyline {
+                    nodes: vec![(0., 0.), (5., -1.), (10., 0.)],
+                },
+                label: "Section tone",
+            }])
+        };
+        for manual in [-96., 2.] {
+            let mut p = make();
+            assert!(
+                p.tick(1., 0., [1.; 4], [0.; 3], DeckId::A)
+                    .iter()
+                    .any(|c| matches!(c, Command::SetEq { db, .. } if *db < 0.))
+            );
+            assert!(
+                p.tick(2., 0., [1.; 4], [0., 0., manual], DeckId::A)
+                    .is_empty()
+            );
+            assert!(
+                p.release_owned(DeckId::A, 0., [1.; 4], [0., 0., manual])
+                    .is_empty()
+            );
+        }
+    }
 
     fn moves() -> Vec<PerformanceMove> {
         vec![
@@ -160,15 +242,15 @@ mod tests {
     fn user_touch_on_one_lane_surrenders_only_that_lane() {
         let mut p = Performer::new(moves());
         // Inside both moves: user has grabbed the filter.
-        let out = p.tick(1.2, 0.4, [1., 1., 1.], DeckId::A);
+        let out = p.tick(1.2, 0.4, [1., 1., 1., 1.], [0.; 3], DeckId::A);
         assert!(
             out.is_empty()
                 || out
                     .iter()
                     .all(|c| !matches!(c, Command::SetChannelFilter { .. }))
         );
-        p.tick(1.4, 0.4, [1., 1., 1.], DeckId::A);
-        let out = p.tick(2.2, 0.45, [1., 1., 1.], DeckId::A);
+        p.tick(1.4, 0.4, [1., 1., 1., 1.], [0.; 3], DeckId::A);
+        let out = p.tick(2.2, 0.45, [1., 1., 1., 1.], [0.; 3], DeckId::A);
         // Filter lane surrendered: no filter commands ever, drums still move.
         assert!(
             out.iter()
@@ -190,10 +272,22 @@ mod tests {
     }
 
     #[test]
+    fn user_touch_on_the_final_tick_is_not_reset_to_neutral() {
+        let mut p = Performer::new(moves());
+        p.tick(1.5, 0., [1.; 4], [0.; 3], DeckId::A);
+        let out = p.tick(3.1, 0.7, [1.; 4], [0.; 3], DeckId::A);
+        assert!(
+            !out.iter()
+                .any(|c| matches!(c, Command::SetChannelFilter { .. }))
+        );
+        assert!(p.release(DeckId::A).is_empty());
+    }
+
+    #[test]
     fn a_finished_move_restores_neutral_once() {
         let mut p = Performer::new(moves());
         assert!(
-            p.tick(1.5, 0., [1., 1., 1.], DeckId::A)
+            p.tick(1.5, 0., [1., 1., 1., 1.], [0.; 3], DeckId::A)
                 .iter()
                 .any(|c| matches!(
                     c,
@@ -202,9 +296,9 @@ mod tests {
         );
         // Inside the drum pull: the drums lane is now mid-move too. The
         // filter snapshot echoes our last send — no takeover.
-        p.tick(2.2, 0.125, [1., 1., 1.], DeckId::A);
+        p.tick(2.2, 0.125, [1., 1., 1., 1.], [0.; 3], DeckId::A);
         // Past every move's end: each touched lane gets one neutral command.
-        let out = p.tick(4., 0.3, [1., 0., 1.], DeckId::A);
+        let out = p.tick(4., 0.3, [1., 0., 1., 1.], [0.; 3], DeckId::A);
         let restored: Vec<_> = out
             .iter()
             .filter(|c| match c {
@@ -215,14 +309,25 @@ mod tests {
             .collect();
         assert_eq!(restored.len(), 2, "{out:?}");
         // ...and never again.
-        assert!(p.tick(4.5, 0., [1., 1., 1.], DeckId::A).is_empty());
+        assert!(
+            p.tick(4.5, 0., [1., 1., 1., 1.], [0.; 3], DeckId::A)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn delayed_tick_after_handoff_does_not_reset_the_transition() {
+        let mut p = Performer::new(moves());
+        p.tick(1.5, 0., [1.; 4], [0.; 3], DeckId::A);
+        p.handoff();
+        assert!(p.release(DeckId::A).is_empty());
     }
 
     #[test]
     fn release_restores_only_lanes_currently_moving() {
         let mut p = Performer::new(moves());
         // Before the drum pull's window only the filter is mid-move.
-        p.tick(1.5, 0., [1., 1., 1.], DeckId::A);
+        p.tick(1.5, 0., [1., 1., 1., 1.], [0.; 3], DeckId::A);
         let out = p.release(DeckId::A);
         assert_eq!(out.len(), 1);
         assert!(matches!(

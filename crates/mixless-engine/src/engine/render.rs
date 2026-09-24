@@ -75,14 +75,34 @@ impl Shared {
             let buffer_id = bufs[index]
                 .as_ref()
                 .map_or(0, |buffer| Arc::as_ptr(buffer) as usize);
-            if buffer_id != deck.buffer_id {
+            let source_revision = slot.load_revision.load(Ordering::Acquire);
+            if buffer_id != deck.buffer_id || source_revision != deck.source_revision {
+                // PCM can be released immediately on the host. Carry only the
+                // last routed samples through a 3 ms de-click tail, separately
+                // for master and monitor so a cue preview never leaks to master.
+                deck.eject_tail = if buffer_id == 0 {
+                    let length = (sr * 0.003).round().max(1.) as u32;
+                    EjectTail {
+                        output: deck.last_output,
+                        monitor: deck.last_monitor,
+                        remaining: length,
+                        length,
+                    }
+                } else {
+                    EjectTail::default()
+                };
                 deck.buffer_id = buffer_id;
+                deck.source_revision = source_revision;
                 deck.fx_clock = None;
                 deck.source = bufs[index].clone();
                 deck.stems = None;
                 deck.stem_gain = std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15));
-                deck.stem_values = [1.; 3];
-                deck.position = slot.playhead_frames();
+                deck.stem_values = [1.; 4];
+                deck.position = if buffer_id == 0 {
+                    0.
+                } else {
+                    slot.playhead_frames()
+                };
                 deck.old_ph = deck.position;
                 deck.seek = SeekXf::new();
                 deck.brake_elapsed = None;
@@ -127,7 +147,7 @@ impl Shared {
                     })
                     .cloned();
             }
-            for i in 0..3 {
+            for i in 0..4 {
                 deck.stem_gain[i].set(if deck.stems.is_some() {
                     slot.stem_gain[i].load(Ordering::Relaxed) as f32 / 1000.
                 } else {
@@ -359,7 +379,7 @@ impl Shared {
             if let Some(cue) = &mut rt.cue_output {
                 let mut sample = [0.0; 2];
                 for (index, enabled) in pfl.iter().enumerate() {
-                    if *enabled || preview[index] {
+                    if *enabled || preview[index] || bufs[index].is_none() {
                         sample[0] += rt.decks[index].cue_sample[0];
                         sample[1] += rt.decks[index].cue_sample[1];
                     }
@@ -374,6 +394,15 @@ impl Shared {
             }
             if preview[1] {
                 (bl, br) = (0., 0.);
+            }
+            for (index, output) in [[al, ar], [bl, br]].into_iter().enumerate() {
+                rt.decks[index].last_output = output;
+                rt.decks[index].last_monitor =
+                    if pfl[index] || preview[index] || bufs[index].is_none() {
+                        rt.decks[index].cue_sample
+                    } else {
+                        [0.; 2]
+                    };
             }
             peak[0][0] = peak[0][0].max(al.abs());
             peak[0][1] = peak[0][1].max(ar.abs());

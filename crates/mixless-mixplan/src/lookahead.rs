@@ -10,26 +10,39 @@ impl Planner {
         following: Option<&TrackAnalysis>,
     ) -> MixPlan {
         let first = self.plan_next(ctx);
-        let Some(next) = following.filter(|t| t.key_confidence >= 0.55 && t.camelot.is_some())
+        let Some(next) =
+            following.filter(|t| t.tempo.global_bpm.is_finite() && t.tempo.global_bpm > 0.)
         else {
             return first;
         };
-        if !self.options.harmonic_key_shift || ctx.incoming.key_confidence < 0.55 {
+        if self.options.strategy.is_some() {
             return first;
         }
         let mut native = self.options.clone();
         native.harmonic_key_shift = false;
         let alternative = Planner::with_options(native).plan_next(ctx);
+        // Holding a useful sounding tempo can avoid restoring B only to change
+        // it again for C. This path is useful even when harmonic evidence is absent.
+        let mut held = self.options.clone();
+        held.strategy = Some(mixless_protocol::StrategyId::EnergyHold);
+        let held = Planner::with_options(held).plan_next(ctx);
         let merit = |p: &MixPlan| {
             if p.failure_reason.is_some() {
                 return f32::NEG_INFINITY;
             }
-            let (compatibility, shift) = crate::score::key_match(
-                ctx.incoming,
-                next,
-                p.incoming_offset_end.pitch_semitones,
-                0.,
-            );
+            let (compatibility, shift) = if self.options.harmonic_key_shift
+                && ctx.incoming.key_confidence >= 0.55
+                && next.key_confidence >= 0.55
+            {
+                crate::score::key_match(
+                    ctx.incoming,
+                    next,
+                    p.incoming_offset_end.pitch_semitones,
+                    0.,
+                )
+            } else {
+                (0., 0.)
+            };
             let ratio = ctx.incoming.tempo.global_bpm * p.incoming_offset_end.rate
                 / next.tempo.global_bpm.max(1.);
             let correction = [ratio, ratio * 0.5, ratio * 2.]
@@ -40,10 +53,12 @@ impl Planner {
                 - 0.025 * shift.abs()
                 - 0.10 * ((correction - 0.08).max(0.) / 0.08).min(1.)
         };
-        if merit(&alternative) > merit(&first) + 0.0001 {
-            alternative
-        } else {
-            first
+        let mut best = first;
+        for candidate in [alternative, held] {
+            if merit(&candidate) > merit(&best) + 0.0001 {
+                best = candidate;
+            }
         }
+        best
     }
 }

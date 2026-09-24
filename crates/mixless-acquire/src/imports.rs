@@ -29,10 +29,16 @@ pub struct ImportReport {
     pub errors: Vec<String>,
     pub warning: Option<String>,
     pub playlist: Option<PlaylistId>,
+    pub sync: Option<(usize, usize)>,
 }
 impl ImportReport {
     pub fn summary(&self) -> String {
-        let mut parts = vec![format!("Added {} tracks", self.local + self.acquired)];
+        let mut parts = vec![match self.sync {
+            Some((added, removed)) => {
+                format!("Updated playlist · {added} added · {removed} removed")
+            }
+            None => format!("Added {} tracks", self.local + self.acquired),
+        }];
         let failed = self.failed + self.suspect;
         if failed > 0 {
             parts.push(format!("{failed} failed"));
@@ -154,12 +160,38 @@ impl ImportService<'_> {
         &self,
         playlist: &SpotifyPlaylistMeta,
         fetch: impl Fn(&ResolveJob) -> Result<PathBuf, AcquireError> + Sync,
+        progress: impl FnMut(ImportProgress),
+    ) -> Result<ImportReport, String> {
+        self.spotify_snapshot(playlist, None, fetch, progress)
+    }
+
+    pub fn sync_spotify_playlist(
+        &self,
+        pid: PlaylistId,
+        playlist: &SpotifyPlaylistMeta,
+        fetch: impl Fn(&ResolveJob) -> Result<PathBuf, AcquireError> + Sync,
+        progress: impl FnMut(ImportProgress),
+    ) -> Result<ImportReport, String> {
+        if playlist.total_tracks != Some(playlist.tracks.len()) || playlist.warning.is_some() {
+            return Err("Spotify returned an incomplete playlist; nothing was changed".into());
+        }
+        self.spotify_snapshot(playlist, Some(pid), fetch, progress)
+    }
+
+    fn spotify_snapshot(
+        &self,
+        playlist: &SpotifyPlaylistMeta,
+        sync: Option<PlaylistId>,
+        fetch: impl Fn(&ResolveJob) -> Result<PathBuf, AcquireError> + Sync,
         mut progress: impl FnMut(ImportProgress),
     ) -> Result<ImportReport, String> {
-        let pid = self
-            .library
-            .external_playlist("spotify", &playlist.id, &playlist.name)
-            .map_err(|e| e.to_string())?;
+        let pid = if let Some(pid) = sync {
+            pid
+        } else {
+            self.library
+                .external_playlist("spotify", &playlist.id, &playlist.name)
+                .map_err(|e| e.to_string())?
+        };
         let previous = self.library.import_items(pid).map_err(|e| e.to_string())?;
         let local = recording::LocalRecordings::read(self.library)?;
         let mut rows: Vec<_> = playlist
@@ -177,15 +209,47 @@ impl ImportService<'_> {
                 error: None,
             })
             .collect();
+        let delta = sync.map(|_| snapshot_delta(&previous, &rows));
+        if sync.is_some() {
+            // Stable remote recording IDs retain healthy local tracks even
+            // when their position changes or the playlist repeats a song.
+            for row in &mut rows {
+                if let Some(old) = previous.iter().find(|old| {
+                    !row.external_id.is_empty()
+                        && old.external_id == row.external_id
+                        && old.is_ready()
+                        && old
+                            .track_id
+                            .and_then(|id| self.library.get_track(id).ok())
+                            .is_some_and(|t| {
+                                t.analyzed
+                                    && duration_ok(t.duration_ms, row.duration_ms)
+                                    && self
+                                        .library
+                                        .verified_content_hash(Path::new(&t.path))
+                                        .is_ok_and(|hash| hash == t.content_hash)
+                            })
+                }) {
+                    row.status = old.status.clone();
+                    row.track_id = old.track_id;
+                }
+            }
+        }
         let mut report = ImportReport {
             total: rows.len(),
             playlist: Some(pid),
             warning: playlist.warning.clone(),
+            sync: delta,
+            local: rows.iter().filter(|row| row.is_ready()).count(),
             ..Default::default()
         };
-        self.library
-            .save_import_items(pid, &rows)
-            .map_err(|e| e.to_string())?;
+        if sync.is_some() {
+            self.library
+                .sync_import_items(pid, &playlist.id, &playlist.name, &rows)
+        } else {
+            self.library.save_import_items(pid, &rows)
+        }
+        .map_err(|e| e.to_string())?;
         progress(ImportProgress::PlaylistReady(pid));
 
         // One job per recording; repeated playlist entries share download and
@@ -193,6 +257,9 @@ impl ImportService<'_> {
         let mut groups: Vec<Vec<usize>> = Vec::new();
         let mut identities = std::collections::HashMap::new();
         for (index, t) in playlist.tracks.iter().enumerate() {
+            if rows[index].is_ready() {
+                continue;
+            }
             let key = (&t.id, &t.title, &t.artist, t.duration_ms, &t.isrc);
             let group = *identities.entry(key).or_insert_with(|| {
                 groups.push(Vec::new());
@@ -246,7 +313,7 @@ impl ImportService<'_> {
                 });
             }
             drop(tx);
-            let mut completed = 0;
+            let mut completed = rows.iter().filter(|row| row.is_ready()).count();
             for message in rx {
                 let (group, status, id, error) = match message {
                     WorkerMsg::Stage(group, status) => (group, status, None, None),
@@ -321,10 +388,151 @@ impl ImportService<'_> {
     }
 }
 
+fn snapshot_delta(previous: &[ImportItem], next: &[ImportItem]) -> (usize, usize) {
+    let key = |row: &ImportItem| {
+        if row.external_id.is_empty() {
+            format!(
+                "unavailable:{}:{}:{}",
+                row.title, row.artist, row.duration_ms
+            )
+        } else {
+            row.external_id.clone()
+        }
+    };
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for row in previous {
+        *counts.entry(key(row)).or_default() += 1;
+    }
+    let mut added = 0;
+    for row in next {
+        let count = counts.entry(key(row)).or_default();
+        if *count > 0 {
+            *count -= 1;
+        } else {
+            added += 1;
+        }
+    }
+    (added, counts.values().sum())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use mixless_spotify::SpotifyTrackMeta;
+    #[test]
+    fn spotify_sync_diffs_occurrences_preserves_audio_and_rejects_partial_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = Library::open(&dir.path().join("lib.db")).unwrap();
+        let analyzer = Analyzer::new();
+        let service = ImportService {
+            library: &lib,
+            analyzer: &analyzer,
+        };
+        let path = dir.path().join("local.wav");
+        let a = dir.path().join("a.wav");
+        let b = dir.path().join("b.wav");
+        for file in [&path, &a, &b] {
+            wav(file, 1, 16);
+        }
+        let p = playlist(
+            "remote",
+            vec![
+                remote('a', "Song A", 1),
+                remote('b', "Song B", 1),
+                remote('a', "Song A", 1),
+            ],
+        );
+        let pid = service
+            .spotify_playlist(
+                &p,
+                |job| {
+                    Ok(if job.spotify_id.starts_with('a') {
+                        a.clone()
+                    } else {
+                        b.clone()
+                    })
+                },
+                |_| {},
+            )
+            .unwrap()
+            .playlist
+            .unwrap();
+        let original = lib.import_items(pid).unwrap();
+        let track = original[0].track_id.unwrap();
+        let analysis = lib.load_analysis(track, ANALYSIS_VERSION).unwrap().unwrap();
+        let mut next = playlist(
+            "remote",
+            vec![
+                remote('b', "Song B", 1),
+                remote('c', "Song C", 1),
+                remote('a', "Song A", 1),
+            ],
+        );
+        next.total_tracks = Some(3);
+        next.warning = None;
+        next.name = "Renamed".into();
+        let report = service
+            .sync_spotify_playlist(
+                pid,
+                &next,
+                |job| {
+                    assert_eq!(job.spotify_id, "c".repeat(22));
+                    Ok(path.clone())
+                },
+                |event| {
+                    if matches!(event, ImportProgress::PlaylistReady(_)) {
+                        let rows = lib.import_items(pid).unwrap();
+                        assert!(rows[0].is_ready());
+                        assert!(rows[1].is_pending());
+                        assert!(rows[2].is_ready());
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(report.sync, Some((1, 1)));
+        assert_eq!(
+            (report.local, report.acquired, report.failed, report.suspect),
+            (2, 1, 0, 0)
+        );
+        assert!(report.summary().contains("1 added · 1 removed"));
+        assert_eq!(
+            lib.import_items(pid)
+                .unwrap()
+                .iter()
+                .map(|r| r.external_id.chars().next().unwrap())
+                .collect::<Vec<_>>(),
+            ['b', 'c', 'a']
+        );
+        assert!(path.is_file());
+        assert_eq!(
+            lib.load_analysis(track, ANALYSIS_VERSION)
+                .unwrap()
+                .unwrap()
+                .track_id,
+            analysis.track_id
+        );
+        let snapshot = lib.import_items(pid).unwrap();
+        next.total_tracks = Some(99);
+        assert!(service
+            .sync_spotify_playlist(pid, &next, |_| panic!("no download"), |_| {})
+            .is_err());
+        assert_eq!(lib.import_items(pid).unwrap(), snapshot);
+        next.total_tracks = Some(0);
+        next.tracks.clear();
+        let report = service
+            .sync_spotify_playlist(pid, &next, |_| panic!("empty"), |_| {})
+            .unwrap();
+        assert_eq!(report.sync, Some((0, 3)));
+        assert!(lib.import_items(pid).unwrap().is_empty());
+        assert!(lib.playlist_tracks(pid).unwrap().is_empty());
+        assert!(lib.get_track(track).is_ok());
+        assert!(path.is_file());
+        // A deleted or mismatched target must never be recreated by sync.
+        assert!(service
+            .sync_spotify_playlist(PlaylistId(99999), &next, |_| panic!("deleted"), |_| {})
+            .is_err());
+    }
+
     #[test]
     #[ignore = "requires ffmpeg; exercises all file-picker formats through import and deck load"]
     fn local_formats_load_after_import() {

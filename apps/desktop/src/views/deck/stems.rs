@@ -18,18 +18,30 @@ impl UiState {
         }
         let mut column = gpui::div()
             .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .w(px(50.))
+            .flex_wrap()
+            .flex_none()
+            .size(px(76.))
+            .content_start()
             .items_center()
-            .justify_between()
-            .gap(px(10.));
+            .justify_center()
+            .gap(px(4.));
         for (stem, label, color) in [
             (StemKind::Vocals, "VOCAL", theme::WARN),
             (StemKind::Drums, "DRUMS", theme::DECK_A),
-            (StemKind::Instruments, "INST", theme::DECK_B),
+            (StemKind::Bass, "BASS", theme::DECK_B),
+            (StemKind::Instruments, "OTHER", theme::MUTED),
         ] {
+            if stem == StemKind::Bass && !d.bass_ready {
+                column = column.child(
+                    gpui::div()
+                        .w(px(36.))
+                        .h(px(36.))
+                        .text_size(px(8.))
+                        .text_color(theme::MUTED)
+                        .child("BASS —"),
+                );
+                continue;
+            }
             let value = d.stem_gain[stem.index()];
             let state = cx.entity();
             let toggle = gpui::div()
@@ -59,7 +71,8 @@ impl UiState {
                     .flex()
                     .flex_col()
                     .flex_none()
-                    .w_full()
+                    .w(px(36.))
+                    .h(px(36.))
                     .items_center()
                     .gap(px(2.))
                     .child(knob(

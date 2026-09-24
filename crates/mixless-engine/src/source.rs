@@ -2,11 +2,12 @@
 use crate::AudioBuffer;
 
 /// Aligned, pre-touched PCM, prepared on a host worker. Instruments include the
-/// separation residual: original - vocals - drums. Unity is the exact original.
+/// separation residual: original - vocals - drums - bass. Unity is the exact original.
 #[derive(Debug)]
 pub struct StemBuffer {
     pub(crate) vocals: Vec<f32>,
     pub(crate) drums: Vec<f32>,
+    pub(crate) bass: Option<Vec<f32>>,
     pub(crate) frames: u64,
     pub(crate) sample_rate: u32,
 }
@@ -25,10 +26,27 @@ impl StemBuffer {
             sample_rate,
             vocals,
             drums,
+            bass: None,
         })
     }
+    pub fn with_bass(
+        sample_rate: u32,
+        vocals: Vec<f32>,
+        drums: Vec<f32>,
+        bass: Vec<f32>,
+    ) -> Result<Self, &'static str> {
+        let mut result = Self::new(sample_rate, vocals, drums)?;
+        if bass.len() != result.vocals.len() || bass.iter().any(|v| !v.is_finite()) {
+            return Err("Invalid aligned bass PCM");
+        }
+        result.bass = Some(bass);
+        Ok(result)
+    }
+    pub fn has_bass(&self) -> bool {
+        self.bass.is_some()
+    }
     pub fn bytes(&self) -> usize {
-        (self.vocals.len() + self.drums.len()) * 4
+        (self.vocals.len() + self.drums.len() + self.bass.as_ref().map_or(0, Vec::len)) * 4
     }
 }
 
@@ -101,14 +119,19 @@ impl<T: SampleSource> SampleSource for std::sync::Arc<T> {
 pub(crate) struct StemSource<'a> {
     original: &'a AudioBuffer,
     stems: Option<&'a StemBuffer>,
-    coefficients: [f32; 3],
+    coefficients: [f32; 4],
 }
 impl<'a> StemSource<'a> {
-    pub fn new(original: &'a AudioBuffer, stems: Option<&'a StemBuffer>, gains: [f32; 3]) -> Self {
+    pub fn new(original: &'a AudioBuffer, stems: Option<&'a StemBuffer>, gains: [f32; 4]) -> Self {
         let coefficients = if stems.is_some() {
-            [gains[2], gains[0] - gains[2], gains[1] - gains[2]]
+            [
+                gains[2],
+                gains[0] - gains[2],
+                gains[1] - gains[2],
+                gains[3] - gains[2],
+            ]
         } else {
-            [1., 0., 0.]
+            [1., 0., 0., 0.]
         };
         Self {
             original,
@@ -124,7 +147,7 @@ impl SampleSource for StemSource<'_> {
     }
     #[inline]
     fn sample(&self, i: usize) -> [f32; 2] {
-        let [mix, vocal, drum] = self.coefficients;
+        let [mix, vocal, drum, bass] = self.coefficients;
         let mut s = [
             self.original.samples[i * 2] * mix,
             self.original.samples[i * 2 + 1] * mix,
@@ -134,6 +157,12 @@ impl SampleSource for StemSource<'_> {
                 s[0] += stems.vocals[i * 2] * vocal;
                 s[1] += stems.vocals[i * 2 + 1] * vocal;
             }
+            if bass != 0. {
+                if let Some(samples) = &stems.bass {
+                    s[0] += samples[i * 2] * bass;
+                    s[1] += samples[i * 2 + 1] * bass;
+                }
+            }
             if drum != 0. {
                 s[0] += stems.drums[i * 2] * drum;
                 s[1] += stems.drums[i * 2 + 1] * drum;
@@ -142,6 +171,40 @@ impl SampleSource for StemSource<'_> {
         s
     }
     fn contiguous(&self) -> Option<&[f32]> {
-        (self.coefficients == [1., 0., 0.]).then_some(&self.original.samples)
+        (self.coefficients == [1., 0., 0., 0.]).then_some(&self.original.samples)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn four_stems_reconstruct_exactly_and_bass_is_independent() {
+        let audio = AudioBuffer {
+            samples: vec![0.7, -0.7, 0.6, -0.6],
+            frames: 2,
+            sample_rate: 48000,
+            loudness: Default::default(),
+        };
+        let stems = StemBuffer::with_bass(
+            48000,
+            vec![0.1, -0.1, 0.1, -0.1],
+            vec![0.2, -0.2, 0.2, -0.2],
+            vec![0.3, -0.3, 0.2, -0.2],
+        )
+        .unwrap();
+        let unity = StemSource::new(&audio, Some(&stems), [1.; 4]);
+        assert_eq!(unity.contiguous(), Some(audio.samples.as_slice()));
+        for i in 0..2 {
+            assert_eq!(unity.sample(i), audio.sample(i));
+            let bass = StemSource::new(&audio, Some(&stems), [0., 0., 0., 1.]).sample(i);
+            let rest = StemSource::new(&audio, Some(&stems), [1., 1., 1., 0.]).sample(i);
+            for ch in 0..2 {
+                assert!((bass[ch] - stems.bass.as_ref().unwrap()[i * 2 + ch]).abs() < 1e-7);
+                assert!((bass[ch] + rest[ch] - audio.sample(i)[ch]).abs() < 1e-7);
+            }
+        }
+        assert!(StemBuffer::with_bass(48000, vec![0.; 4], vec![0.; 4], vec![f32::NAN; 4]).is_err());
+        assert!(StemBuffer::with_bass(48000, vec![0.; 4], vec![0.; 4], vec![0.; 2]).is_err());
     }
 }

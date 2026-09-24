@@ -1,13 +1,13 @@
 //! Conservative DJ policy: musical safety gates precede ranking. A scalar
 //! score cannot compensate for clashing foregrounds or an unreliable beat grid.
 use crate::{
-    PlanContext, PlannerOptions,
     constraints::{covers_user_range, user_range},
     grid::Grid,
     musical::{average_rms, bass_handoff, feature, percussion_only},
     phrasing::{boundary_quality, points},
     policy::{self, Evidence as FxEvidence, Technique},
     score::{section, window_key_match},
+    PlanContext, PlannerOptions,
 };
 use mixless_protocol::{
     AutomationLanes, BarMap, EqLane, FilterLane, MixPlan, MixPlanSummary, Polyline, ScratchOp,
@@ -17,6 +17,7 @@ use mixless_protocol::{
 mod candidate;
 use candidate::pair;
 mod lanes;
+mod preparation;
 mod ranking;
 mod timing;
 use lanes::{ease, neutral};

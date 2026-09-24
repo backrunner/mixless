@@ -6,6 +6,7 @@ license.workspace = true
 description = "yt-dlp sidecar for YouTube Music matching"
 
 [dependencies]
+mixless-net = { path = "../mixless-net" }
 mixless-acquire = { path = "../mixless-acquire" }
 mixless-protocol = { workspace = true }
 thiserror = { workspace = true }

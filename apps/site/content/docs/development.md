@@ -40,6 +40,14 @@ The first build optimizes the audio engine and UI dependencies and can take long
 
 The desktop UI does not implement DSP. Real-time processing stays in the audio engine.
 
+### Deck controls and MIDI mapping
+
+Any change to the deck-area layout or its knobs, faders, buttons, or control
+order must update the MIDI target catalogue and the Preferences MIDI wireframe
+in the same change. Keep the native controls and mapping targets aligned in
+count, order, labels, and semantics; update the mapping tests and user docs
+when a control changes.
+
 ## Website
 
 From the repository root, with Node.js 22.12+ and pnpm:

@@ -233,6 +233,7 @@ impl UiState {
                 );
                 let state = pad_state.clone();
                 let pad = pad.on_mouse_down(MouseButton::Right, move |_, _, cx| {
+                    cx.stop_propagation();
                     state.update(cx, |s, cx| {
                         s.clear_cue(deck, i);
                         cx.notify();

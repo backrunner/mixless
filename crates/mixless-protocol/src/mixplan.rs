@@ -267,8 +267,10 @@ pub struct MixPlan {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StemMix {
-    pub outgoing: [Polyline; 3],
-    pub incoming: [Polyline; 3],
+    #[serde(deserialize_with = "crate::stems::four_lanes")]
+    pub outgoing: [Polyline; 4],
+    #[serde(deserialize_with = "crate::stems::four_lanes")]
+    pub incoming: [Polyline; 4],
 }
 
 impl MixPlan {

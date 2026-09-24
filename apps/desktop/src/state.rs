@@ -11,11 +11,15 @@ mod import_retries;
 mod imports;
 mod loading;
 mod midi;
+mod packages;
 mod playback;
 mod poll;
+pub use packages::PackageAction;
 mod transport;
+mod unloading;
 mod url_input;
 pub use transport::TransportButton;
+pub use unloading::{DeckUnloadTarget, UnloadBlock};
 mod library_actions;
 mod library_order;
 mod library_recovery;
@@ -105,6 +109,7 @@ pub enum ImportMsg {
 enum ImportRequest {
     Local(Vec<PathBuf>),
     Spotify(String),
+    SpotifySync(i64, String),
 }
 
 pub fn app_core() -> Arc<AppCore> {
@@ -171,7 +176,7 @@ pub fn app_core() -> Arc<AppCore> {
         engine,
         library,
         analyzer: mixless_analyze::Analyzer::new(),
-        stems: mixless_stems::inference_supported().then(|| {
+        stems: Some({
             mixless_stems::Processor::new(
                 std::env::var_os("MIXLESS_MODEL_DIR")
                     .map(PathBuf::from)
@@ -334,6 +339,7 @@ pub struct UiState {
     pub track_sel: Option<i64>,
     pub track_menu: Option<crate::views::library::TrackMenu>,
     pub playlist_menu: Option<crate::views::library::PlaylistMenu>,
+    pub deck_menu: Option<crate::views::deck::DeckMenu>,
     /// `(playlist id, display name)` awaiting removal confirmation.
     pub confirm_remove_playlist: Option<(i64, String)>,
     library_actions: Vec<Receiver<Result<TrackId, String>>>,
@@ -346,6 +352,7 @@ pub struct UiState {
     pub keyboard_focus: FocusHandle,
     pub show_shortcuts: bool,
     pub show_import_modal: bool,
+    pub package: packages::PackageUi,
     pub error: SharedString,
     pub update_notice: SharedString,
     update_entry: Option<crate::update::Entry>,
@@ -385,6 +392,8 @@ pub struct UiState {
     momentary_fx: Option<(DeckId, usize, bool)>,
     import_rx: Option<Receiver<ImportMsg>>,
     import_queue: std::collections::VecDeque<ImportRequest>,
+    active_spotify: Option<String>,
+    active_playlist_sync: Option<i64>,
     import_retries: import_retries::Retries,
     artwork_fetch: artwork_fetch::ArtworkFetch,
     pub automix_active: bool,
@@ -400,11 +409,14 @@ pub struct UiState {
 impl UiState {
     pub fn new(core: Arc<AppCore>, cx: &mut Context<Self>) -> Self {
         cx.on_app_quit(|state, _| {
-            state.core.shutting_down.store(true, Ordering::Release);
             state.flush_library_order();
             async {}
         })
         .detach();
+        // The main window can close before Preferences or About. Save its
+        // pending row moves while the state still exists, before the final quit.
+        cx.on_release(|state, _| state.flush_library_order())
+            .detach();
         let artwork_fetch = artwork_fetch::ArtworkFetch::start(core.clone());
         let owner = cx.entity().downgrade();
         let library_view = cx.new(|_| crate::views::library::LibraryView { owner });
@@ -428,6 +440,7 @@ impl UiState {
             track_sel: None,
             track_menu: None,
             playlist_menu: None,
+            deck_menu: None,
             confirm_remove_playlist: None,
             library_actions: Vec::new(),
             playlist_actions: Vec::new(),
@@ -439,6 +452,7 @@ impl UiState {
             keyboard_focus: cx.focus_handle(),
             show_shortcuts: false,
             show_import_modal: false,
+            package: packages::PackageUi::new(),
             error: core.library_notice.clone().unwrap_or_default().into(),
             update_notice: "".into(),
             update_entry: None,
@@ -477,6 +491,8 @@ impl UiState {
             momentary_fx: None,
             import_rx: None,
             import_queue: Default::default(),
+            active_spotify: None,
+            active_playlist_sync: None,
             import_retries: Default::default(),
             artwork_fetch,
             automix_active: false,

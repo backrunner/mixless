@@ -56,7 +56,7 @@ impl UiState {
         let core = self.core.clone();
         // GPUI only grants quit futures 100 ms. Finish durable writes before
         // returning that future, or a quick Cmd-Q can discard queued row moves.
-        // This wait runs only during application shutdown, never in a frame.
+        // This wait runs during window teardown or application shutdown.
         match std::thread::spawn(move || order.finish(&core)).join() {
             Ok(Ok(())) => {}
             result => tracing::error!(?result, "Could not finish playlist order on exit"),

@@ -71,6 +71,9 @@ impl Default for EngineConfig {
 }
 
 struct DeckRt {
+    last_output: [f32; 2],
+    last_monitor: [f32; 2],
+    eject_tail: EjectTail,
     presentation_step: f64,
     cue_sample: [f32; 2],
     trim: SmoothValue,
@@ -87,10 +90,11 @@ struct DeckRt {
     last_r: f32,
     position: f64,
     buffer_id: usize,
+    source_revision: u64,
     source: Option<Arc<AudioBuffer>>,
     stems: Option<Arc<stems::PreparedStems>>,
-    stem_gain: [SmoothValue; 3],
-    stem_values: [f32; 3],
+    stem_gain: [SmoothValue; 4],
+    stem_values: [f32; 4],
     touching: bool,
     scratch_speed: f64,
     slip_position: f64,
@@ -117,6 +121,29 @@ struct DeckRt {
     last_music_blend: f32,
     transition_tail: Vec<[f32; 2]>,
     tail_index: usize,
+}
+
+#[derive(Default)]
+struct EjectTail {
+    output: [f32; 2],
+    monitor: [f32; 2],
+    remaining: u32,
+    length: u32,
+}
+
+impl EjectTail {
+    fn next(&mut self) -> ([f32; 2], [f32; 2]) {
+        if self.remaining == 0 {
+            return ([0.; 2], [0.; 2]);
+        }
+        self.remaining -= 1;
+        let t = self.remaining as f32 / self.length as f32;
+        let gain = t * t * (3. - 2. * t);
+        (
+            self.output.map(|s| s * gain),
+            self.monitor.map(|s| s * gain),
+        )
+    }
 }
 
 pub(crate) struct AudioRt {
@@ -148,12 +175,13 @@ struct AtomicFx {
 
 struct DeckSlot {
     stems: Mutex<Option<Arc<stems::PreparedStems>>>,
-    stem_gain: [AtomicU32; 3],
+    stem_gain: [AtomicU32; 4],
     beat_grid: Mutex<Option<sync::BeatGrid>>,
     buffer: Mutex<Option<Arc<AudioBuffer>>>,
     title: Mutex<Option<String>>,
     artist: Mutex<Option<String>>,
     track_id: AtomicU64,
+    load_revision: AtomicU64,
     playing: AtomicBool,
     playhead: AtomicU64,    // frames * 65536
     rate_micro: AtomicU32,  // rate * 1000000

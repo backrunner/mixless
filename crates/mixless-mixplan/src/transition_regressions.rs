@@ -646,8 +646,16 @@ fn technique_variety_is_deterministic() {
     // Identical inputs must produce an identical plan — variety is a hash of
     // the pair and the exit, never a random choice.
     let (a, b) = spinback_pair(1, 2, Some(32));
-    let first = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
-    let second = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    let first = Planner::with_options(PlannerOptions {
+        live_moves: crate::LiveMoves::Active,
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    let second = Planner::with_options(PlannerOptions {
+        live_moves: crate::LiveMoves::Active,
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
     let first = first.summary.expect("first plan").strategy;
     assert_eq!(first, second.summary.expect("repeat plan").strategy);
     // The same fixture family with different track ids must rotate between
@@ -656,7 +664,17 @@ fn technique_variety_is_deterministic() {
     let mut strategies = std::collections::HashSet::new();
     for id in (1..20).step_by(2) {
         let (a, b) = spinback_pair_at(id, id + 1, Some(32), 100.);
-        let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        let p = Planner::with_options(PlannerOptions {
+            live_moves: crate::LiveMoves::Active,
+            ..Default::default()
+        })
+        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        let subtle =
+            Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert_ne!(
+            subtle.summary.as_ref().map(|s| s.strategy),
+            Some(StrategyId::Spinback)
+        );
         strategies.insert(
             p.summary
                 .unwrap_or_else(|| panic!("pair {id}/{}: {:?}", id + 1, p.failure_reason))

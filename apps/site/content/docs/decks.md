@@ -39,7 +39,7 @@ Choose waveform placement and visibility in General preferences. Artwork appears
 
 ## Stem controls
 
-Prepared stems expose **VOCAL**, **DRUMS**, and **INST** gain. They share the deck's transport. With all voices at unity, the original audio is preserved. Preparation happens locally and can continue while you play.
+Prepared stems expose **VOCAL**, **DRUMS**, **BASS**, and **OTHER** gain in a 2×2 control grid. They share the deck's transport. With all voices at unity, the original audio is preserved. Preparation happens locally and can continue while you play.
 
 ## Effects
 

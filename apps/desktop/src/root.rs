@@ -165,6 +165,7 @@ impl Render for UiState {
         let audio_menu = self.render_audio_menu(cx);
         let track_menu = self.render_track_menu(window, cx);
         let playlist_menu = self.render_playlist_menu(window, cx);
+        let deck_menu = self.render_deck_menu(window, cx);
         let remove_playlist_confirm = self.render_remove_playlist_confirm(cx);
         let error = self.error.clone();
         let update_notice = self.update_notice.clone();
@@ -191,6 +192,21 @@ impl Render for UiState {
                         s.audio.open = false;
                         cx.notify();
                     }
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.deck_menu.is_some() {
+                    match ev.keystroke.key.as_str() {
+                        "escape" => s.deck_menu = None,
+                        "enter" => {
+                            let target = s.deck_menu.as_ref().unwrap().target;
+                            if s.unload_block(target).is_none() {
+                                s.unload_deck(target, cx);
+                            }
+                        }
+                        _ => {}
+                    }
+                    cx.notify();
                     cx.stop_propagation();
                     return;
                 }
@@ -296,6 +312,7 @@ impl Render for UiState {
             .when_some(audio_menu, |el, menu| el.child(menu))
             .when_some(track_menu, |el, menu| el.child(menu))
             .when_some(playlist_menu, |el, menu| el.child(menu))
+            .when_some(deck_menu, |el, menu| el.child(menu))
             .when_some(remove_playlist_confirm, |el, modal| el.child(modal))
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))

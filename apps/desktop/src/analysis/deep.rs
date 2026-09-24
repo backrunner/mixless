@@ -157,7 +157,8 @@ fn job(core: &Arc<AppCore>, id: TrackId) {
 }
 
 fn queueable(core: &AppCore, id: TrackId) -> bool {
-    core.stems.is_some()
+    mixless_stems::inference_supported()
+        && core.stems.is_some()
         && core.settings.get().deep_analysis
         && core
             .analysis
@@ -291,7 +292,7 @@ fn run(core: &AppCore, id: TrackId, generation: u64) -> Result<PreparedTrack, St
     if analysis
         .stems
         .as_ref()
-        .is_some_and(mixless_stems::is_current)
+        .is_some_and(mixless_stems::compatible_evidence)
     {
         // Regenerating evicted PCM must not blend the same bar evidence twice.
         analysis.stems = Some(evidence);

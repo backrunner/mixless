@@ -1,6 +1,6 @@
 //! Horizontal track overview and vertical performance waveform lanes.
 
-use gpui::{IntoElement, SharedString, prelude::*, px};
+use gpui::{IntoElement, MouseButton, SharedString, prelude::*, px};
 use mixless_protocol::DeckId;
 
 use super::{deck_label, fmt_time};
@@ -136,6 +136,13 @@ impl UiState {
             );
 
         gpui::div()
+            .id(SharedString::from(format!("wave-strip-menu-{deck:?}")))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |s, ev: &gpui::MouseDownEvent, window, cx| {
+                    s.open_deck_menu(deck, ev.position, window, cx);
+                }),
+            )
             .flex()
             .flex_none()
             .h(px(height))
@@ -182,6 +189,13 @@ impl UiState {
         };
 
         gpui::div()
+            .id(SharedString::from(format!("vertical-wave-menu-{deck:?}")))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |s, ev: &gpui::MouseDownEvent, window, cx| {
+                    s.open_deck_menu(deck, ev.position, window, cx);
+                }),
+            )
             .w_full()
             .flex()
             .flex_col()

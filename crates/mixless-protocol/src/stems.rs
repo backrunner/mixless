@@ -1,11 +1,28 @@
 use serde::{Deserialize, Serialize};
 
+/// Legacy instrument controls included bass. Preserve that meaning when reading
+/// three-lane snapshots/plans; new output always contains four independent lanes.
+pub(crate) fn four_lanes<'de, D, T>(deserializer: D) -> Result<[T; 4], D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Clone,
+{
+    let mut values = Vec::<T>::deserialize(deserializer)?;
+    if values.len() == 3 {
+        values.push(values[2].clone());
+    }
+    values
+        .try_into()
+        .map_err(|_| serde::de::Error::custom("expected three legacy or four stem lanes"))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StemKind {
     Vocals,
     Drums,
     Instruments,
+    Bass,
 }
 impl StemKind {
     pub fn index(self) -> usize {
@@ -13,7 +30,28 @@ impl StemKind {
             Self::Vocals => 0,
             Self::Drums => 1,
             Self::Instruments => 2,
+            Self::Bass => 3,
         }
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    #[test]
+    fn legacy_plan_instrument_lane_also_controls_bass() {
+        let line = |v| serde_json::json!({"nodes":[[0.0,v]]});
+        let old = serde_json::json!({"outgoing":[line(1.),line(0.5),line(0.2)],
+            "incoming":[line(0.),line(1.),line(0.8)]});
+        let mix: crate::StemMix = serde_json::from_value(old).unwrap();
+        assert_eq!(mix.outgoing[3].sample(0.), 0.2);
+        assert_eq!(mix.incoming[3].sample(0.), 0.8);
+        assert_eq!(
+            serde_json::to_value(mix).unwrap()["outgoing"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
     }
 }
 

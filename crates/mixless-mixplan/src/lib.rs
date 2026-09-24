@@ -16,6 +16,8 @@ pub mod constraints;
 mod continuity;
 mod drops;
 mod duration;
+mod energy;
+mod eq;
 mod filtered;
 mod grid;
 mod lookahead;
@@ -68,6 +70,8 @@ pub struct PlannerOptions {
     /// Both decks will play aligned stem buffers, enabling drum-layered blends
     /// where tonal material would otherwise clash.
     pub stem_playback: bool,
+    /// Automatic headline accents require Active; explicit strategies remain available.
+    pub live_moves: LiveMoves,
 }
 impl Default for PlannerOptions {
     fn default() -> Self {
@@ -80,6 +84,7 @@ impl Default for PlannerOptions {
             earliest_outgoing_sec: 0.0,
             outgoing_entry_sec: 0.0,
             stem_playback: false,
+            live_moves: LiveMoves::Subtle,
         }
     }
 }
@@ -150,6 +155,7 @@ impl Planner {
     pub fn plan_next(&self, ctx: &PlanContext<'_>) -> MixPlan {
         let mut plan = self.plan_next_base(ctx);
         stem_mix::arrange(ctx, &mut plan);
+        eq::arrange(ctx, &mut plan);
         plan
     }
 
@@ -393,6 +399,10 @@ impl Planner {
         }
         let out_sec = ga.sec(out_beat);
         let in_sec = gb.sec(in_beat);
+        if user_range(ctx.cues_out, a.sample_rate).is_none() && !phrasing::exit_boundary(a, out_sec)
+        {
+            return None;
+        }
         let mut n = strategy.default_bars();
         let mut required = 1;
         if let Some((min, _)) = user_range(ctx.cues_out, a.sample_rate) {

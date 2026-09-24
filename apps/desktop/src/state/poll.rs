@@ -17,6 +17,7 @@ impl UiState {
         changed |= self.poll_library_order();
         changed |= self.poll_library();
         changed |= self.poll_library_actions();
+        changed |= self.poll_package();
         changed |= self.poll_import_retries();
         changed |= self.poll_update();
         if self.library_previews.poll() {
@@ -260,6 +261,8 @@ impl UiState {
                 }
             }
             if finished {
+                self.active_spotify = None;
+                self.active_playlist_sync = None;
                 self.refresh_tracks();
                 self.start_next_import();
             } else {

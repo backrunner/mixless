@@ -31,6 +31,10 @@ fn technique(strategy: S) -> &'static str {
 /// One-line transition summary plus the detail rows behind it.
 #[derive(Clone)]
 struct Transition {
+    out: DeckId,
+    incoming: DeckId,
+    name: &'static str,
+    paused: bool,
     summary: String,
     lines: Vec<String>,
     echo: Option<String>,
@@ -45,13 +49,20 @@ impl gpui::Render for AutomixTip {
             .py_2()
             .rounded(px(4.))
             .bg(theme::PANEL_RAISED)
+            .border_1()
+            .border_color(theme::LINE)
             .flex()
             .flex_col()
             .gap_1()
             .text_size(px(10.))
             .text_color(theme::MUTED)
             .whitespace_normal()
-            .child(div().text_color(theme::TEXT).child(self.0.summary.clone()))
+            .child(
+                div()
+                    .text_color(theme::TEXT)
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(self.0.summary.clone()),
+            )
             .children(self.0.lines.iter().map(|line| div().child(line.clone())));
         if let Some(echo) = &self.0.echo {
             tip = tip.child(div().text_color(theme::ACCENT).child(echo.clone()));
@@ -81,7 +92,7 @@ impl Transition {
                 .map_or("Finish transition", |s| s.label.as_str());
             format!("{stage} · {:.0}%", snapshot.automix_progress * 100.)
         };
-        let name = plan
+        let name: &'static str = plan
             .summary
             .as_ref()
             .map(|s| technique(s.strategy))
@@ -126,6 +137,10 @@ impl Transition {
             )
         });
         Self {
+            out,
+            incoming,
+            name,
+            paused: snapshot.automix_paused,
             summary,
             lines,
             echo,
@@ -167,22 +182,52 @@ impl UiState {
                 .tooltip(move |_, cx| cx.new(|_| TextTip(status.clone())).into())
                 .into_any_element();
         };
+        let live = if transition.paused {
+            theme::WARN
+        } else {
+            theme::LED_GREEN
+        };
+        let segment = |color, text: &'static str| div().flex_none().text_color(color).child(text);
         div()
             .id("automix-transition")
-            .min_w_0()
-            .w(px(180.))
-            .flex_shrink()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .h(px(20.))
+            .max_w(px(200.))
             .overflow_hidden()
-            .px_2()
-            .py(px(2.))
-            .rounded(px(4.))
+            .whitespace_nowrap()
+            .px(px(9.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(theme::with_alpha(live, 0.3))
+            .bg(theme::with_alpha(live, 0.06))
             .text_size(px(10.))
-            .text_color(theme::LED_GREEN)
-            .hover(|s| s.bg(theme::PANEL_RAISED))
+            .hover(|s| {
+                s.border_color(theme::with_alpha(live, 0.55))
+                    .bg(theme::with_alpha(live, 0.12))
+            })
+            .child(div().flex_none().size(px(5.)).rounded_full().bg(live))
             .child(
-                ellipsized_text(transition.summary.clone())
-                    .w_full()
-                    .h(px(14.)),
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(segment(
+                        theme::deck_color(transition.out),
+                        label(transition.out),
+                    ))
+                    .child(segment(theme::MUTED, "→"))
+                    .child(segment(
+                        theme::deck_color(transition.incoming),
+                        label(transition.incoming),
+                    ))
+                    .child(segment(theme::MUTED, "·"))
+                    .child(segment(theme::TEXT, transition.name)),
             )
             .tooltip(move |_, cx| cx.new(|_| AutomixTip(transition.clone())).into())
             .into_any_element()

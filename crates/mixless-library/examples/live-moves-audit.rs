@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let lane = match m.lane {
                 PerformanceLane::Filter => "filter".to_string(),
                 PerformanceLane::Stem(s) => format!("stem/{s:?}"),
+                PerformanceLane::Eq(band) => format!("eq/{band:?}"),
             };
             let peak = (0..=200)
                 .map(|i| {

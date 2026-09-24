@@ -6,8 +6,13 @@ use crate::{default_fx, CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve};
 pub struct DeckSnapshot {
     #[serde(default)]
     pub stems_ready: bool,
-    #[serde(default = "default_stem_gain")]
-    pub stem_gain: [f32; 3],
+    #[serde(default)]
+    pub bass_ready: bool,
+    #[serde(
+        default = "default_stem_gain",
+        deserialize_with = "crate::stems::four_lanes"
+    )]
+    pub stem_gain: [f32; 4],
     pub track_id: Option<TrackId>,
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -99,7 +104,8 @@ impl Default for DeckSnapshot {
     fn default() -> Self {
         Self {
             stems_ready: false,
-            stem_gain: [1.; 3],
+            bass_ready: false,
+            stem_gain: [1.; 4],
             track_id: None,
             title: None,
             artist: None,
@@ -154,8 +160,8 @@ impl Default for DeckSnapshot {
     }
 }
 
-fn default_stem_gain() -> [f32; 3] {
-    [1.; 3]
+fn default_stem_gain() -> [f32; 4] {
+    [1.; 4]
 }
 
 fn default_cue_kinds() -> [CueKind; 8] {

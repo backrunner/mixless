@@ -194,24 +194,11 @@ impl Evidence {
         } else {
             (out_phrase + in_phrase) / 2.
         };
-        let energy = match (rms_a, rms_b) {
-            (Some(a), Some(b)) => (1. - (20. * (a / b).log10()).abs() / 18.).clamp(0., 1.),
-            _ => 0.5,
-        };
-        // Equal RMS is not sufficient: two quiet sections can match perfectly
-        // and still empty the floor. Compare each window with its own track,
-        // so differences between source masters do not bias the choice.
-        let weakness = |track: &TrackAnalysis, rms: Option<f32>| {
-            rms.zip(average_rms(track, 0., track.duration_sec))
-                .filter(|(local, reference)| *local > 0. && *reference > 0.001)
-                .map_or(0., |(local, reference)| {
-                    ((20. * (reference / local).log10() - 3.) / 9.).clamp(0., 1.)
-                })
-        };
+        let energy = crate::energy::balance([rms_a, rms_b]);
         let quiet_pair = if drop_cut {
             0.
         } else {
-            weakness(a, rms_a).min(weakness(b, rms_b))
+            crate::energy::weakness(a, rms_a).min(crate::energy::weakness(b, rms_b))
         };
         let kick = match (feature(a, end - 0.01), feature(b, bin + 0.01)) {
             (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),

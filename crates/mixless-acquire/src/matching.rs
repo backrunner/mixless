@@ -20,6 +20,41 @@ pub fn normalize(value: &str) -> String {
         .join(" ")
 }
 
+/// Brackets carry either display decoration/featured credits or recording
+/// identity. Keep edition text so `Song - X Remix` equals `Song (X Remix)`.
+fn recording_title(value: &str) -> String {
+    let mut chunks = Vec::new();
+    let mut outside = String::new();
+    let mut bracket = String::new();
+    let mut depth = 0usize;
+    for c in value.chars() {
+        match c {
+            '(' | '[' => {
+                if depth == 0 {
+                    chunks.push(normalize(&outside));
+                    outside.clear();
+                    bracket.clear();
+                }
+                depth += 1;
+            }
+            ')' | ']' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 && !versions(&bracket).is_empty() {
+                    chunks.push(normalize(&bracket));
+                }
+            }
+            _ if depth > 0 => bracket.push(c),
+            _ => outside.push(c),
+        }
+    }
+    chunks.push(normalize(&outside));
+    chunks
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn versions(value: &str) -> Vec<&'static str> {
     let words = value
         .nfkc()
@@ -60,12 +95,12 @@ pub fn local_match(job: &ResolveJob, track: &Track) -> bool {
     {
         return true;
     }
-    let title = normalize(&job.title);
+    let title = recording_title(&job.title);
     let artist = normalize(&job.artist);
     !title.is_empty()
         && !artist.is_empty()
         && artist != "unknown"
-        && title == normalize(&track.title)
+        && title == recording_title(&track.title)
         && artist == normalize(&track.artist)
         && versions(&job.title) == versions(&track.title)
         && job.duration_ms > 0
@@ -83,7 +118,7 @@ pub struct MatchKey {
 }
 pub fn job_key(job: &ResolveJob) -> MatchKey {
     MatchKey {
-        title: normalize(&job.title),
+        title: recording_title(&job.title),
         artist: normalize(&job.artist),
         isrc: job
             .isrc
@@ -94,7 +129,7 @@ pub fn job_key(job: &ResolveJob) -> MatchKey {
 }
 pub fn track_key(track: &Track) -> MatchKey {
     MatchKey {
-        title: normalize(&track.title),
+        title: recording_title(&track.title),
         artist: normalize(&track.artist),
         isrc: track
             .isrc
@@ -124,12 +159,12 @@ pub fn candidate_score(
     {
         return None;
     }
-    let want_title = normalize(&job.title);
+    let want_title = recording_title(&job.title);
     // Spotify credits every collaborator, while Topic channels commonly credit
     // only the lead artist. Keep a lead-artist gate instead of demanding the
     // entire comma-separated credit string verbatim.
     let want_artist = normalize(primary_artist(&job.artist));
-    let got_title = normalize(title);
+    let got_title = recording_title(title);
     let got_artist = normalize(artist.trim_end_matches(" - Topic"));
     if want_title.is_empty() || want_artist.is_empty() || want_artist == "unknown" {
         return None;
@@ -189,6 +224,44 @@ mod tests {
             assert!(candidate_score(&j, title, artist, duration).is_none());
         }
     }
+    #[test]
+    fn named_remixes_match_across_bracket_and_dash_notation() {
+        let mut j = job();
+        j.title = "Fire Away (feat. Slayyyter) - Frost Children Remix".into();
+        j.artist = "Madeon, Frost Children, Slayyyter".into();
+        j.duration_ms = 196800;
+        for title in [
+            "Fire Away (Frost Children Remix)",
+            "Madeon, Frost Children - \"Fire Away (feat. Slayyyter) [Frost Children Remix]\" {Official Visualiser}",
+            "Madeon – Fire Away (ft. Slayyyter) [Frost Children Remix] Lyrics",
+        ] {
+            assert!(
+                candidate_score(&j, title, "Madeon", 197000).is_some(),
+                "{title}"
+            );
+        }
+        for title in [
+            "Fire Away",
+            "Fire Away (Other Remix)",
+            "Fire Away (Remix)",
+            "Fire Away (Frost Children Remix) (Instrumental)",
+            "Fire Away (Frost Children Remix) (Live)",
+        ] {
+            assert!(
+                candidate_score(&j, title, "Madeon", 197000).is_none(),
+                "{title}"
+            );
+        }
+        assert!(
+            candidate_score(&j, "Fire Away (Frost Children Remix)", "Cover Band", 197000).is_none()
+        );
+        assert!(
+            candidate_score(&j, "Fire Away (Frost Children Remix)", "Madeon", 208000).is_none()
+        );
+        j.title = "Fire Away (Frost Children Remix)".into();
+        assert!(candidate_score(&j, "Fire Away - Other Remix", "Madeon", 197000).is_none());
+    }
+
     #[test]
     fn normalization_handles_unicode_and_preserves_edition_checks() {
         assert_eq!(normalize("Ｆｕｌｌ－Ｗｉｄｔｈ (feat. X)"), "full width");

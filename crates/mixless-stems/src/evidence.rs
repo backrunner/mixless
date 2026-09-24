@@ -5,7 +5,7 @@ use mixless_protocol::{StemAnalysis, StemFrame, StemKind, StemNote};
 #[cfg(stems_ort)]
 use rustfft::{num_complex::Complex, FftPlanner};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 #[cfg(stems_ort)]
 pub fn extract(stems: &Stems, mut notes: Vec<StemNote>) -> StemAnalysis {
@@ -75,7 +75,7 @@ pub fn extract(stems: &Stems, mut notes: Vec<StemNote>) -> StemAnalysis {
     }
     notes.sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec));
     for note in &notes {
-        let stem = note.stem.index();
+        let stem = note.stem.index().min(2);
         if note.stem == StemKind::Drums {
             continue;
         }

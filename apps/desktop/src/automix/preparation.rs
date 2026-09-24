@@ -1,4 +1,4 @@
-//! Prepare adjacent transitions, including the wraparound, before AUTO starts.
+//! Prepare one continuous set and publish its dependent decisions together.
 use super::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
@@ -6,20 +6,51 @@ use std::sync::{
     mpsc::{Sender, channel},
 };
 
+#[derive(Clone)]
+pub(super) struct ScheduledPair {
+    pub key: String,
+    pub plan: Arc<mixless_protocol::MixPlan>,
+}
+
+#[derive(Default)]
+struct Sequence {
+    pairs: Vec<Option<ScheduledPair>>,
+    // The engine owns this decision. New evidence may only change its suffix.
+    anchor: Option<Arc<mixless_protocol::MixPlan>>,
+    following: Option<Vec<TrackId>>,
+}
+
 #[derive(Default)]
 pub struct Preparation {
     playlist: Mutex<Vec<TrackId>>,
     revision: AtomicU64,
+    input_revision: AtomicU64,
     sender: OnceLock<Sender<(u64, Vec<TrackId>)>>,
-    plans: Mutex<HashMap<String, mixless_protocol::MixPlan>>,
-    order: Mutex<VecDeque<String>>,
-    previews: Mutex<Vec<Option<Arc<mixless_protocol::MixPlan>>>>,
+    pub(super) plans: Mutex<HashMap<String, mixless_protocol::MixPlan>>,
+    pub(super) order: Mutex<VecDeque<String>>,
+    sequence: Mutex<Sequence>,
     pub preview_revision: AtomicU64,
 }
 
 impl Preparation {
     pub fn previews(&self) -> Vec<Option<Arc<mixless_protocol::MixPlan>>> {
-        self.previews.lock().expect("plan previews").clone()
+        self.sequence
+            .lock()
+            .expect("set plan")
+            .pairs
+            .iter()
+            .map(|pair| pair.as_ref().map(|p| p.plan.clone()))
+            .collect()
+    }
+    pub(super) fn scheduled(&self, key: &str, earliest: f32) -> Option<ScheduledPair> {
+        self.sequence
+            .lock()
+            .expect("set plan")
+            .pairs
+            .iter()
+            .flatten()
+            .find(|p| p.key == key && p.plan.t_in_a >= earliest)
+            .cloned()
     }
     pub(super) fn has_selection(&self) -> bool {
         self.revision.load(Ordering::Acquire) > 0
@@ -27,21 +58,106 @@ impl Preparation {
     pub(super) fn tracks(&self) -> Vec<TrackId> {
         self.playlist.lock().expect("playlist preparation").clone()
     }
+    pub(super) fn revision(&self) -> u64 {
+        self.input_revision.load(Ordering::Acquire)
+    }
+}
+
+pub(super) fn following(
+    core: &Arc<AppCore>,
+    incoming: TrackId,
+    order: &order::TrackOrder,
+    count: usize,
+    shuffle: bool,
+) {
+    if core.mix_preparation.tracks().is_empty() {
+        return;
+    }
+    let mut queue = vec![incoming];
+    queue.extend(order.preview(count, shuffle));
+    if queue.len() > 1 && queue.last() == Some(&incoming) {
+        queue.pop();
+    }
+    let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
+    if sequence.following.as_ref() == Some(&queue) {
+        return;
+    }
+    sequence.following = Some(queue);
+    drop(sequence);
+    prepare(core, core.mix_preparation.tracks(), true, false);
 }
 
 pub fn prepare_playlist(core: &Arc<AppCore>, tracks: Vec<TrackId>) {
-    prepare(core, tracks, false);
+    prepare(core, tracks, false, true);
 }
 
 pub fn refresh_previews(core: &Arc<AppCore>) {
-    prepare(core, core.mix_preparation.tracks(), true);
+    prepare(core, core.mix_preparation.tracks(), true, true);
 }
 
-fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
+pub(super) fn reset_session(core: &Arc<AppCore>) {
+    let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
+    sequence.following = None;
+    let changed = sequence.anchor.take().is_some();
+    drop(sequence);
+    if changed {
+        prepare(core, core.mix_preparation.tracks(), true, false);
+    }
+}
+
+/// Called only after successful engine publication, under automix_commit.
+pub(super) fn committed(core: &Arc<AppCore>, plan: Arc<mixless_protocol::MixPlan>) {
+    let tracks = core.mix_preparation.tracks();
+    if tracks.is_empty() {
+        return;
+    }
+    let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
+    let pair = plan.summary.as_ref().map(|s| s.pair);
+    let index = adjacent_index(&tracks, pair);
+    // Reuse the still-valid forecast, but never combine a changed entrance
+    // with an old exit. The worker replaces the entire suffix atomically.
+    if let Some(i) = index {
+        let unchanged = sequence
+            .pairs
+            .get(i)
+            .and_then(Option::as_ref)
+            .is_some_and(|old| Arc::ptr_eq(&old.plan, &plan));
+        if !unchanged {
+            sequence.pairs = vec![None; tracks.len()];
+        }
+        if sequence.pairs.len() != tracks.len() {
+            sequence.pairs.resize(tracks.len(), None);
+        }
+        let key = sequence.pairs[i]
+            .as_ref()
+            .map_or(String::new(), |p| p.key.clone());
+        sequence.pairs[i] = Some(ScheduledPair {
+            key,
+            plan: plan.clone(),
+        });
+    } else {
+        // Shuffle has no honest ordered-set forecast. Its committed pair is
+        // shown by the active overlay until a concrete order is available.
+        sequence.pairs = vec![None; tracks.len()];
+    }
+    sequence.anchor = Some(plan);
+    core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel);
+    core.mix_preparation
+        .preview_revision
+        .fetch_add(1, Ordering::Release);
+    drop(sequence);
+    prepare(core, core.mix_preparation.tracks(), true, false);
+}
+
+fn adjacent_index(tracks: &[TrackId], pair: Option<(TrackId, TrackId)>) -> Option<usize> {
+    let pair = pair?;
+    (0..tracks.len()).find(|&i| (tracks[i], tracks[(i + 1) % tracks.len()]) == pair)
+}
+
+fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool, input: bool) {
     for id in &tracks {
         crate::analysis::schedule_deep(core, *id);
     }
-    // The playlist head is what AUTO will actually play first.
     for id in tracks.iter().take(2) {
         crate::analysis::promote_deep(core, *id);
     }
@@ -50,16 +166,29 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
         .playlist
         .lock()
         .expect("playlist preparation");
-    if *current == tracks && !force {
+    let changed = *current != tracks;
+    if !changed && !force {
         return;
     }
+    if input {
+        core.mix_preparation
+            .input_revision
+            .fetch_add(1, Ordering::AcqRel);
+    }
     *current = tracks.clone();
-    drop(current);
+    let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
     let revision = core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel) + 1;
-    *core.mix_preparation.previews.lock().expect("plan previews") = vec![None; tracks.len()];
-    core.mix_preparation
-        .preview_revision
-        .fetch_add(1, Ordering::Release);
+    if changed {
+        sequence.following = None;
+        sequence.pairs = vec![None; tracks.len()];
+        core.mix_preparation
+            .preview_revision
+            .fetch_add(1, Ordering::Release);
+    }
+    drop(sequence);
+    drop(current);
+    // Analysis completions coalesce. A same-set refresh keeps the last complete
+    // forecast visible, rather than blanking and republishing each pair.
     let sender = core.mix_preparation.sender.get_or_init(|| {
         let (tx, rx) = channel::<(u64, Vec<TrackId>)>();
         let weak = Arc::downgrade(core);
@@ -70,56 +199,21 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
                 }
                 let Some(core) = weak.upgrade() else { break };
                 let (revision, tracks) = request;
-                // Adjacent pair planning is independent; bound it to two
-                // workers so analysis and the realtime/UI threads retain CPU.
-                let next = std::sync::atomic::AtomicUsize::new(0);
-                std::thread::scope(|scope| {
-                    for _ in 0..tracks.len().min(2) {
-                        let (core, tracks, next) = (&core, &tracks, &next);
-                        scope.spawn(move || {
-                            loop {
-                                if core.mix_preparation.revision.load(Ordering::Acquire) != revision
-                                {
-                                    break;
-                                }
-                                let i = next.fetch_add(1, Ordering::Relaxed);
-                                if i >= tracks.len() {
-                                    break;
-                                }
-                                let a = crate::analysis::prepare(core, tracks[i]);
-                                let b =
-                                    crate::analysis::prepare(core, tracks[(i + 1) % tracks.len()]);
-                                if let (Ok(a), Ok(b)) = (a, b) {
-                                    let plan = pair(
-                                        core,
-                                        &a,
-                                        &b,
-                                        0.,
-                                        PerformanceOffset::identity(),
-                                        PerformanceOffset::identity(),
-                                    );
-                                    let mut previews = core
-                                        .mix_preparation
-                                        .previews
-                                        .lock()
-                                        .expect("plan previews");
-                                    if core.mix_preparation.revision.load(Ordering::Acquire)
-                                        == revision
-                                    {
-                                        previews[i] = plan.ok().map(Arc::new);
-                                        core.mix_preparation
-                                            .preview_revision
-                                            .fetch_add(1, Ordering::Release);
-                                    }
-                                }
-                            }
-                        });
-                    }
-                });
-                // The analysis queue otherwise leaves only the last songs in
-                // the PCM cache. Prime the start of the selected playlist too.
+                let active = || core.mix_preparation.revision.load(Ordering::Acquire) == revision;
+                let Some(pairs) = plan_sequence(&core, &tracks, &active) else {
+                    continue;
+                };
+                let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
+                if !active() {
+                    continue;
+                }
+                sequence.pairs = pairs;
+                core.mix_preparation
+                    .preview_revision
+                    .fetch_add(1, Ordering::Release);
+                drop(sequence);
                 for id in tracks.iter().take(2) {
-                    if core.mix_preparation.revision.load(Ordering::Acquire) != revision {
+                    if !active() {
                         break;
                     }
                     if let Ok(track) = crate::analysis::prepare(&core, *id) {
@@ -133,192 +227,167 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool) {
     let _ = sender.send((revision, tracks));
 }
 
-pub(super) fn pair(
-    core: &AppCore,
-    a: &crate::analysis::PreparedTrack,
-    b: &crate::analysis::PreparedTrack,
-    earliest: f32,
-    offset_a: PerformanceOffset,
-    offset_b: PerformanceOffset,
-) -> Result<mixless_protocol::MixPlan, String> {
-    let tracks = core.mix_preparation.tracks();
-    let following = tracks
-        .iter()
-        .position(|id| *id == b.track.id)
-        .and_then(|i| tracks.get((i + 1) % tracks.len()).copied());
-    pair_from_entry(
-        core, a, b, earliest, 0., offset_a, offset_b, following, false,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn pair_from_entry(
-    core: &AppCore,
-    a: &crate::analysis::PreparedTrack,
-    b: &crate::analysis::PreparedTrack,
-    earliest: f32,
-    entry: f32,
-    offset_a: PerformanceOffset,
-    offset_b: PerformanceOffset,
-    following: Option<TrackId>,
-    stem_playback: bool,
-) -> Result<mixless_protocol::MixPlan, String> {
-    // Track-level IN/OUT markers constrain the corresponding side only.
-    let ca: Vec<_> = core
-        .library
-        .cues(a.track.id)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter(|c| c.kind != mixless_protocol::CueKind::In)
-        .collect();
-    let cb: Vec<_> = core
-        .library
-        .cues(b.track.id)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter(|c| c.kind != mixless_protocol::CueKind::Out)
-        .collect();
-    // Read only current-version cached evidence. Do not stall playback for a
-    // third decode/model pass; the playlist preparation queue warms this cache.
-    let following_analysis = following.and_then(|id| {
-        core.library
-            .load_analysis(id, mixless_analyze::ANALYSIS_VERSION)
+fn stem_playback_ready(core: &AppCore, track: &crate::analysis::PreparedTrack) -> bool {
+    core.stems.as_ref().is_some_and(|processor| {
+        processor
+            .cached(&track.track.content_hash, track.analysis.duration_sec)
             .ok()
             .flatten()
-    });
-    let key = format!(
-        "{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{:?}:{:?}:{}",
-        entry.to_bits(),
-        core.analysis.content_revision.load(Ordering::Acquire),
-        a.track.id.0,
-        b.track.id.0,
-        a.track.content_hash,
-        b.track.content_hash,
-        offset_a,
-        offset_b,
-        serde_json::to_string(&ca).map_err(|e| e.to_string())?,
-        serde_json::to_string(&cb).map_err(|e| e.to_string())?,
-        following,
-        following_analysis
             .as_ref()
-            .map(|a| (&a.camelot, a.key_confidence, a.tempo.global_bpm)),
-        stem_playback,
-    );
-    let cached = core
-        .mix_preparation
-        .plans
-        .lock()
-        .expect("plans")
-        .get(&key)
-        .cloned();
-    let base = cached.unwrap_or_else(|| {
-        let plan = choose_plan(
-            a,
-            b,
-            &ca,
-            &cb,
-            offset_a,
-            offset_b,
-            0.,
-            entry,
-            false,
-            following_analysis.as_ref(),
-            stem_playback,
-        );
-        let mut plans = core.mix_preparation.plans.lock().expect("plans");
-        let mut order = core.mix_preparation.order.lock().expect("plan order");
-        if !plans.contains_key(&key) {
-            order.push_back(key.clone());
-        }
-        plans.insert(key.clone(), plan.clone());
-        while order.len() > 256 {
-            if let Some(old) = order.pop_front() {
-                plans.remove(&old);
-            }
-        }
-        plan
-    });
-    if base.failure_reason.is_none() && base.t_in_a >= earliest {
-        return Ok(base);
-    }
-    let plan = choose_plan(
-        a,
-        b,
-        &ca,
-        &cb,
-        offset_a,
-        offset_b,
-        earliest,
-        entry,
-        true,
-        following_analysis.as_ref(),
-        stem_playback,
-    );
-    if let Some(error) = &plan.failure_reason {
-        return Err(error.clone());
-    }
-    Ok(plan)
+            .is_some_and(mixless_stems::is_current)
+    })
 }
 
-fn choose_plan(
-    a: &crate::analysis::PreparedTrack,
-    b: &crate::analysis::PreparedTrack,
-    ca: &[mixless_protocol::Cue],
-    cb: &[mixless_protocol::Cue],
-    offset_a: PerformanceOffset,
-    offset_b: PerformanceOffset,
-    earliest: f32,
-    entry: f32,
-    fallback: bool,
-    following: Option<&mixless_protocol::TrackAnalysis>,
-    stem_playback: bool,
-) -> mixless_protocol::MixPlan {
-    let planner = mixless_mixplan::Planner::with_options(mixless_mixplan::PlannerOptions {
-        harmonic_key_shift: true,
-        earliest_outgoing_sec: earliest,
-        outgoing_entry_sec: entry,
-        stem_playback,
-        ..Default::default()
-    });
-    let mut best: Option<mixless_protocol::MixPlan> = None;
-    // A marked exit already behind the playhead cannot be used on this pass.
-    // Keep the analyzed future windows available when AUTO is enabled late.
-    let future: Vec<_> = ca
-        .iter()
-        .filter(|c| {
-            !(c.user_set
-                && c.kind == mixless_protocol::CueKind::Out
-                && c.frame as f32 / a.analysis.sample_rate.max(1) as f32 <= earliest)
-        })
-        .cloned()
-        .collect();
-    let outgoing = mixless_mixplan::cue_policy::cue_choices(&future, true);
-    let incoming = mixless_mixplan::cue_policy::cue_choices(cb, false);
-    for ca in &outgoing {
-        for cb in &incoming {
-            let ctx = mixless_mixplan::PlanContext {
-                outgoing: &a.analysis,
-                incoming: &b.analysis,
-                cues_out: ca,
-                cues_in: cb,
-                offset_a,
-                offset_b,
-            };
-            let mut plan = planner.plan_with_following(&ctx, following);
-            if fallback && plan.failure_reason.is_some() {
-                plan = mixless_mixplan::short_handoff(&ctx, earliest);
-            }
-            let score = |p: &mixless_protocol::MixPlan| {
-                if p.failure_reason.is_some() {
-                    -1.
-                } else {
-                    p.summary.as_ref().map_or(0., |s| s.score)
-                }
-            };
-            if best.as_ref().is_none_or(|old| score(&plan) > score(old)) {
-                best = Some(plan);
-            }
-        }
+// One second of wall-clock staging room after the prior mix releases the
+// other deck. This is an orchestration reserve, not a musical boundary rule.
+const STAGING_SECONDS: f32 = 1.;
+
+pub(super) fn plan_sequence(
+    core: &Arc<AppCore>,
+    tracks: &[TrackId],
+    active: &impl Fn() -> bool,
+) -> Option<Vec<Option<ScheduledPair>>> {
+    let following = core
+        .mix_preparation
+        .sequence
+        .lock()
+        .expect("set plan")
+        .following
+        .clone();
+    let tracks = following.as_deref().unwrap_or(tracks);
+    let mut pairs = vec![None; tracks.len()];
+    if tracks.len() < 2 {
+        return Some(pairs);
     }
-    best.unwrap()
+    let anchor = core
+        .mix_preparation
+        .sequence
+        .lock()
+        .expect("set plan")
+        .anchor
+        .clone();
+    let anchor_index = adjacent_index(
+        tracks,
+        anchor
+            .as_ref()
+            .and_then(|p| p.summary.as_ref().map(|s| s.pair)),
+    );
+    // Snapshot all analyses first, so following-track evidence is available
+    // for the very first decision as well as the last one.
+    let mut prepared = Vec::with_capacity(tracks.len());
+    let mut stems = Vec::with_capacity(tracks.len());
+    for id in tracks {
+        if !active() {
+            return None;
+        }
+        let track = crate::analysis::prepare(core, *id).ok();
+        let ready = track.as_ref().is_some_and(|t| stem_playback_ready(core, t));
+        prepared.push(track);
+        stems.push(ready);
+    }
+    let root = anchor
+        .as_ref()
+        .and_then(|p| p.summary.as_ref())
+        .map(|s| s.pair.0);
+    let (first, count, mut entry, mut earliest, mut offset_a) = if let Some(plan) = anchor {
+        let pair = plan.summary.as_ref()?.pair;
+        let Some(incoming) = tracks.iter().position(|id| *id == pair.1) else {
+            return Some(pairs);
+        };
+        let cursor = (plan.t_in_b, plan.t_end_b, plan.incoming_offset_end);
+        if let Some(i) = anchor_index {
+            pairs[i] = Some(ScheduledPair {
+                key: String::new(),
+                plan,
+            });
+        }
+        // A reorder or shuffle can make the armed pair non-adjacent. Continue
+        // from its actual incoming track, never from the nominal old neighbour.
+        (incoming, tracks.len() - 1, cursor.0, cursor.1, cursor.2)
+    } else {
+        let entry = prepared[0]
+            .as_ref()
+            .and_then(|t| {
+                cue_frame(core, t)
+                    .ok()
+                    .map(|frame| frame as f32 / t.analysis.sample_rate.max(1) as f32)
+            })
+            .unwrap_or(0.);
+        (
+            0,
+            tracks.len() - 1,
+            entry,
+            entry,
+            PerformanceOffset::identity(),
+        )
+    };
+    for step in 0..count {
+        if !active() {
+            return None;
+        }
+        let i = (first + step) % tracks.len();
+        let j = (i + 1) % tracks.len();
+        if Some(tracks[j]) == root {
+            break;
+        }
+        let (Some(a), Some(b)) = (&prepared[i], &prepared[j]) else {
+            break;
+        };
+        // A future set cannot pretend a manual OUT has already been missed.
+        // Leave the dependent suffix unplanned if the incoming mix consumes it.
+        let ready = earliest + STAGING_SECONDS * offset_a.rate;
+        if core.library.cues(a.track.id).ok()?.iter().any(|cue| {
+            cue.user_set
+                && cue.kind == mixless_protocol::CueKind::Out
+                && cue.frame as f32 / a.analysis.sample_rate.max(1) as f32 <= ready
+        }) {
+            break;
+        }
+        let pair = super::pair::scheduled_pair(
+            core,
+            a,
+            b,
+            ready,
+            entry,
+            offset_a,
+            PerformanceOffset::identity(),
+            Some(tracks[(j + 1) % tracks.len()]),
+            stems[i] && stems[j],
+        );
+        let pair = match pair {
+            Ok(pair) => pair,
+            Err(error) => {
+                tracing::debug!(outgoing = a.track.id.0, incoming = b.track.id.0, %error, "Set planning stopped at unavailable transition");
+                #[cfg(test)]
+                eprintln!(
+                    "Set planning {} -> {} stopped: {error}; entry={entry} ready={ready} offset={offset_a:?}",
+                    a.track.title, b.track.title
+                );
+                break;
+            }
+        };
+        #[cfg(test)]
+        if std::env::var_os("MIXLESS_SET_AUDIT_DB").is_some() {
+            eprintln!(
+                "Prepared {} -> {}: {:?}, {:.3}..{:.3} -> {:.3}..{:.3}, {:?}",
+                a.track.title,
+                b.track.title,
+                pair.plan.summary.as_ref().map(|s| s.strategy),
+                pair.plan.t_in_a,
+                pair.plan.t_out_a,
+                pair.plan.t_in_b,
+                pair.plan.t_end_b,
+                pair.plan.incoming_offset_end
+            );
+        }
+        entry = pair.plan.t_in_b;
+        earliest = pair.plan.t_end_b;
+        offset_a = pair.plan.incoming_offset_end;
+        pairs[i] = Some(pair);
+    }
+    Some(pairs)
 }
+
+#[cfg(test)]
+#[path = "preparation/tests.rs"]
+mod tests;

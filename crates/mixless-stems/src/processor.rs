@@ -27,7 +27,7 @@ fn busy(error: Error) -> Error {
 pub struct Processor {
     models: PathBuf,
     bundled_models: Option<PathBuf>,
-    cache: PathBuf,
+    pub(crate) cache: PathBuf,
     #[cfg_attr(not(stems_ort), allow(dead_code))]
     download: bool,
     states: Vec<Mutex<State>>,
@@ -69,7 +69,15 @@ impl Processor {
         self.cache.join(cache::key(content_hash))
     }
     pub fn cached(&self, content_hash: &str, duration: f32) -> Result<Option<StemAnalysis>> {
-        cache::read(&self.cache_path(content_hash), duration)
+        let current = cache::read(&self.cache_path(content_hash), duration)?;
+        if current.is_none() && !crate::inference_supported() {
+            cache::read_legacy(
+                &self.cache.join(cache::key_version(content_hash, 1)),
+                duration,
+            )
+        } else {
+            Ok(current)
+        }
     }
     pub fn analyze(
         &self,
@@ -137,7 +145,7 @@ impl Processor {
                 "Deep analysis supports tracks up to 20 minutes".into(),
             ));
         }
-        cache::reserve(&self.cache, (duration as f64 * 44100. * 24.).ceil() as u64)?;
+        cache::reserve(&self.cache, (duration as f64 * 44100. * 32.).ceil() as u64)?;
         if state.inference.is_none() {
             match Inference::load_with_cache(
                 &self.models,

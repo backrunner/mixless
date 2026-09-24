@@ -38,10 +38,9 @@ impl Engine {
             .stems
             .lock()
             .map_err(|_| EngineError::Protocol("stem publication lock poisoned"))?;
-        if current
-            .as_ref()
-            .is_some_and(|s| Arc::ptr_eq(&s.source, source))
-        {
+        if current.as_ref().is_some_and(|s| {
+            Arc::ptr_eq(&s.source, source) && (s.audio.has_bass() || !audio.has_bass())
+        }) {
             return Ok(true);
         }
         let next = Arc::new(PreparedStems {
@@ -53,6 +52,9 @@ impl Engine {
     }
     pub fn stems_ready(&self, deck: DeckId) -> bool {
         self.shared.decks[deck.index()].stems_ready()
+    }
+    pub fn four_stems_ready(&self, deck: DeckId) -> bool {
+        self.shared.decks[deck.index()].four_stems_ready()
     }
     fn retire_stems(&self, old: Option<Arc<PreparedStems>>) {
         let mut retired = self.retired_stems.lock().expect("retired stems");
@@ -70,6 +72,15 @@ impl Engine {
     }
 }
 impl DeckSlot {
+    pub(super) fn four_stems_ready(&self) -> bool {
+        if !self.stems_ready() {
+            return false;
+        }
+        self.stems
+            .try_lock()
+            .ok()
+            .is_some_and(|s| s.as_ref().is_some_and(|s| s.audio.has_bass()))
+    }
     pub(super) fn stems_ready(&self) -> bool {
         let Ok(buffer) = self.buffer.try_lock() else {
             return false;

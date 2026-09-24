@@ -24,24 +24,34 @@ impl UiState {
             .iter()
             .any(|playlist| playlist.id == menu.id && playlist.failed_imports > 0);
         let mut actions = vec![(0, "Duplicate", false)];
+        let spotify = self
+            .playlists
+            .iter()
+            .any(|p| p.id == menu.id && p.spotify_id.is_some());
+        let syncing = self.playlist_sync_pending(menu.id);
+        if spotify {
+            actions.push((
+                3,
+                if syncing {
+                    "Updating Spotify…"
+                } else {
+                    "Update from Spotify"
+                },
+                false,
+            ));
+        }
         if failed {
             actions.push((2, "Retry all failed tracks", false));
         }
+        actions.push((4, "Export package…", false));
         actions.push((1, "Remove playlist", true));
-        let width = 180.;
-        let height = 20. + actions.len() as f32 * (5. + theme::MENU_ROW_HEIGHT) + 8.;
-        let x = f32::from(menu.position.x)
-            .min(f32::from(window.viewport_size().width) - width - 8.)
-            .max(8.);
-        let y = f32::from(menu.position.y)
-            .min(f32::from(window.viewport_size().height) - height - 8.)
-            .max(8.);
         let tooltip = menu.name.clone();
         let mut panel = div()
-            .absolute()
-            .left(px(x))
-            .top(px(y))
-            .w(px(width))
+            .id("playlist-menu-panel")
+            .w(px(200.).min((window.viewport_size().width - px(16.)).max(px(0.))))
+            .max_h((window.viewport_size().height - px(16.)).max(px(0.)))
+            .overflow_y_scroll()
+            .overflow_x_hidden()
             .p(px(3.))
             .rounded(px(theme::POPUP_RADIUS))
             .bg(theme::PANEL_RAISED)
@@ -60,6 +70,7 @@ impl UiState {
                     .min_w_0()
                     .px(px(7.))
                     .h(px(20.))
+                    .flex_shrink_0()
                     .line_height(px(20.))
                     .text_size(px(10.))
                     .text_color(theme::MUTED)
@@ -67,30 +78,55 @@ impl UiState {
                     .tooltip(move |_, cx| cx.new(|_| TextTip(tooltip.clone())).into()),
             );
         for (action, label, danger) in actions {
-            panel = panel.child(div().h(px(1.)).my(px(2.)).mx(px(4.)).bg(theme::LINE));
+            let enabled = !syncing || action == 0;
+            panel = panel.child(
+                div()
+                    .flex_shrink_0()
+                    .h(px(1.))
+                    .my(px(2.))
+                    .mx(px(4.))
+                    .bg(theme::LINE),
+            );
             let id = menu.id;
             let name = menu.name.clone();
             panel = panel.child(
                 div()
                     .id(("playlist-menu-action", action as usize))
                     .h(px(theme::MENU_ROW_HEIGHT))
+                    .flex_shrink_0()
                     .px(px(7.))
                     .flex()
                     .items_center()
                     .rounded(px(2.))
                     .text_size(px(11.))
                     .line_height(px(16.))
-                    .text_color(if danger { theme::DANGER } else { theme::TEXT })
+                    .text_color(if !enabled {
+                        theme::MUTED
+                    } else if danger {
+                        theme::DANGER
+                    } else {
+                        theme::TEXT
+                    })
                     .child(label)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::LINE))
+                    .when(enabled, |el| {
+                        el.cursor_pointer().hover(|s| s.bg(theme::LINE))
+                    })
                     .on_click(cx.listener(move |s, _, window, cx| {
                         window.prevent_default();
                         cx.stop_propagation();
+                        if !enabled {
+                            return;
+                        }
                         s.playlist_menu = None;
                         match action {
                             0 => s.duplicate_playlist(id),
+                            4 => {
+                                s.package.all = false;
+                                s.package.selected = [id].into_iter().collect();
+                                s.show_import_modal = true;
+                            }
                             2 => s.retry_failed_imports(id),
+                            3 => s.refresh_spotify_playlist(id),
                             _ => s.confirm_remove_playlist = Some((id, name.clone())),
                         }
                         cx.notify();
@@ -118,7 +154,12 @@ impl UiState {
                         cx.notify();
                     }),
                 )
-                .child(panel)
+                .child(
+                    gpui::anchored()
+                        .position(menu.position)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(panel),
+                )
                 .into_any_element(),
         )
     }
