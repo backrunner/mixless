@@ -67,9 +67,9 @@ impl Settings {
         if self
             .audio
             .sample_rate
-            .is_some_and(|rate| !(8_000..=96_000).contains(&rate))
+            .is_some_and(|rate| !AudioConfig::supports_sample_rate(rate))
         {
-            return Err("Audio sample rate must be between 8000 and 96000 Hz.".into());
+            return Err("Audio sample rate must be between 8000 and 192000 Hz.".into());
         }
         if self
             .audio
@@ -77,6 +77,16 @@ impl Settings {
             .is_some_and(|frames| frames == 0 || frames > 8192)
         {
             return Err("Invalid audio buffer size.".into());
+        }
+        if self
+            .audio
+            .bit_depth
+            .is_some_and(|bits| !matches!(bits, 16 | 24 | 32 | 64))
+        {
+            return Err(
+                "Output bit depth must be 16, 24, 32, or 64 bits, as supported by the device."
+                    .into(),
+            );
         }
         if let Some(dir) = &self.download_dir
             && !dir.is_absolute()
@@ -194,6 +204,10 @@ mod tests {
         assert!(settings.fx_auto_fade);
         assert!(settings.midi.enabled);
         assert_eq!(settings.audio.master_device.as_deref(), Some("USB"));
+        assert_eq!(settings.audio.buffer_frames, None);
+        assert_eq!(settings.audio.bit_depth, None);
+        let legacy: Settings = serde_json::from_str(r#"{"audio":{"buffer_frames":null}}"#).unwrap();
+        assert_eq!(legacy.audio.buffer_frames, None);
         assert!(
             Settings {
                 cue_gain: f32::NAN,
@@ -215,11 +229,17 @@ mod tests {
                 s.show_fx = false;
                 s.fx_auto_fade = false;
                 s.midi.enabled = false;
+                s.audio.buffer_frames = Some(128);
+                s.audio.sample_rate = Some(48_000);
+                s.audio.bit_depth = Some(24);
             })
             .unwrap();
         let saved = SettingsStore::load(path).get();
         assert!(!saved.midi.enabled);
         assert!(!saved.fx_auto_fade);
+        assert_eq!(saved.audio.buffer_frames, Some(128));
+        assert_eq!(saved.audio.sample_rate, Some(48_000));
+        assert_eq!(saved.audio.bit_depth, Some(24));
         let invalid = SettingsStore::load(dir.join("missing/settings.json"));
         assert!(invalid.update(|s| s.show_fx = false).is_err());
         assert!(invalid.get().show_fx);

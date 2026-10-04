@@ -4,6 +4,7 @@ use super::*;
 
 fn spawn_output_thread(
     shared: Arc<Shared>,
+    audio_apply: Arc<Mutex<()>>,
 ) -> Result<std::sync::mpsc::Sender<AudioRequest>, EngineError> {
     let (tx, rx) = std::sync::mpsc::channel::<AudioRequest>();
     std::thread::Builder::new()
@@ -11,27 +12,101 @@ fn spawn_output_thread(
         .spawn(move || {
             // Own and drop CoreAudio streams on this thread, including during reconfiguration.
             let mut current: Option<device::OutputStreams> = None;
-            for (config, reply) in rx {
+            let mut active_config: Option<device::AudioConfig> = None;
+            let mut last_error = None;
+            loop {
+                let (config, reply, _refresh_guard) =
+                    match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+                        Ok((config, reply)) => (config, Some(reply), None),
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            let Some(config) = &active_config else {
+                                continue;
+                            };
+                            if !current
+                                .as_ref()
+                                .is_some_and(|streams| streams.needs_refresh(config))
+                            {
+                                continue;
+                            }
+                            // Share the gate used by manual changes and recording startup.
+                            let Ok(guard) = audio_apply.try_lock() else {
+                                continue;
+                            };
+                            if shared.recorder.status().active {
+                                continue;
+                            }
+                            (config.clone(), None, Some(guard))
+                        }
+                    };
                 let result = (|| {
-                    let next = device::OutputStreams::prepare(shared.clone(), &config)?;
                     if let Some(old) = &current {
                         old.pause()?;
                     }
+                    let mut next = match device::OutputStreams::prepare(shared.clone(), &config) {
+                        Ok(next) => next,
+                        Err(error) => {
+                            let restored = current.as_ref().is_some_and(|old| {
+                                if old.verify().and_then(|()| old.play()).is_ok() {
+                                    old.activate();
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                            shared.audio_failed.store(!restored, Ordering::Relaxed);
+                            if current.is_some() && !restored {
+                                return Err(device::DeviceError::Cpal(format!(
+                                    "{error}; previous audio output could not be restored"
+                                )));
+                            }
+                            return Err(error);
+                        }
+                    };
                     let previous_sr = shared.sample_rate.swap(next.sample_rate, Ordering::Relaxed);
                     shared.audio_failed.store(false, Ordering::Relaxed);
                     shared.cue_failed.store(false, Ordering::Relaxed);
-                    if let Err(error) = next.play() {
+                    if let Err(error) = next.play().and_then(|()| next.verify()) {
+                        // Roll back hardware before resuming the old stream.
+                        drop(next);
                         shared.sample_rate.store(previous_sr, Ordering::Relaxed);
-                        let restored = current.as_ref().is_some_and(|old| old.play().is_ok());
+                        let restored = current.as_ref().is_some_and(|old| {
+                            if old.verify().and_then(|()| old.play()).is_ok() {
+                                old.activate();
+                                true
+                            } else {
+                                false
+                            }
+                        });
                         shared.audio_failed.store(!restored, Ordering::Relaxed);
+                        if current.is_some() && !restored {
+                            return Err(device::DeviceError::Cpal(format!(
+                                "{error}; previous audio output could not be restored"
+                            )));
+                        }
                         return Err(error);
                     }
+                    next.commit();
+                    *shared.output_formats.lock().expect("output formats") =
+                        [Some(next.master_output.clone()), next.cue_output.clone()];
                     *shared.device_name.lock().expect("device name") = next.device_name.clone();
                     *shared.cue_device.lock().expect("cue device") = next.cue_name.clone();
                     current = Some(next);
                     Ok(())
                 })();
-                let _ = reply.send(result);
+                if result.is_ok() {
+                    active_config = Some(config);
+                    last_error = None;
+                }
+                if let Some(reply) = reply {
+                    let _ = reply.send(result);
+                } else if let Err(error) = result {
+                    let message = error.to_string();
+                    if last_error.as_ref() != Some(&message) {
+                        tracing::warn!("could not match changed system output: {message}");
+                        last_error = Some(message);
+                    }
+                }
             }
         })
         .map_err(|error| device::DeviceError::Cpal(error.to_string()))?;
@@ -53,6 +128,7 @@ impl Engine {
             audio_failed: AtomicBool::new(true),
             cue_failed: AtomicBool::new(false),
             cue_device: Mutex::new(None),
+            output_formats: Mutex::new([None, None]),
             sync_follower: AtomicU32::new(0),
             sync_factor: AtomicU32::new(1.0_f32.to_bits()),
             sync_align: AtomicBool::new(false),
@@ -106,14 +182,15 @@ impl Engine {
         drop(shared.last_block.lock().expect("meter initialization"));
         shared.automation.initialize_callback_lock();
         let actual_sr = shared.sample_rate.load(Ordering::Relaxed) as f32;
+        let audio_apply = Arc::new(Mutex::new(()));
         let engine = Self {
             audio_tx: if config.offline {
                 None
             } else {
-                Some(spawn_output_thread(shared.clone())?)
+                Some(spawn_output_thread(shared.clone(), audio_apply.clone())?)
             },
             audio_config: Mutex::new(device::AudioConfig::default()),
-            audio_apply: Mutex::new(()),
+            audio_apply,
             shared,
             rt: Mutex::new(AudioRt::new(actual_sr)),
             retired_buffers: Mutex::new(Vec::new()),

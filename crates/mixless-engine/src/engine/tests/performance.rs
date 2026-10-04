@@ -50,10 +50,13 @@ fn recording_callback_budget() {
 #[test]
 #[ignore = "release-only 60-second realtime workload benchmark"]
 fn audio_callback_budget() {
-    for (block_frames, scratch, brake) in
-        [(256, false, false), (128, true, false), (128, false, true)]
-    {
-        let engine = test_engine(48_000);
+    for (sample_rate, block_frames, scratch, brake) in [
+        (48_000, 256, false, false),
+        (48_000, 128, true, false),
+        (48_000, 128, false, true),
+        (192_000, 256, false, false),
+    ] {
+        let engine = test_engine(sample_rate);
         for deck in [DeckId::A, DeckId::B] {
             engine.dispatch(Command::PlayPause { deck }).unwrap();
             engine
@@ -155,9 +158,9 @@ fn audio_callback_budget() {
             }
         }
         let mut output = vec![0.0; block_frames * 2];
-        let mut timings = Vec::with_capacity(48_000 * 60 / block_frames);
+        let mut timings = Vec::with_capacity(sample_rate as usize * 60 / block_frames);
         let mut rt = engine.rt.lock().unwrap();
-        for block in 0..48_000 * 60 / block_frames {
+        for block in 0..sample_rate as usize * 60 / block_frames {
             if scratch && block % 512 == 0 {
                 for deck in [DeckId::A, DeckId::B] {
                     engine
@@ -190,9 +193,9 @@ fn audio_callback_budget() {
         }
         timings.sort_by(f64::total_cmp);
         let percentile = timings[timings.len() * 99 / 100];
-        let budget = block_frames as f64 / 48_000.0;
+        let budget = block_frames as f64 / sample_rate as f64;
         eprintln!(
-            "audio frames={block_frames} scratch={scratch} brake={brake} p50={:.3}ms p99={:.3}ms budget={:.3}ms ({:.1}%)",
+            "audio rate={sample_rate} frames={block_frames} scratch={scratch} brake={brake} p50={:.3}ms p99={:.3}ms budget={:.3}ms ({:.1}%)",
             timings[timings.len() / 2] * 1000.0,
             percentile * 1000.0,
             budget * 1000.0,

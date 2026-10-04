@@ -80,17 +80,24 @@ impl Preferences {
                         Selector::Rate,
                         self.audio
                             .sample_rate
-                            .map_or("Device native".into(), |rate| format!("{rate} Hz")),
+                            .map_or("System / device current".into(), |rate| format!("{rate} Hz")),
                         cx,
                     ),
                 ),
+                row(
+                    "Output bit depth",
+                    self.select(Selector::Depth, self.audio.bit_depth.map_or("System / device current".into(), |bits| format!("{bits}-bit")), cx),
+                ),
+                div().py_2().text_size(px(11.)).text_color(theme::MUTED).child("Sample rate and bit depth set the master output. Headphones follow their own device format. Applying changes briefly interrupts playback."),
                 row(
                     "Buffer size",
                     self.select(
                         Selector::Buffer,
                         self.audio
                             .buffer_frames
-                            .map_or("Device default".into(), |frames| format!("{frames} frames")),
+                            .map_or(AudioConfig::automatic_buffer_label().into(), |frames| {
+                                format!("{frames} frames")
+                            }),
                         cx,
                     ),
                 ),
@@ -155,15 +162,54 @@ impl Preferences {
                 ),
                 info("Master", snapshot.device_name),
                 info(
+                    "Master format",
+                    snapshot
+                        .master_output
+                        .as_ref()
+                        .map_or("Unavailable".into(), |output| {
+                            format!(
+                                "{} Hz · {}",
+                                output.sample_rate,
+                                output
+                                    .hardware_format
+                                    .as_deref()
+                                    .unwrap_or(&output.stream_format)
+                            )
+                        }),
+                ),
+                info(
+                    "Processing stream",
+                    snapshot
+                        .master_output
+                        .as_ref()
+                        .map_or("Unavailable".into(), |output| output.stream_format.clone()),
+                ),
+                info(
                     "Headphones",
                     snapshot.cue_device.unwrap_or("Disabled".into()),
+                ),
+                info(
+                    "Headphone format",
+                    snapshot
+                        .cue_output
+                        .as_ref()
+                        .map_or("Disabled".into(), |output| {
+                            format!(
+                                "{} Hz · {}",
+                                output.sample_rate,
+                                output
+                                    .hardware_format
+                                    .as_deref()
+                                    .unwrap_or(&output.stream_format)
+                            )
+                        }),
                 ),
                 div().flex().py_3().children(
                     [
                         ("Sample rate", format!("{} Hz", snapshot.sample_rate)),
                         ("Buffer", format!("{} frames", snapshot.block_frames)),
                         (
-                            "Duration",
+                            "Buffer duration",
                             format!(
                                 "{:.2} ms",
                                 snapshot.block_frames as f64 * 1000.

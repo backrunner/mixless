@@ -99,6 +99,8 @@ impl DeckSlot {
 
 impl Shared {
     pub(super) fn snapshot(&self) -> EngineSnapshot {
+        let [master_output, cue_output] =
+            self.output_formats.lock().expect("output formats").clone();
         let cue_device = self.cue_device.lock().expect("cue device").clone();
         let pfl_available = cue_device.is_some()
             && !self.audio_failed.load(Ordering::Relaxed)
@@ -106,6 +108,8 @@ impl Shared {
         let mut snap = EngineSnapshot {
             sample_rate: self.sample_rate.load(Ordering::Relaxed),
             block_frames: self.block_frames.load(Ordering::Relaxed),
+            master_output,
+            cue_output,
             xfader: self.xfader.load(Ordering::Relaxed) as f32 / 500.0 - 1.0,
             xf_curve: match self.xf_curve.load(Ordering::Relaxed) {
                 0 => XfCurve::Linear,

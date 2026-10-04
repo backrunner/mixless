@@ -181,9 +181,21 @@ fn default_keylock() -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioOutputSnapshot {
+    pub sample_rate: u32,
+    /// Physical device format; distinct from CoreAudio's float client format.
+    pub hardware_format: Option<String>,
+    pub stream_format: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EngineSnapshot {
     pub sample_rate: u32,
     pub block_frames: u32,
+    #[serde(default)]
+    pub master_output: Option<AudioOutputSnapshot>,
+    #[serde(default)]
+    pub cue_output: Option<AudioOutputSnapshot>,
     pub decks: [DeckSnapshot; 2],
     pub xfader: f32,
     pub xf_curve: XfCurve,
@@ -211,6 +223,8 @@ impl Default for EngineSnapshot {
         Self {
             sample_rate: 48_000,
             block_frames: 256,
+            master_output: None,
+            cue_output: None,
             decks: [DeckSnapshot::default(), DeckSnapshot::default()],
             xfader: 0.0,
             xf_curve: XfCurve::EqualPower,

@@ -98,6 +98,209 @@ fn headphone_bus_is_pre_fader_and_independent_of_master() {
 }
 
 #[test]
+fn output_rate_converts_sources_without_changing_duration_or_pitch() {
+    for (source_rate, output_rate) in [
+        (44_100, 48_000),
+        (48_000, 44_100),
+        (96_000, 48_000),
+        (44_100, 96_000),
+        (48_000, 176_400),
+        (48_000, 192_000),
+    ] {
+        let engine = test_engine(output_rate);
+        let slot = &engine.shared.decks[0];
+        let buffer = sine_buffer(source_rate, 1000., 4.);
+        slot.src_sr.store(source_rate, Ordering::Relaxed);
+        slot.frames.store(buffer.frames, Ordering::Relaxed);
+        *slot.buffer.lock().unwrap() = Some(buffer);
+        engine
+            .dispatch(Command::SetCrossfader { value: -1. })
+            .unwrap();
+        engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        engine.render_offline(output_rate as usize / 10);
+        let start = engine.snapshot().decks[0].frame;
+        let output = left_channel(&engine, output_rate as usize);
+        let end = engine.snapshot().decks[0].frame;
+        assert!((end as i64 - start as i64 - source_rate as i64).abs() <= 2);
+        assert!(output.iter().all(|sample| sample.is_finite()));
+        let crossings = output
+            .windows(2)
+            .filter(|s| s[0] <= 0. && s[1] > 0.)
+            .count();
+        assert!(
+            (crossings as i32 - 1000).abs() <= 2,
+            "{source_rate} -> {output_rate}: {crossings}"
+        );
+        assert!(energy(&output) > 0.001);
+    }
+}
+
+#[test]
+#[ignore = "changes real CoreAudio physical output formats"]
+#[cfg(target_os = "macos")]
+fn macos_physical_output_format_smoke() {
+    let engine = Engine::new(EngineConfig::default()).unwrap();
+    assert!(engine.audio_available());
+    let snapshot = engine.snapshot();
+    let status = snapshot.master_output.as_ref().unwrap();
+    assert_eq!(status.sample_rate, snapshot.sample_rate);
+    assert!(status.hardware_format.is_some());
+    let device = device::output_devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.name == snapshot.device_name)
+        .unwrap();
+    eprintln!(
+        "CoreAudio {} current={} Hz {:?} supported={:?}",
+        device.name, status.sample_rate, status.hardware_format, device.output_formats
+    );
+    let formats = device
+        .output_formats
+        .iter()
+        .filter(|f| [44_100, 48_000, 96_000, 176_400, 192_000].contains(&f.sample_rate))
+        .copied()
+        .collect::<Vec<_>>();
+    for format in formats {
+        let config = device::AudioConfig {
+            sample_rate: Some(format.sample_rate),
+            bit_depth: Some(format.bit_depth),
+            ..Default::default()
+        };
+        engine.configure_audio(config.clone()).unwrap();
+        let snapshot = engine.snapshot();
+        let status = snapshot.master_output.as_ref().unwrap();
+        assert_eq!(snapshot.sample_rate, format.sample_rate);
+        assert_eq!(status.sample_rate, format.sample_rate);
+        assert!(status
+            .hardware_format
+            .as_ref()
+            .unwrap()
+            .starts_with(&format!("{}-bit", format.bit_depth)));
+        assert_eq!(engine.audio_config(), config);
+        eprintln!(
+            "verified {} Hz {:?} client={}",
+            status.sample_rate, status.hardware_format, status.stream_format
+        );
+        // Force failure AFTER applying a different physical rate; it must restore hardware.
+        let other_rate = if format.sample_rate == 48_000 {
+            44_100
+        } else {
+            48_000
+        };
+        if device
+            .output_formats
+            .iter()
+            .any(|f| f.sample_rate == other_rate && f.bit_depth == format.bit_depth)
+        {
+            let mut invalid = config.clone();
+            invalid.sample_rate = Some(other_rate);
+            invalid.buffer_frames = Some(0);
+            assert!(engine.configure_audio(invalid).is_err());
+            assert_eq!(engine.audio_config(), config);
+            assert!(engine.audio_available());
+        }
+    }
+    let previous = engine.audio_config();
+    let previous_status = engine.snapshot().master_output;
+    assert!(engine
+        .configure_audio(device::AudioConfig {
+            bit_depth: Some(7),
+            ..previous.clone()
+        })
+        .is_err());
+    assert_eq!(engine.audio_config(), previous);
+    assert_eq!(engine.snapshot().master_output, previous_status);
+    // Restore the original physical format at the end of this hardware test.
+    let bits = status
+        .hardware_format
+        .as_ref()
+        .unwrap()
+        .split('-')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    engine
+        .configure_audio(device::AudioConfig {
+            sample_rate: Some(status.sample_rate),
+            bit_depth: Some(bits),
+            ..Default::default()
+        })
+        .unwrap();
+    engine
+        .configure_audio(device::AudioConfig::default())
+        .unwrap();
+    assert_eq!(engine.snapshot().sample_rate, status.sample_rate);
+}
+
+#[test]
+#[ignore = "opens real CoreAudio output device and changes its buffer size"]
+#[cfg(target_os = "macos")]
+fn macos_low_latency_buffer_smoke() {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let device = cpal::default_host().default_output_device().unwrap();
+    let supported = device.default_output_config().unwrap();
+    let (min, max) = match *supported.buffer_size() {
+        cpal::SupportedBufferSize::Range { min, max } => (min, max),
+        cpal::SupportedBufferSize::Unknown => panic!("device buffer range unavailable"),
+    };
+    // A sentinel prevents the initial snapshot from passing before a callback.
+    let engine = Engine::new(EngineConfig {
+        block_frames: 1,
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(engine.audio_available());
+    let wait_for_buffer = |expected| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while engine.snapshot().block_frames != expected && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let snapshot = engine.snapshot();
+        assert!(engine.audio_available());
+        assert_eq!(snapshot.block_frames, expected);
+        eprintln!(
+            "CoreAudio device={} buffer={} frames duration={:.2}ms",
+            snapshot.device_name,
+            snapshot.block_frames,
+            snapshot.block_frames as f64 * 1000. / snapshot.sample_rate as f64
+        );
+    };
+    wait_for_buffer(256_u32.clamp(min.max(1), max));
+    for frames in [64, 128, 256, 512, 1024, 2048]
+        .into_iter()
+        .filter(|n| (min..=max).contains(n))
+    {
+        let config = device::AudioConfig {
+            buffer_frames: Some(frames),
+            ..Default::default()
+        };
+        engine.configure_audio(config.clone()).unwrap();
+        wait_for_buffer(frames);
+        assert_eq!(engine.audio_config(), config);
+    }
+    let previous = engine.audio_config();
+    assert!(engine
+        .configure_audio(device::AudioConfig {
+            buffer_frames: Some(0),
+            ..Default::default()
+        })
+        .is_err());
+    assert_eq!(engine.audio_config(), previous);
+    wait_for_buffer(
+        previous
+            .buffer_frames
+            .unwrap_or(256_u32.clamp(min.max(1), max)),
+    );
+    engine
+        .configure_audio(device::AudioConfig::default())
+        .unwrap();
+    wait_for_buffer(256_u32.clamp(min.max(1), max));
+}
+
+#[test]
 #[ignore = "opens real CoreAudio output devices"]
 fn audio_device_reconfiguration_smoke() {
     let engine = Engine::new(EngineConfig::default()).unwrap();
@@ -111,11 +314,14 @@ fn audio_device_reconfiguration_smoke() {
     let other = device::output_devices()
         .unwrap()
         .into_iter()
-        .find(|d| d.name != master)
-        .unwrap();
-    config.cue_device = Some(other.name);
-    engine.configure_audio(config.clone()).unwrap();
-    assert!(engine.snapshot().pfl_available);
+        .find(|d| d.name != master);
+    if let Some(other) = other {
+        config.cue_device = Some(other.name);
+        engine.configure_audio(config.clone()).unwrap();
+        assert!(engine.snapshot().pfl_available);
+    } else {
+        eprintln!("Only one output device available; separate-device PFL smoke skipped");
+    }
     let mut invalid = config.clone();
     invalid.master_device = Some("mixless-missing-device-test".into());
     assert!(engine.configure_audio(invalid).is_err());

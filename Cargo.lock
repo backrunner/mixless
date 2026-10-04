@@ -3595,7 +3595,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-acquire"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "hound",
  "mixless-analyze",
@@ -3611,7 +3611,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-acquire-yt"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "libc",
  "mixless-acquire",
@@ -3626,7 +3626,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-analyze"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "blake3",
  "cc",
@@ -3642,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-desktop"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "dirs 6.0.0",
  "fs2",
@@ -3673,9 +3673,11 @@ dependencies = [
 
 [[package]]
 name = "mixless-engine"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "cc",
+ "core-foundation-sys",
+ "coreaudio-sys",
  "cpal",
  "ebur128",
  "hound",
@@ -3691,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-library"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "blake3",
  "hound",
@@ -3709,7 +3711,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-midi"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "midir",
  "mixless-protocol",
@@ -3721,14 +3723,14 @@ dependencies = [
 
 [[package]]
 name = "mixless-mixplan"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "mixless-protocol",
 ]
 
 [[package]]
 name = "mixless-net"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "core-foundation 0.9.4",
  "ipnet",
@@ -3738,7 +3740,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-pack"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "blake3",
  "fs2",
@@ -3757,7 +3759,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-protocol"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3765,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-spotify"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "base64 0.22.1",
  "mixless-net",
@@ -3779,7 +3781,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-stems"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "blake3",
  "fs2",
@@ -3803,7 +3805,7 @@ dependencies = [
 
 [[package]]
 name = "mixless-tools"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "mixless-protocol",
  "reqwest",

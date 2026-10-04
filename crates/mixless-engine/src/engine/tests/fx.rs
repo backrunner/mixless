@@ -114,7 +114,7 @@ fn cutoff_command_and_snapshot_agree() {
 
 #[test]
 fn all_effects_and_sweeps_are_finite_at_supported_rates() {
-    for sample_rate in [44_100, 48_000, 96_000] {
+    for sample_rate in [44_100, 48_000, 96_000, 176_400, 192_000] {
         let engine = test_engine(sample_rate);
         for deck in [DeckId::A, DeckId::B] {
             engine.dispatch(Command::PlayPause { deck }).unwrap();

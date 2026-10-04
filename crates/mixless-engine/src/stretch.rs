@@ -358,6 +358,8 @@ mod tests {
             (48000, 48000),
             (96000, 48000),
             (48000, 96000),
+            (48000, 176400),
+            (48000, 192000),
         ] {
             let buffer = tone(source_rate);
             let resampler = Resampler::new();

@@ -13,7 +13,7 @@ mod stretch;
 mod waveform;
 
 pub use decode::{decode_file, AudioBuffer};
-pub use device::{output_devices, AudioConfig, AudioDevice, DeviceError};
+pub use device::{output_devices, AudioConfig, AudioDevice, AudioOutputFormat, DeviceError};
 pub use engine::{Engine, EngineConfig, EngineError, PreparedMix, RecordingStatus};
 pub use loudness::Loudness;
 pub use mixless_protocol as proto;

@@ -30,12 +30,14 @@ Audio and analysis stay on your Mac. Choose the standard installer (verified mod
 
 ## Current beta
 
-mixless is in active beta development. The **0.1.0-beta.3** source includes:
+mixless is in active beta development. The **0.1.0-beta.4** source includes:
 
 - Improved tempo, phrase and drop analysis, with more flexible handoffs through measured recovery passages and clearer respect for build-ups and manual cues.
 - Spinback and loop-out transitions, configurable **Live moves**, and automatic overlap gain compensation that yields to manual control.
 - Background folder imports, per-playlist drag ordering, missing-file recovery, and expanded MIDI controls.
 - Safer signed updates, library compatibility backups, and recording finalization.
+- Low-latency macOS audio by default, adjustable buffers, and device-supported output sample rate and physical bit depth controls with actual format readback.
+- MLX-first stem analysis on supported Apple Silicon systems, with CoreML and CPU fallback, plus an installer with verified models for offline first use.
 - A refreshed About window, consistent lowercase branding, and a bilingual website with Retina product images, accessible motion and automatic release downloads.
 
 Analysis and transition choices remain estimates: preview unfamiliar pairs before using them in a set. See [release notes](https://github.com/backrunner/mixless/releases) for version-specific changes and known limitations.

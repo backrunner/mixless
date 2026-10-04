@@ -42,6 +42,7 @@ enum Selector {
     Master,
     Cue,
     Rate,
+    Depth,
     Buffer,
     Source,
     MidiChannel,
@@ -864,7 +865,7 @@ impl Preferences {
                 options
             }
             Selector::Rate => {
-                let mut options = vec![(String::new(), "Device native".into())];
+                let mut options = vec![(String::new(), "System / device current".into())];
                 let master = self
                     .audio
                     .master_device
@@ -875,16 +876,51 @@ impl Preferences {
                     .iter()
                     .find(|d| d.name == master)
                     .map(|d| d.sample_rates.as_slice())
-                    .unwrap_or(&[44_100, 48_000, 88_200, 96_000]);
+                    .unwrap_or(&AudioConfig::SAMPLE_RATES);
+                let device = self.devices.iter().find(|d| d.name == master);
                 options.extend(
                     rates
                         .iter()
+                        .filter(|rate| {
+                            self.audio.bit_depth.is_none_or(|bits| {
+                                device.is_some_and(|d| {
+                                    d.output_formats
+                                        .iter()
+                                        .any(|f| f.sample_rate == **rate && f.bit_depth == bits)
+                                })
+                            })
+                        })
                         .map(|rate| (rate.to_string(), format!("{rate} Hz"))),
                 );
                 options
             }
+            Selector::Depth => {
+                let mut options = vec![(String::new(), "System / device current".into())];
+                let master = self
+                    .audio
+                    .master_device
+                    .clone()
+                    .unwrap_or_else(|| self.core.engine.snapshot().device_name);
+                if let Some(device) = self.devices.iter().find(|d| d.name == master) {
+                    let rate = self.audio.sample_rate.unwrap_or(device.current_sample_rate);
+                    let mut bits = device
+                        .output_formats
+                        .iter()
+                        .filter(|f| f.sample_rate == rate)
+                        .map(|f| f.bit_depth)
+                        .collect::<Vec<_>>();
+                    bits.sort_unstable();
+                    bits.dedup();
+                    options.extend(
+                        bits.into_iter()
+                            .map(|n| (n.to_string(), format!("{n}-bit"))),
+                    );
+                }
+                options
+            }
             Selector::Buffer => {
-                let mut options = vec![(String::new(), "Device default".into())];
+                let mut options =
+                    vec![(String::new(), AudioConfig::automatic_buffer_label().into())];
                 options.extend(
                     [64, 128, 256, 512, 1024, 2048].map(|n| (n.to_string(), format!("{n} frames"))),
                 );
@@ -913,12 +949,14 @@ impl Preferences {
             Selector::Master => {
                 self.audio.master_device = optional;
                 self.audio.sample_rate = None;
+                self.audio.bit_depth = None;
                 if self.audio.cue_device == self.audio.master_device {
                     self.audio.cue_device = None;
                 }
             }
             Selector::Cue => self.audio.cue_device = optional,
             Selector::Rate => self.audio.sample_rate = value.parse().ok(),
+            Selector::Depth => self.audio.bit_depth = value.parse().ok(),
             Selector::Buffer => self.audio.buffer_frames = value.parse().ok(),
             Selector::MidiChannel => {
                 if let Ok(n @ 1..=16) = value.parse::<u8>() {

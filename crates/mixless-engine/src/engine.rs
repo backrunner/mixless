@@ -236,6 +236,7 @@ pub struct Shared {
     pub(crate) audio_failed: AtomicBool,
     pub(crate) cue_failed: AtomicBool,
     cue_device: Mutex<Option<String>>,
+    output_formats: Mutex<[Option<mixless_protocol::AudioOutputSnapshot>; 2]>,
     sync_follower: AtomicU32, // 0 = off, 1 = A follows B, 2 = B follows A
     sync_factor: AtomicU32,   // f32 bits: half / same / double tempo
     sync_align: AtomicBool,
@@ -262,7 +263,7 @@ pub struct Shared {
 
 pub struct Engine {
     audio_tx: Option<std::sync::mpsc::Sender<AudioRequest>>,
-    audio_apply: Mutex<()>,
+    audio_apply: Arc<Mutex<()>>,
     audio_config: Mutex<device::AudioConfig>,
     shared: Arc<Shared>,
     rt: Mutex<AudioRt>,
