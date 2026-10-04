@@ -11,6 +11,7 @@ export default defineConfig({
   build: { mode: 'static' },
   theme: {
     defaultMode: 'dark',
+    readingStyle: 'plain',
     palette: { accent: '#ffb224', neutral: '#0c0c0e' },
     fonts: {
       sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif',
@@ -41,6 +42,7 @@ export default defineConfig({
     messages: { en, zh }
   },
   seo: {
-    sitemap: true, robots: true, defaultAuthor: 'Alkinum', ogImage: false
+    // The framework already includes WebSite under each page's isPartOf.
+    sitemap: true, robots: true, defaultAuthor: 'Alkinum', defaultAuthorType: 'Organization', ogImage: false
   }
 });

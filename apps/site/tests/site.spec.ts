@@ -117,6 +117,8 @@ for (const locale of ['en', 'zh'] as const) {
 }
 
 test('all public routes, assets, agent endpoints, missing routes and reduced motion', async ({ page, request }, info) => {
+  // Sequential navigation across every route needs time for production network requests.
+  test.setTimeout(120_000);
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   for (const prefix of ['', '/zh']) {

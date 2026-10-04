@@ -82,7 +82,7 @@ The first build may take longer. The script selects an Xcode installation with M
 
 ## Website
 
-The site uses **svedocs 0.2.1**, with a custom landing page, local search, and complete English/Chinese content. Cloudflare Workers serves the static pages and resolves the latest release for direct downloads. Requires Node.js 22.12+ and pnpm.
+The site uses **svedocs 0.2.2**, with a custom landing page, local search, and complete English/Chinese content. Cloudflare Workers serves the static pages and resolves the latest release for direct downloads. Requires Node.js 22.12+ and pnpm.
 
 ```bash
 pnpm -C apps/site install --frozen-lockfile

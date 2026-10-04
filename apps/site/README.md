@@ -1,6 +1,6 @@
 # mixless website
 
-The official website and user guide, built with **svedocs / svedocs-cli 0.2.1** and SvelteKit. Pages are prerendered with a custom dark theme, product landing, local search, and English/Chinese content. A small Cloudflare Worker resolves current GitHub releases for direct downloads; it needs no credentials.
+The official website and user guide, built with **svedocs / svedocs-cli 0.2.2** and SvelteKit. Pages are prerendered with a custom dark theme, product landing, local search, and English/Chinese content. A small Cloudflare Worker resolves current GitHub releases for direct downloads; it needs no credentials.
 
 ## Develop and validate
 
@@ -28,6 +28,7 @@ Run these commands in `apps/site`, or use `pnpm -C apps/site` from the repositor
 - The [brand skill](../../.agents/skills/mixless-brand/SKILL.md) defines lowercase spelling, wordmark tracking, palette, and image capture rules. `Wordmark.svelte` is shared by the navbar, footer, and download panel.
 - `src/lib/theme` replaces navigation and footer through the public svedocs component contract.
 - `src/lib/styles/theme.css` restyles reading surfaces and tools. The framework CSS retains accessible dialog and content behavior; the default home, pixel decoration, header and footer are not used.
+- Reading pages use the framework's `plain` mode and open article columns. The hero divider is the single heading separator; prose headings have no decorative border or extra top padding. Keep table, code, navigation and focus boundaries intact. `tests/reading.spec.ts` audits every English/Chinese reading route at desktop/mobile widths under both OS color preferences and saves screenshots plus computed style evidence.
 - `src/lib/messages.ts` contains translated interface and landing copy. Use `resolveLocalizedHref` for internal component links.
 
 The root and catch-all routes share `SitePage.svelte`, preserving svedocs page loading, search, metadata, alternate languages and compiled Markdown. Keep the generated Markdown-twin and `llms.txt` routes connected.
@@ -61,9 +62,21 @@ The default canonical origin is `https://mixless.alkinum.com`. To target another
 SITE_URL=https://example.com pnpm build
 ```
 
-Wrangler serves unknown paths with `404.html` **and HTTP 404** and redirects HTML paths to extensionless URLs without a trailing slash. The output includes `sitemap.xml`, `robots.txt`, per-page Markdown, `llms.txt`, and `llms-full.txt`. No SPA fallback or server-side AI/search endpoint is needed.
+Wrangler serves unknown paths with `404.html` **and HTTP 404** and redirects HTML paths to extensionless URLs with a trailing slash, matching svedocs static canonicals and sitemap URLs. The server hook writes the page language into prerendered HTML before JavaScript runs. The output includes `sitemap.xml`, `robots.txt`, per-page Markdown, `llms.txt`, and `llms-full.txt`. No SPA fallback or server-side AI/search endpoint is needed.
 
 Building alone does not publish the site. `pnpm run deploy` invokes this project's deployment script and attaches the configured custom domain; plain `pnpm deploy` is pnpm's separate workspace deployment command. After deploying, verify the English and Chinese homepages, a docs page and local search, missing-route status, and sitemap on the production domain. Changing `SITE_URL` also requires matching the custom domain in `wrangler.jsonc`.
+
+Run the SEO checks against the actual Cloudflare asset router after building:
+
+```sh
+pnpm exec wrangler dev --ip 127.0.0.1 --port 4175
+# In another terminal:
+SITE_TEST_URL=http://127.0.0.1:4175 pnpm test:seo
+# After publishing:
+SITE_TEST_URL=https://mixless.alkinum.com pnpm test:seo
+```
+
+The checks cover all 24 public routes with JavaScript disabled and a Googlebot user agent, title uniqueness, descriptions, canonical URLs without redirects, reciprocal hreflang, structured data, social assets, hydrated titles, language switching, and HTTP 404. A Googlebot user agent is a response-parity check; actual Google crawl and indexing state must be checked in Search Console. Each run attaches a per-page `seo-audit.json` report to the Playwright results.
 
 ## Release downloads
 

@@ -16,7 +16,7 @@
     "binding": "ASSETS",
     "run_worker_first": ["/download", "/download/", "/api/releases", "/api/releases/"],
     "directory": "build",
-    "html_handling": "drop-trailing-slash",
+    "html_handling": "force-trailing-slash",
     "not_found_handling": "404-page"
   }
 }

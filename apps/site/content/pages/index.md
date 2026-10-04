@@ -1,6 +1,6 @@
 ---
-title: "mixless — Your tracks. One continuous flow."
-description: "Local AI mixing for macOS. Dual decks, on-device stems, and musical AutoMix in one native workspace."
+title: "mixless — Free DJ Software for macOS"
+description: "Free, open-source DJ software for macOS. Mix local music with dual decks, on-device stem separation, and musical AutoMix in a native workspace."
 layout: "home"
 image: /images/social.png
 imageAlt: "mixless dual-deck workspace"

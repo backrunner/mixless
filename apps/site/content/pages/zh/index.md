@@ -1,6 +1,6 @@
 ---
-title: "mixless — 让你的音乐，自然接着流动。"
-description: "专为 macOS 打造的本地 AI 混音应用。双唱盘、设备端分轨和 AutoMix，在同一个原生工作台中。"
+title: "mixless — 免费 macOS DJ 混音软件"
+description: "免费、开源的 macOS DJ 混音软件。通过双唱盘、设备端分轨和 AutoMix 自动混音，在原生工作台中混合本地音乐。"
 layout: "home"
 image: /images/social.png
 imageAlt: "mixless 双唱盘工作台"

@@ -89,8 +89,9 @@ button { cursor: pointer; }
 .sd-doc-eyebrow { font: 12px var(--font-sans); text-transform: none; letter-spacing: 0; color: #9e94a5; margin-bottom: 16px; }
 .sd-doc h1, .sd-page h1 { font-size: clamp(30px, 3.2vw, 44px); letter-spacing: -.045em; font-weight: 570; line-height: 1.2; max-width: none; }
 .sd-doc-header p:last-child, .sd-page-hero p:last-child { font-size: 15px; color: var(--sd-muted); line-height: 1.8; margin-top: 16px; }
-.sd-prose { font-size: 15px; line-height: 1.85; color: #c7c2cb; }
-.sd-prose h2 { font-size: 24px; font-weight: 580; letter-spacing: -.03em; margin-top: 2.4rem; color: #f0ebf2; }
+/* Section spacing supplies hierarchy; heading borders would double the hero divider. */
+.sd-prose { padding-top: 0; font-size: 15px; line-height: 1.85; color: #c7c2cb; }
+.sd-prose h2 { border: 0; padding-top: 0; font-size: 24px; font-weight: 580; letter-spacing: -.03em; margin-top: 2.4rem; color: #f0ebf2; }
 .sd-prose h3 { font-size: 18px; color: #e3dce8; font-weight: 600; }
 .sd-prose strong { color: #ede6f1; font-weight: 580; }
 .sd-prose :is(h2, h3, h4) { scroll-margin-top: 106px; }
@@ -107,6 +108,7 @@ button { cursor: pointer; }
 .sd-sidebar a, .sd-sidebar button, .sd-mobile-docnav a { font-size: 13px; border-radius: 5px; }
 .sd-sidebar a[aria-current="page"], .sd-mobile-docnav a[aria-current="page"] { background: #2a2019; color: #ffbf87; }
 .sd-page { margin: 0 auto; padding-top: 148px; padding-bottom: 90px; max-width: 800px; padding-inline: 28px; }
+.sd-page-hero .sd-kicker { text-transform: none; letter-spacing: 0; }
 .sd-prev-next { border-radius: 7px; background: #151217; }
 .sd-prev-next::before, .sd-prev-next span i, .sd-sidebar-link.sd-active::after { display: none; }
 .sd-sidebar .sd-sidebar-link.sd-active, .sd-mobile-docnav .sd-sidebar-link.sd-active { border-radius: 8px; box-shadow: none; background: #ffffff08; color: #e8cbb2; }
