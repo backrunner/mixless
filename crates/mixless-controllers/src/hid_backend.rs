@@ -9,9 +9,14 @@ use std::{
 };
 
 type Reply<T> = mpsc::Sender<Result<T, String>>;
+pub(crate) type Pending<T> = mpsc::Receiver<Result<T, String>>;
+pub(crate) struct OpenedDevice {
+    pub device: HidDevice,
+    pub numbered: bool,
+}
 enum Request {
     List(Reply<Vec<DeviceInfo>>),
-    Open(CString, Reply<HidDevice>),
+    Open(CString, Reply<OpenedDevice>),
 }
 fn sender() -> Result<&'static mpsc::Sender<Request>, String> {
     static SENDER: OnceLock<Result<mpsc::Sender<Request>, String>> = OnceLock::new();
@@ -53,7 +58,12 @@ fn sender() -> Result<&'static mpsc::Sender<Request>, String> {
                                     .open_path(&path)
                                     .and_then(|device| {
                                         device.set_blocking_mode(false)?;
-                                        Ok(device)
+                                        let mut descriptor = [0u8; 4096];
+                                        let numbered = device
+                                            .get_report_descriptor(&mut descriptor)
+                                            .map(|n| has_report_id(&descriptor[..n]))
+                                            .unwrap_or(true);
+                                        Ok(OpenedDevice { device, numbered })
                                     })
                                     .map_err(|e| e.to_string());
                                 let _ = reply.send(result);
@@ -72,18 +82,44 @@ fn response<T>(rx: mpsc::Receiver<Result<T, String>>) -> Result<T, String> {
         .map_err(|e| format!("HID discovery unavailable: {e}"))?
 }
 pub(crate) fn devices() -> Result<Vec<DeviceInfo>, String> {
+    response(request_devices()?)
+}
+pub(crate) fn request_devices() -> Result<Pending<Vec<DeviceInfo>>, String> {
     let (tx, rx) = mpsc::channel();
     sender()?
         .send(Request::List(tx))
         .map_err(|e| e.to_string())?;
-    response(rx)
+    Ok(rx)
 }
-pub(crate) fn open(path: &CStr) -> Result<HidDevice, String> {
+pub(crate) fn request_open(path: &CStr) -> Result<Pending<OpenedDevice>, String> {
     let (tx, rx) = mpsc::channel();
     sender()?
         .send(Request::Open(path.into(), tx))
         .map_err(|e| e.to_string())?;
-    response(rx)
+    Ok(rx)
+}
+
+fn has_report_id(descriptor: &[u8]) -> bool {
+    let mut i = 0;
+    while i < descriptor.len() {
+        let b = descriptor[i];
+        if b == 0xfe {
+            if i + 2 >= descriptor.len() {
+                return false;
+            }
+            i += 3 + descriptor[i + 1] as usize;
+            continue;
+        }
+        let size = match b & 3 {
+            3 => 4,
+            n => n as usize,
+        };
+        if b & 0xfc == 0x84 {
+            return true;
+        }
+        i += 1 + size;
+    }
+    false
 }
 
 #[cfg(all(test, target_os = "macos"))]

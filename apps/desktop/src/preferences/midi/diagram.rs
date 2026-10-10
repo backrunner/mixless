@@ -335,10 +335,10 @@ impl Preferences {
         );
         // Keep the wireframe in the same 2×2 order as the native deck.
         for (stem, label, r) in [
-            (StemKind::Vocals, "VOCAL", [49., 110., 32., 26.]),
-            (StemKind::Drums, "DRUMS", [84., 110., 32., 26.]),
-            (StemKind::Bass, "BASS", [49., 140., 32., 26.]),
-            (StemKind::Instruments, "OTHER", [84., 140., 32., 26.]),
+            (StemKind::Vocals, "VOCAL", [49., 110., 40., 26.]),
+            (StemKind::Drums, "DRUMS", [94., 110., 40., 26.]),
+            (StemKind::Bass, "BASS", [49., 140., 40., 26.]),
+            (StemKind::Instruments, "OTHER", [94., 140., 40., 26.]),
         ] {
             diagram = diagram.child(self.map_control(
                 Stem { deck, stem },

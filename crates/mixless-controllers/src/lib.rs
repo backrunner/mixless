@@ -49,9 +49,12 @@ pub enum MidiSourceKind {
     Note,
 }
 
+pub mod adapter;
 mod catalogue;
+pub mod community;
 mod control;
 mod hid_backend;
+pub mod replay;
 mod targets;
 pub use control::{MidiAction, MidiControlMode, MidiValue};
 pub use targets::{ControlKind, MidiGroup, MidiTarget};

@@ -1,6 +1,6 @@
 ---
-title: "MIDI controllers"
-description: "Map your hardware to the decks, mixer, and library."
+title: "Controllers"
+description: "Map MIDI and HID hardware to the decks, mixer, and library."
 order: 6
 image: /images/social.png
 imageAlt: "mixless dual-deck workspace"
@@ -15,19 +15,27 @@ Open **Preferences → Controllers**. Select a device and a named preset, then c
 
 Use **Manage → New preset…**, **Duplicate…**, **Rename…**, and **Delete…** to manage user presets. Built-ins are read-only; editing creates a user copy. Editing a shared preset for one device creates a separate copy. Applying that copy is explicit. An assigned preset must be unassigned before deletion.
 
-**Manage → Import…** previews the device requirements, number of bindings and naming conflicts. Confirmation saves a separate preset without changing device assignments. **Manage → Export…** writes only the selected native JSON preset, without local device IDs. Unsupported versions, invalid rules and failed saves leave the active configuration intact. XML and executable scripts are not supported.
+**Manage → Import…** previews the device requirements, number of bindings and naming conflicts. Confirmation saves a separate preset without changing device assignments. **Manage → Export…** writes only the selected native JSON preset, without local device IDs. Unsupported versions, invalid rules and failed saves leave the active configuration intact. Raw scripts and XML mappings are not imported. Community HID presets may include a sandboxed Wasm adapter with explicit report permissions.
 
 Existing `midi.json` is backed up as `midi.pre-controllers.backup.json` and migrated once into `midi.controllers.json`. The original is retained. Explicit legacy wildcard bindings remain supported.
 
 ## Mapping and monitoring
 
-The default view shows the mapping list; select a row to inspect its input. For MIDI learning, choose the input device, open **Show layout**, click a deck/mixer control, then move its physical control. Offline diagram clicks only inspect mappings. The first compatible Note or CC is saved. Cancel stops learning without changing the mapping. The simple editor supports channel, Note/CC and relative 1/127, 65/63 or 1/65 modes. Complex mappings show their actual input; use Edit MIDI / HID to change their rules. Preset notes and Input monitor are optional under Details.
+The controller layout stays visible above the mapping list; select a control or row to inspect its input. For MIDI learning, choose the input device, click a deck/mixer control, then move its physical control. Offline diagram clicks only inspect mappings. The first compatible Note or CC is saved. Cancel stops learning without changing the mapping. The simple editor supports channel, Note/CC and relative 1/127, 65/63 or 1/65 modes. Complex mappings show their actual input; use Edit MIDI / HID to change their rules. Preset notes and Input monitor are optional under Details.
 
 **Manage → Edit MIDI / HID…** edits the selected preset's declarative JSON: pitch bend, paired 14-bit CC, RPN/NRPN, bounded SysEx, calibration, soft takeover, device-local layers and hold/toggle behavior. Jog resolution is configurable with `ticks_per_revolution`; its application default must be calibrated against real hardware. **Details → Ports…** assigns each logical port to an explicit local input/output ID.
 
 HID presets specify VID/PID, interface and Usage, report ID, field offset/width, signedness, byte order and counter mode. Under **Details**, **Add HID field** creates an editable field; **Read feature…** reads the requested report ID and length. **Input monitor** displays received bytes. Field offsets include a report-ID byte; unnumbered reports use a leading zero. The meanings of fields must come from manufacturer information or your own measurements.
 
 Feedback rules write MIDI or HID output/feature reports from current application state. Repeated updates are deduplicated and sent at at most 30 Hz per rule. Reconnecting initializes the device and refreshes feedback. Disconnecting releases held controls. Audio performance controls run outside the display loop; library browsing and loading wake the application event loop in order.
+
+## Community presets
+
+Import a community preset through **Manage → Import…**. The preview shows its author, version, license and device requirements. An adapter also lists its allowed output and feature reports. Import saves a separate copy; applying it to a device is a separate action. New versions do not replace an active preset automatically. Keep the previous copy to switch back.
+
+Fixed report layouts use declarative mappings. More complex HID protocols can use the independent Wasm adapter API for checksums, handshakes, sequence tracking and timers. Adapter mappings appear as **Adapter** in the control list; their source is maintained by the author. The adapter has no file or network access. If it fails, the host stops it and releases held controls; apply the preset again to restart it.
+
+Authors can use the [controller SDK and examples](https://github.com/backrunner/mixless/tree/main/crates/mixless-controllers) to validate, package, record and replay reports. Fixtures check expected actions and feedback bytes without hardware. Imported publisher test claims do not grant hardware-verified status. Source and license information must accompany community packages.
 
 ## Included profiles and evidence
 

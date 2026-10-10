@@ -61,7 +61,13 @@ impl MidiControlMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum MidiValue {
     Absolute(u8),
     Normalized(f64),
@@ -72,7 +78,8 @@ pub enum MidiValue {
     Release,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MidiAction {
     pub target: MidiTarget,
     pub value: MidiValue,

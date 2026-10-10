@@ -49,6 +49,16 @@ HID transport uses [hidapi-rs](https://github.com/ruabmbua/hidapi-rs)
 (BSD-3-Clause selected from its licensing alternatives). Preserve their notices
 when distributing binaries.
 
+Community HID adapters run in [Wasmi](https://github.com/wasmi-labs/wasmi)
+2.0.0 and its companion crates (MIT selected from MIT/Apache-2.0).
+The Wasmi MIT notice is preserved in `third-party/wasmi-LICENSE-MIT.txt`.
+Validation uses wasmparser from [wasm-tools](https://github.com/bytecodealliance/wasm-tools)
+(MIT selected from its licensing alternatives); its notice is preserved in
+`third-party/wasm-tools-LICENSE-MIT.txt`.
+The desktop interpreter does not enable WASI or JIT compilation. Imported
+community presets retain their own author, source and license information;
+an import is not an endorsement or a hardware certification.
+
 ## Trademarks
 
 "Spotify" is a trademark of Spotify AB. "YouTube" and "YouTube Music" are

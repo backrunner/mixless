@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "preset_digest": "",
+  "model": "Declarative HID example",
+  "firmware": "fictional-1",
+  "os": "offline",
+  "frames": [
+    {
+      "event": {
+        "kind": "connect",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 0
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          1,
+          3,
+          0
+        ],
+        "at_ms": 1
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "play",
+              "deck": "a"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        },
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "jog_touch",
+              "deck": "a"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        },
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "master"
+            },
+            "value": {
+              "kind": "normalized",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          1,
+          3,
+          128
+        ],
+        "at_ms": 2
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "master"
+            },
+            "value": {
+              "kind": "normalized",
+              "value": 0.5019607843137255
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "state",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 3
+      },
+      "expected": [
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              2,
+              0
+            ],
+            "report": "output"
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "state",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 4
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "disconnect",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 5
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "jog_touch",
+              "deck": "a"
+            },
+            "value": {
+              "kind": "release"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

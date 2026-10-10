@@ -13,3 +13,7 @@ jobs:
         run: cargo test --locked --workspace --exclude mixless-desktop
       - name: Test desktop and updater
         run: cargo test --locked -p mixless-desktop
+      - name: Test controller development tools
+        run: cargo test --locked -p mixless-controllers --features tools
+      - name: Compile and replay independent HID example
+        run: python3 crates/mixless-controllers/sdk/verify-example.py

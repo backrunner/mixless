@@ -23,6 +23,9 @@ pub fn run() -> bool {
                 | "controller-details"
                 | "controller-connected"
                 | "controller-connected-details"
+                | "adapter-import"
+                | "adapter-details"
+                | "adapter-mapping"
                 | "storage"
         ),
         "Unknown settings scene"
@@ -149,9 +152,23 @@ pub fn run() -> bool {
                             }
                             state.select_midi_target(MidiTarget::Play { deck: DeckId::A });
                         }
-                        state.midi_layout_open = scene == "controller-layout";
                         state.controller_advanced =
                             scene.ends_with("details") && state.tab == Tab::Midi;
+                        if scene.starts_with("adapter-") {
+                            let path = std::env::var_os("MIXLESS_PREVIEW_PRESET")
+                                .map(PathBuf::from)
+                                .expect("Set MIXLESS_PREVIEW_PRESET for an adapter scene");
+                            let hub = state.hub().expect("preview controllers");
+                            let report = hub.preview_import(&path).expect("valid preview package");
+                            if scene == "adapter-import" {
+                                state.import_preview = Some(report);
+                            } else {
+                                state.selected_preset = Some(
+                                    hub.accept_import(report).expect("import preview package"),
+                                );
+                                state.select_midi_target(MidiTarget::Play { deck: DeckId::A });
+                            }
+                        }
                         state.audio_details_open = scene == "audio-details";
                         state
                     })

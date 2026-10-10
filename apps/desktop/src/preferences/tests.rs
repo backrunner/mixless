@@ -37,6 +37,68 @@ fn click(cx: &mut VisualTestContext, id: &'static str) {
     cx.run_until_parked();
 }
 
+#[gpui::test]
+fn community_adapter_import_is_explicit_and_mapping_inspector_is_read_only(
+    cx: &mut TestAppContext,
+) {
+    let (temp, view, cx) = fixture(cx);
+    let mut preset: mixless_controllers::ControllerPreset = serde_json::from_str(include_str!(
+        "../../../../crates/mixless-controllers/examples/synthetic-hid/preset.template.json"
+    ))
+    .unwrap();
+    let module = wat::parse_str(
+        r#"(module (memory (export "memory") 1)
+        (func (export "mixless_buffer") (result i32) (i32.const 0))
+        (func (export "mixless_event") (param i32 i32 i32 i32 i64) (result i32) (i32.const 0)))"#,
+    )
+    .unwrap();
+    preset.adapter.as_mut().unwrap().set_module(&module);
+    let path = temp.path().join("community.json");
+    std::fs::write(&path, serde_json::to_vec(&preset).unwrap()).unwrap();
+    let report = view.read_with(cx, |s, _| s.hub().unwrap().preview_import(&path).unwrap());
+    view.update(cx, |s, cx| {
+        s.import_preview = Some(report.clone());
+        cx.notify();
+    });
+    cx.simulate_resize(size(px(720.), px(540.)));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("import-community").is_some());
+    assert!(cx.debug_bounds("import-adapter-access").is_some());
+    let accept = cx.debug_bounds("accept-preset-import").unwrap();
+    assert!(accept.bottom() <= px(540.));
+    click(cx, "cancel-preset-import");
+    view.read_with(cx, |s, _| {
+        assert!(
+            !s.hub()
+                .unwrap()
+                .presets()
+                .iter()
+                .any(|p| p.community.is_some())
+        )
+    });
+    view.update(cx, |s, cx| {
+        s.import_preview = Some(report);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    click(cx, "accept-preset-import");
+    view.update(cx, |s, cx| {
+        s.select_midi_target(MidiTarget::Play { deck: DeckId::A });
+        cx.notify();
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |s, _| {
+        assert!(s.hub().unwrap().assignments().is_empty());
+        assert_eq!(
+            s.selected_profile().unwrap().verification,
+            mixless_controllers::Verification::Protocol
+        );
+        assert!(!s.preset_actions().iter().any(|(v, _)| v == "edit"));
+    });
+    assert!(cx.debug_bounds("mapping-preview").is_some());
+    assert!(cx.debug_bounds("edit-preset-mapping").is_none());
+}
+
 fn preset_action(view: &gpui::Entity<Preferences>, cx: &mut VisualTestContext, value: &str) {
     click(cx, "select-13");
     let index = view.read_with(cx, |s, _| {
@@ -56,7 +118,6 @@ fn preset_action(view: &gpui::Entity<Preferences>, cx: &mut VisualTestContext, v
 #[gpui::test]
 fn controller_diagram_preserves_deck_geometry_when_resized(cx: &mut TestAppContext) {
     let (_temp, _view, cx) = fixture(cx);
-    click(cx, "midi-layout");
     for (width, height) in [(940., 820.), (720., 540.), (1200., 900.)] {
         cx.simulate_resize(size(px(width), px(height)));
         cx.run_until_parked();
@@ -434,19 +495,17 @@ fn every_settings_page_keeps_footer_and_controls_inside_small_and_large_windows(
 #[gpui::test]
 fn mapping_workspace_and_options_keep_detail_out_of_the_primary_flow(cx: &mut TestAppContext) {
     let (_temp, view, cx) = fixture(cx);
-    // The default page puts the mapping workspace above the fold, with optional
-    // diagram, protocol notes and input configuration closed.
-    assert!(cx.debug_bounds("controller-diagram").is_none());
+    // The layout stays above the mapping list; protocol notes and input
+    // configuration remain optional.
+    let diagram = cx.debug_bounds("controller-diagram").unwrap();
+    assert!(cx.debug_bounds("midi-layout").is_none());
     assert!(cx.debug_bounds("controller-details").is_none());
     assert!(
         cx.debug_bounds("select-9").is_none(),
         "offline preview must not show an editable dummy MIDI address"
     );
     let list = cx.debug_bounds("mapping-list").unwrap();
-    assert!(
-        list.bottom() < cx.debug_bounds("close-preferences").unwrap().top(),
-        "{list:?}"
-    );
+    assert!(list.top() >= diagram.bottom(), "{list:?} {diagram:?}");
     click(cx, "select-11");
     let trigger = cx.debug_bounds("select-11").unwrap();
     let menu = cx.debug_bounds("preference-options").unwrap();
@@ -471,10 +530,58 @@ fn mapping_workspace_and_options_keep_detail_out_of_the_primary_flow(cx: &mut Te
         );
         assert!(s.hub().unwrap().assignments().is_empty());
     });
+    let details_button = cx.debug_bounds("controller-more").unwrap();
+    let manage_button = cx.debug_bounds("select-13").unwrap();
+    assert_eq!(details_button.left(), manage_button.left());
+    assert_eq!(details_button.right(), manage_button.right());
+    assert_eq!(details_button.size.height, px(widgets::CONTROL_HEIGHT));
     click(cx, "controller-more");
-    assert!(cx.debug_bounds("controller-details").is_some());
+    for (width, height) in [
+        (720., 540.),
+        (847., 700.),
+        (848., 700.),
+        (860., 700.),
+        (940., 820.),
+        (1200., 900.),
+    ] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let choices = cx.debug_bounds("controller-choices").unwrap();
+        let details = cx.debug_bounds("controller-details").unwrap();
+        let panel = cx.debug_bounds("controller-panel").unwrap();
+        if width >= 848. {
+            assert!(details.left() >= choices.right() + px(24.));
+            assert_eq!(details.top(), choices.top());
+        } else {
+            assert!(details.top() >= choices.bottom());
+            assert_eq!(details.left(), choices.left());
+        }
+        assert!(details.right() <= panel.right(), "{details:?} in {panel:?}");
+        let manage = cx.debug_bounds("select-13").unwrap();
+        let more = cx.debug_bounds("controller-more").unwrap();
+        assert_eq!(more.left(), manage.left());
+        assert_eq!(more.right(), manage.right());
+        let preset = cx.debug_bounds("select-11").unwrap();
+        assert!(
+            preset.size.width >= px(180.),
+            "{width}: {preset:?}, {choices:?}, {details:?}, {panel:?}"
+        );
+    }
+    cx.simulate_resize(size(px(940.), px(820.)));
+    cx.run_until_parked();
+    assert_eq!(cx.debug_bounds("controller-more").unwrap(), details_button);
     click(cx, "controller-more");
-    click(cx, "midi-layout");
+    let inputs_button = cx.debug_bounds("midi-inputs").unwrap();
+    assert_eq!(inputs_button.size.height, details_button.size.height);
+    click(cx, "midi-inputs");
+    view.read_with(cx, |s, _| assert!(s.midi_inputs_open));
+    assert_eq!(
+        cx.debug_bounds("midi-inputs").unwrap().size,
+        inputs_button.size
+    );
+    assert!(cx.debug_bounds("controller-diagram").unwrap().top() > diagram.top());
+    click(cx, "midi-inputs");
+    view.read_with(cx, |s, _| assert!(!s.midi_inputs_open));
     assert!(cx.debug_bounds("controller-diagram").is_some());
     click(cx, "diagram-Play { deck: A }");
     view.read_with(cx, |s, _| {
@@ -484,10 +591,6 @@ fn mapping_workspace_and_options_keep_detail_out_of_the_primary_flow(cx: &mut Te
             "offline diagram browsing must not arm learning or produce an error"
         );
     });
-    let expanded_list = cx.debug_bounds("mapping-list").unwrap();
-    click(cx, "midi-layout");
-    view.read_with(cx, |s, _| assert!(!s.midi_layout_open));
-    assert!(cx.debug_bounds("mapping-list").unwrap().top() < expanded_list.top());
     // Actions use the same anchored keyboard-accessible menu as selects.
     click(cx, "select-13");
     cx.simulate_keystrokes("home enter");
@@ -589,9 +692,20 @@ fn mapping_switcher_keeps_the_inspector_in_its_selected_group(cx: &mut TestAppCo
     for (width, height) in [(720., 540.), (940., 820.), (1200., 900.)] {
         cx.simulate_resize(size(px(width), px(height)));
         cx.run_until_parked();
-        let switcher = cx.debug_bounds("mapping-group-switcher").unwrap();
         let content = cx.debug_bounds("settings-content").unwrap();
+        let page_edge = gpui::point(content.right() - px(3.), content.center().y);
+        let switcher = cx.debug_bounds("mapping-group-switcher").unwrap();
+        scroll(
+            cx,
+            page_edge,
+            f32::from(content.top() + px(12.) - switcher.top()),
+        );
+        let switcher = cx.debug_bounds("mapping-group-switcher").unwrap();
         assert!(switcher.left() >= content.left() && switcher.right() <= content.right());
+        assert!(
+            switcher.top() >= content.top() && switcher.bottom() <= content.bottom(),
+            "{switcher:?} in {content:?}"
+        );
         for (id, group) in [
             ("mapping-group-2", MidiGroup::DeckA),
             ("mapping-group-3", MidiGroup::DeckB),
@@ -607,6 +721,7 @@ fn mapping_switcher_keeps_the_inspector_in_its_selected_group(cx: &mut TestAppCo
         }
         click(cx, "mapping-group-0");
         view.read_with(cx, |s, _| assert!(s.midi_group.is_none()));
+        scroll(cx, page_edge, 5000.);
         for id in ["select-11", "select-12", "select-13", "controller-apply"] {
             let control = cx.debug_bounds(id).unwrap();
             assert_eq!(control.size.height, px(32.));
@@ -648,6 +763,9 @@ fn complex_device_mapping_shows_its_real_input_and_edits_the_assigned_preset(
         cx.debug_bounds("select-9").is_none(),
         "must not show a dummy Note 0"
     );
+    let content = cx.debug_bounds("settings-content").unwrap();
+    let page_edge = gpui::point(content.right() - px(3.), content.center().y);
+    scroll(cx, page_edge, -5000.);
     click(cx, "midi-preview-learn");
     // This render fixture is not a connected transport: learning must fail
     // safely and leave the assigned mapping intact.
@@ -656,6 +774,7 @@ fn complex_device_mapping_shows_its_real_input_and_edits_the_assigned_preset(
         assert!(s.midi_feedback.as_ref().is_some_and(|(_, error)| *error));
         assert_eq!(s.hub().unwrap().assignments()[0].preset_id, assigned);
     });
+    scroll(cx, page_edge, -5000.);
     click(cx, "edit-preset-mapping");
     view.read_with(cx, |s, _| {
         assert_eq!(s.selected_preset.as_ref(), Some(&assigned));

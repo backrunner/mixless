@@ -1,5 +1,8 @@
 # Local controller verification — 2026-10-09
 
+For the subsequent community package, sandboxed adapter and recording/replay
+changes, see [Community adapter verification](COMMUNITY_VERIFICATION.md).
+
 Implementation and validation in the macOS development workspace. No DJ
 controller was physically available. This record is not hardware certification.
 

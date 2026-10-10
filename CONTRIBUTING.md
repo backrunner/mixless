@@ -75,6 +75,14 @@ colors and screenshot evidence. A successful build alone is not a UI review.
 
 ## Module boundaries
 
+Controller presets and adapters follow the
+[controller SDK](crates/mixless-controllers/README.md) and
+[independent ABI](crates/mixless-controllers/ADAPTER_API.md). Include author and
+license information, independent protocol sources, and reviewed replay fixtures.
+Do not use or convert Mixxx code, scripts, mappings or test data. Keep protocol,
+simulation and physical-device evidence distinct. Run the controller tool tests
+and the C SDK example check when changing the format or ABI.
+
 Split growing files by responsibility. Around 400–500 lines is a useful point
 to review a module; it is not a reason to divide one coherent implementation
 into numbered fragments. Keep entry modules focused on types, composition and

@@ -1,0 +1,1553 @@
+{
+  "$defs": {
+    "packet": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 4096,
+          "type": "array"
+        },
+        "endpoint": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "report": {
+          "enum": [
+            "output",
+            "feature",
+            null
+          ]
+        }
+      },
+      "required": [
+        "endpoint",
+        "data"
+      ],
+      "type": "object"
+    },
+    "target": {
+      "enum": [
+        {
+          "type": "xfader"
+        },
+        {
+          "type": "master"
+        },
+        {
+          "type": "master_gain"
+        },
+        {
+          "type": "cue_gain"
+        },
+        {
+          "type": "quantize"
+        },
+        {
+          "type": "xf_reverse"
+        },
+        {
+          "type": "automix"
+        },
+        {
+          "type": "automix_pause"
+        },
+        {
+          "type": "automix_skip"
+        },
+        {
+          "type": "automix_shuffle"
+        },
+        {
+          "deck": "a",
+          "type": "play"
+        },
+        {
+          "deck": "a",
+          "type": "temporary_cue"
+        },
+        {
+          "deck": "a",
+          "type": "sync"
+        },
+        {
+          "deck": "a",
+          "type": "key_lock"
+        },
+        {
+          "deck": "a",
+          "type": "vinyl"
+        },
+        {
+          "deck": "a",
+          "type": "slip"
+        },
+        {
+          "deck": "a",
+          "type": "reverse"
+        },
+        {
+          "deck": "a",
+          "type": "brake"
+        },
+        {
+          "deck": "a",
+          "type": "jog"
+        },
+        {
+          "deck": "a",
+          "type": "jog_touch"
+        },
+        {
+          "deck": "a",
+          "type": "tempo"
+        },
+        {
+          "deck": "a",
+          "type": "pitch"
+        },
+        {
+          "deck": "a",
+          "type": "deck_gain"
+        },
+        {
+          "deck": "a",
+          "type": "balance"
+        },
+        {
+          "deck": "a",
+          "type": "fader"
+        },
+        {
+          "deck": "a",
+          "type": "gain"
+        },
+        {
+          "deck": "a",
+          "type": "pfl"
+        },
+        {
+          "deck": "a",
+          "type": "filter"
+        },
+        {
+          "deck": "a",
+          "type": "resonance"
+        },
+        {
+          "deck": "a",
+          "type": "resonance_enabled"
+        },
+        {
+          "deck": "a",
+          "type": "loop"
+        },
+        {
+          "deck": "a",
+          "type": "loop_halve"
+        },
+        {
+          "deck": "a",
+          "type": "loop_double"
+        },
+        {
+          "deck": "a",
+          "type": "beat_back"
+        },
+        {
+          "deck": "a",
+          "type": "beat_forward"
+        },
+        {
+          "deck": "a",
+          "type": "fx_send"
+        },
+        {
+          "band": "high",
+          "deck": "a",
+          "type": "eq"
+        },
+        {
+          "band": "high",
+          "deck": "a",
+          "type": "eq_kill"
+        },
+        {
+          "band": "mid",
+          "deck": "a",
+          "type": "eq"
+        },
+        {
+          "band": "mid",
+          "deck": "a",
+          "type": "eq_kill"
+        },
+        {
+          "band": "low",
+          "deck": "a",
+          "type": "eq"
+        },
+        {
+          "band": "low",
+          "deck": "a",
+          "type": "eq_kill"
+        },
+        {
+          "deck": "a",
+          "stem": "vocals",
+          "type": "stem"
+        },
+        {
+          "deck": "a",
+          "stem": "drums",
+          "type": "stem"
+        },
+        {
+          "deck": "a",
+          "stem": "bass",
+          "type": "stem"
+        },
+        {
+          "deck": "a",
+          "stem": "instruments",
+          "type": "stem"
+        },
+        {
+          "deck": "a",
+          "index": 0,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 0,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 1,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 1,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 2,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 2,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 3,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 3,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 4,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 4,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 5,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 5,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 6,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 6,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "index": 7,
+          "type": "cue"
+        },
+        {
+          "deck": "a",
+          "index": 7,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "a",
+          "slot": 0,
+          "type": "fx_on"
+        },
+        {
+          "deck": "a",
+          "slot": 0,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "a",
+          "slot": 0,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "a",
+          "slot": 0,
+          "type": "fx_next"
+        },
+        {
+          "deck": "a",
+          "slot": 1,
+          "type": "fx_on"
+        },
+        {
+          "deck": "a",
+          "slot": 1,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "a",
+          "slot": 1,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "a",
+          "slot": 1,
+          "type": "fx_next"
+        },
+        {
+          "deck": "a",
+          "slot": 2,
+          "type": "fx_on"
+        },
+        {
+          "deck": "a",
+          "slot": 2,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "a",
+          "slot": 2,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "a",
+          "slot": 2,
+          "type": "fx_next"
+        },
+        {
+          "deck": "a",
+          "slot": 3,
+          "type": "fx_on"
+        },
+        {
+          "deck": "a",
+          "slot": 3,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "a",
+          "slot": 3,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "a",
+          "slot": 3,
+          "type": "fx_next"
+        },
+        {
+          "deck": "b",
+          "type": "play"
+        },
+        {
+          "deck": "b",
+          "type": "temporary_cue"
+        },
+        {
+          "deck": "b",
+          "type": "sync"
+        },
+        {
+          "deck": "b",
+          "type": "key_lock"
+        },
+        {
+          "deck": "b",
+          "type": "vinyl"
+        },
+        {
+          "deck": "b",
+          "type": "slip"
+        },
+        {
+          "deck": "b",
+          "type": "reverse"
+        },
+        {
+          "deck": "b",
+          "type": "brake"
+        },
+        {
+          "deck": "b",
+          "type": "jog"
+        },
+        {
+          "deck": "b",
+          "type": "jog_touch"
+        },
+        {
+          "deck": "b",
+          "type": "tempo"
+        },
+        {
+          "deck": "b",
+          "type": "pitch"
+        },
+        {
+          "deck": "b",
+          "type": "deck_gain"
+        },
+        {
+          "deck": "b",
+          "type": "balance"
+        },
+        {
+          "deck": "b",
+          "type": "fader"
+        },
+        {
+          "deck": "b",
+          "type": "gain"
+        },
+        {
+          "deck": "b",
+          "type": "pfl"
+        },
+        {
+          "deck": "b",
+          "type": "filter"
+        },
+        {
+          "deck": "b",
+          "type": "resonance"
+        },
+        {
+          "deck": "b",
+          "type": "resonance_enabled"
+        },
+        {
+          "deck": "b",
+          "type": "loop"
+        },
+        {
+          "deck": "b",
+          "type": "loop_halve"
+        },
+        {
+          "deck": "b",
+          "type": "loop_double"
+        },
+        {
+          "deck": "b",
+          "type": "beat_back"
+        },
+        {
+          "deck": "b",
+          "type": "beat_forward"
+        },
+        {
+          "deck": "b",
+          "type": "fx_send"
+        },
+        {
+          "band": "high",
+          "deck": "b",
+          "type": "eq"
+        },
+        {
+          "band": "high",
+          "deck": "b",
+          "type": "eq_kill"
+        },
+        {
+          "band": "mid",
+          "deck": "b",
+          "type": "eq"
+        },
+        {
+          "band": "mid",
+          "deck": "b",
+          "type": "eq_kill"
+        },
+        {
+          "band": "low",
+          "deck": "b",
+          "type": "eq"
+        },
+        {
+          "band": "low",
+          "deck": "b",
+          "type": "eq_kill"
+        },
+        {
+          "deck": "b",
+          "stem": "vocals",
+          "type": "stem"
+        },
+        {
+          "deck": "b",
+          "stem": "drums",
+          "type": "stem"
+        },
+        {
+          "deck": "b",
+          "stem": "bass",
+          "type": "stem"
+        },
+        {
+          "deck": "b",
+          "stem": "instruments",
+          "type": "stem"
+        },
+        {
+          "deck": "b",
+          "index": 0,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 0,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 1,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 1,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 2,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 2,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 3,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 3,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 4,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 4,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 5,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 5,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 6,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 6,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "index": 7,
+          "type": "cue"
+        },
+        {
+          "deck": "b",
+          "index": 7,
+          "type": "clear_cue"
+        },
+        {
+          "deck": "b",
+          "slot": 0,
+          "type": "fx_on"
+        },
+        {
+          "deck": "b",
+          "slot": 0,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "b",
+          "slot": 0,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "b",
+          "slot": 0,
+          "type": "fx_next"
+        },
+        {
+          "deck": "b",
+          "slot": 1,
+          "type": "fx_on"
+        },
+        {
+          "deck": "b",
+          "slot": 1,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "b",
+          "slot": 1,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "b",
+          "slot": 1,
+          "type": "fx_next"
+        },
+        {
+          "deck": "b",
+          "slot": 2,
+          "type": "fx_on"
+        },
+        {
+          "deck": "b",
+          "slot": 2,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "b",
+          "slot": 2,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "b",
+          "slot": 2,
+          "type": "fx_next"
+        },
+        {
+          "deck": "b",
+          "slot": 3,
+          "type": "fx_on"
+        },
+        {
+          "deck": "b",
+          "slot": 3,
+          "type": "fx_mix"
+        },
+        {
+          "deck": "b",
+          "slot": 3,
+          "type": "fx_previous"
+        },
+        {
+          "deck": "b",
+          "slot": 3,
+          "type": "fx_next"
+        },
+        {
+          "type": "browse_tracks"
+        },
+        {
+          "type": "browse_playlists"
+        },
+        {
+          "type": "track_previous"
+        },
+        {
+          "type": "track_next"
+        },
+        {
+          "type": "playlist_previous"
+        },
+        {
+          "type": "playlist_next"
+        },
+        {
+          "type": "load_focused"
+        },
+        {
+          "deck": "a",
+          "type": "load_selected"
+        },
+        {
+          "deck": "b",
+          "type": "load_selected"
+        },
+        {
+          "deck": "a",
+          "type": "focus"
+        },
+        {
+          "deck": "b",
+          "type": "focus"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Editor assistance. Run mixless-controller validate for semantic references, compatibility, checksums and sandbox limits.",
+  "properties": {
+    "adapter": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "api_version": {
+              "const": 1
+            },
+            "blake3": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "controls": {
+              "items": {
+                "$ref": "#/$defs/target"
+              },
+              "maxItems": 256,
+              "type": "array"
+            },
+            "reports": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "access": {
+                    "enum": [
+                      "output",
+                      "feature_write",
+                      "feature_read"
+                    ]
+                  },
+                  "endpoint": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "length": {
+                    "maximum": 1024,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "report_id": {
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "endpoint",
+                  "access",
+                  "report_id",
+                  "length"
+                ],
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "wasm_base64": {
+              "contentEncoding": "base64",
+              "maxLength": 349528,
+              "type": "string"
+            }
+          },
+          "required": [
+            "api_version",
+            "wasm_base64",
+            "blake3",
+            "controls"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "audio": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cue": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "device_name": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "master": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "device_name",
+            "master",
+            "cue"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bindings": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "endpoint": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "inverted": {
+            "type": "boolean"
+          },
+          "layer": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "active": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "maxLength": 100,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "active"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "enum": [
+              "auto",
+              "absolute",
+              "twos_complement",
+              "binary_offset",
+              "signed_bit",
+              "counter",
+              "button",
+              "momentary",
+              "toggle"
+            ]
+          },
+          "pickup": {
+            "type": "boolean"
+          },
+          "sensitivity": {
+            "exclusiveMinimum": 0,
+            "maximum": 1000,
+            "type": "number"
+          },
+          "sets_layer": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "address": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "channel": {
+                            "maximum": 15,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "number": {
+                            "maximum": 127,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": {
+                            "const": "note"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "channel",
+                          "number"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "channel": {
+                            "maximum": 15,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "number": {
+                            "maximum": 127,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": {
+                            "const": "cc"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "channel",
+                          "number"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "channel": {
+                            "maximum": 15,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "lsb": {
+                            "maximum": 127,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "msb": {
+                            "maximum": 127,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": {
+                            "const": "cc14"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "channel",
+                          "msb",
+                          "lsb"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "channel": {
+                            "maximum": 15,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": {
+                            "const": "pitch_bend"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "channel"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "channel": {
+                            "maximum": 15,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "parameter": {
+                            "maximum": 16383,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": {
+                            "const": "rpn"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "channel",
+                          "parameter"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "channel": {
+                            "maximum": 15,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "parameter": {
+                            "maximum": 16383,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "type": {
+                            "const": "nrpn"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "channel",
+                          "parameter"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "bytes": {
+                            "maximum": 4,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "offset": {
+                            "maximum": 4095,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "prefix": {
+                            "items": {
+                              "maximum": 255,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "maxItems": 4096,
+                            "type": "array"
+                          },
+                          "type": {
+                            "const": "sysex"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "prefix",
+                          "offset",
+                          "bytes"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "protocol": {
+                    "const": "midi"
+                  }
+                },
+                "required": [
+                  "protocol",
+                  "address"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "bit_offset": {
+                    "maximum": 32767,
+                    "minimum": 8,
+                    "type": "integer"
+                  },
+                  "bits": {
+                    "maximum": 32,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "little_endian": {
+                    "type": "boolean"
+                  },
+                  "protocol": {
+                    "const": "hid"
+                  },
+                  "report_id": {
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "signed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "protocol",
+                  "report_id",
+                  "bit_offset",
+                  "bits"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/$defs/target"
+          },
+          "ticks_per_revolution": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "endpoint",
+          "source",
+          "target"
+        ],
+        "type": "object"
+      },
+      "maxItems": 4096,
+      "type": "array"
+    },
+    "community": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "author": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "license": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "license_text": {
+              "maxLength": 65536,
+              "type": "string"
+            },
+            "minimum_host_version": {
+              "maxLength": 100,
+              "type": "string"
+            },
+            "package_id": {
+              "pattern": "^[a-z0-9._-]{1,100}$",
+              "type": "string"
+            },
+            "package_version": {
+              "maxLength": 100,
+              "type": "string"
+            },
+            "source_url": {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "tested_on": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "evidence_url": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "firmware": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "model": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "os": {
+                    "maxLength": 200,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "model",
+                  "firmware",
+                  "os",
+                  "evidence_url"
+                ],
+                "type": "object"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [
+            "package_id",
+            "package_version",
+            "minimum_host_version",
+            "author",
+            "license",
+            "license_text",
+            "source_url"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endpoints": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "matcher": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "interface": {
+                    "anyOf": [
+                      {
+                        "maximum": 255,
+                        "minimum": -1,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "product_id": {
+                    "maximum": 65535,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "protocol": {
+                    "const": "hid"
+                  },
+                  "usage": {
+                    "anyOf": [
+                      {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "usage_page": {
+                    "anyOf": [
+                      {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "vendor_id": {
+                    "maximum": 65535,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "protocol",
+                  "vendor_id",
+                  "product_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "names": {
+                    "items": {
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "type": "array"
+                  },
+                  "protocol": {
+                    "const": "midi"
+                  }
+                },
+                "required": [
+                  "protocol"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "matcher"
+        ],
+        "type": "object"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "feedback": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "bit_offset": {
+            "maximum": 32767,
+            "minimum": 8,
+            "type": "integer"
+          },
+          "bits": {
+            "maximum": 32,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "little_endian": {
+            "type": "boolean"
+          },
+          "off": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "on": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "packet": {
+            "$ref": "#/$defs/packet"
+          },
+          "signal": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "$ref": "#/$defs/target"
+                  },
+                  "type": {
+                    "const": "control"
+                  }
+                },
+                "required": [
+                  "type",
+                  "target"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "deck": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "a",
+                          "b"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "type": {
+                    "const": "meter"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "signal",
+          "packet",
+          "bit_offset",
+          "bits",
+          "on"
+        ],
+        "type": "object"
+      },
+      "maxItems": 2048,
+      "type": "array"
+    },
+    "id": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "initialize": {
+      "items": {
+        "$ref": "#/$defs/packet"
+      },
+      "maxItems": 128,
+      "type": "array"
+    },
+    "manufacturer": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "notes": {
+      "maxLength": 4096,
+      "type": "string"
+    },
+    "provenance": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "section": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "revision",
+          "section"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "shutdown": {
+      "items": {
+        "$ref": "#/$defs/packet"
+      },
+      "maxItems": 128,
+      "type": "array"
+    },
+    "verification": {
+      "enum": [
+        "protocol",
+        "simulation",
+        "hardware"
+      ]
+    },
+    "version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "version",
+    "id",
+    "name"
+  ],
+  "title": "mixless controller preset 1 / adapter API 1",
+  "type": "object"
+}

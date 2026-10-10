@@ -40,3 +40,4 @@ async-channel = "2"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+wat = "1"

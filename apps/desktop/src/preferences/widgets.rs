@@ -32,6 +32,31 @@ pub(super) fn select_indicator(popup: bool, enabled: bool) -> impl IntoElement {
     .flex_none()
 }
 
+fn disclosure_indicator(expanded: bool, enabled: bool) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let center = bounds.center();
+            let mut path = gpui::PathBuilder::stroke(px(1.25));
+            let points = if expanded {
+                [(-3., -1.5), (0., 1.5), (3., -1.5)]
+            } else {
+                [(-1.5, -3.), (1.5, 0.), (-1.5, 3.)]
+            };
+            path.move_to(center + gpui::point(px(points[0].0), px(points[0].1)));
+            for (x, y) in &points[1..] {
+                path.line_to(center + gpui::point(px(*x), px(*y)));
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, if enabled { theme::TEXT } else { theme::MUTED });
+            }
+        },
+    )
+    .w(px(12.))
+    .h(px(16.))
+    .flex_none()
+}
+
 pub(super) fn setting_stack() -> gpui::Div {
     div().flex().flex_col().min_w_0().gap(px(20.))
 }
@@ -101,6 +126,26 @@ pub(super) fn setting_detail(label: &str, detail: &str, control: gpui::AnyElemen
 }
 
 impl Preferences {
+    pub(super) fn disclosure_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        expanded: bool,
+        enabled: bool,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        self.button(id, label, enabled, action, cx)
+            .justify_between()
+            .pr_2()
+            .gap_2()
+            .when(expanded, |el| {
+                el.bg(theme::LINE)
+                    .border_color(theme::with_alpha(theme::TEXT, 0.24))
+            })
+            .child(disclosure_indicator(expanded, enabled))
+    }
+
     pub(super) fn segmented<T: Copy + PartialEq + 'static>(
         &self,
         id: &'static str,

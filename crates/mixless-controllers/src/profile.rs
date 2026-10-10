@@ -36,6 +36,10 @@ pub struct ControllerPreset {
     pub audio: Option<AudioRecommendation>,
     #[serde(default)]
     pub verification: Verification,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community: Option<crate::community::CommunityInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<crate::community::AdapterDefinition>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -257,9 +261,12 @@ impl ControllerPreset {
             shutdown: vec![],
             audio: None,
             verification: Verification::Protocol,
+            community: None,
+            adapter: None,
         }
     }
     pub fn validate(&self) -> Result<(), MidiError> {
+        crate::community::validate(self)?;
         if self.version != PROFILE_VERSION {
             return Err(error(format!(
                 "Unsupported preset version {}",
@@ -275,6 +282,12 @@ impl ControllerPreset {
         }
         if self.bindings.len() > 4096
             || self.notes.len() > 4096
+            || self.manufacturer.len() > 200
+            || self.provenance.len() > 64
+            || self
+                .provenance
+                .iter()
+                .any(|p| p.url.len() > 2048 || p.revision.len() > 200 || p.section.len() > 4096)
             || self.endpoints.len() > 32
             || self.feedback.len() > 2048
             || self.initialize.len() > 128
@@ -284,7 +297,7 @@ impl ControllerPreset {
         }
         let mut endpoints = BTreeSet::new();
         for e in &self.endpoints {
-            if e.id.is_empty() || !endpoints.insert(e.id.as_str()) {
+            if e.id.is_empty() || e.id.len() > 200 || !endpoints.insert(e.id.as_str()) {
                 return Err(error("Duplicate or empty endpoint"));
             }
         }
@@ -292,6 +305,7 @@ impl ControllerPreset {
         let mut sources = Vec::new();
         for b in &self.bindings {
             if b.id.is_empty()
+                || b.id.len() > 200
                 || !ids.insert(&b.id)
                 || !endpoints.contains(b.endpoint.as_str())
                 || !MidiTarget::all().contains(&b.target)
@@ -515,14 +529,28 @@ pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), Mid
     }
     result
 }
-pub(crate) fn read_preset(path: &Path) -> Result<ControllerPreset, MidiError> {
-    if fs::metadata(path).map_err(error)?.len() > 4 * 1024 * 1024 {
-        return Err(error("Preset exceeds 4 MiB"));
-    }
-    let p: ControllerPreset =
-        serde_json::from_slice(&fs::read(path).map_err(error)?).map_err(error)?;
+pub fn read_preset(path: &Path) -> Result<ControllerPreset, MidiError> {
+    let p: ControllerPreset = read_document(path, 4 * 1024 * 1024)?;
     p.validate()?;
     Ok(p)
+}
+pub fn read_document<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    limit: usize,
+) -> Result<T, MidiError> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(error)?;
+    if !file.metadata().map_err(error)?.is_file() {
+        return Err(error("Expected a regular JSON file"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(error)?;
+    if bytes.len() > limit {
+        return Err(error(format!("Document exceeds {} bytes", limit)));
+    }
+    serde_json::from_slice(&bytes).map_err(error)
 }
 pub(crate) struct PresetStore {
     pub path: PathBuf,
@@ -589,7 +617,12 @@ impl PresetStore {
         all
     }
     pub fn preset(&self, id: &str) -> Option<ControllerPreset> {
-        self.all().into_iter().find(|p| p.id == id)
+        self.state
+            .presets
+            .iter()
+            .find(|p| p.id == id)
+            .or_else(|| builtin_catalogue().iter().find(|p| p.id == id))
+            .cloned()
     }
     pub fn persist(&self) -> Result<(), MidiError> {
         atomic_json(&self.path, &self.state)
@@ -623,6 +656,9 @@ impl PresetStore {
 }
 
 pub fn builtin_presets() -> Vec<ControllerPreset> {
+    builtin_catalogue().to_vec()
+}
+fn builtin_catalogue() -> &'static [ControllerPreset] {
     static PRESETS: std::sync::OnceLock<Vec<ControllerPreset>> = std::sync::OnceLock::new();
-    PRESETS.get_or_init(crate::catalogue::catalogue).clone()
+    PRESETS.get_or_init(crate::catalogue::catalogue)
 }

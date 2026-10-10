@@ -310,8 +310,7 @@ impl Preferences {
         let selected = self.selected_value(selector);
         let row_height = row_height(selector);
         let width = f32::from(self.select_ui.anchor.size.width).max(match selector {
-            Selector::ControllerDevice => 320.,
-            Selector::MidiPreset => 280.,
+            Selector::ControllerDevice | Selector::MidiPreset => 0.,
             Selector::PresetActions => 188.,
             Selector::MidiNumber | Selector::MidiChannel => 96.,
             _ => 180.,

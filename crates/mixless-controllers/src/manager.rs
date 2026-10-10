@@ -46,6 +46,8 @@ impl ControllerManager {
             revision: AtomicU64::new(1),
             latencies: Mutex::new(Vec::new()),
             output_errors: Mutex::new(Default::default()),
+            adapter_errors: Mutex::new(Default::default()),
+            recording: Mutex::new(None),
         });
         let runtime = Runtime::start(shared.clone());
         Ok(Self {
@@ -88,7 +90,24 @@ impl ControllerManager {
             .read_feature(device.into(), report, length)
             .map_err(error)
     }
+    pub fn adapter_error(&self, device: &str) -> Option<String> {
+        let primary = self
+            .assignments()
+            .into_iter()
+            .find(|a| a.ports.values().any(|id| id == device))
+            .map(|a| a.device_id)
+            .unwrap_or_else(|| device.into());
+        self.shared
+            .adapter_errors
+            .lock()
+            .unwrap()
+            .get(&primary)
+            .cloned()
+    }
     pub fn feedback_error(&self, device: &str) -> Option<String> {
+        if let Some(e) = self.shared.adapter_errors.lock().unwrap().get(device) {
+            return Some(e.clone());
+        }
         self.shared
             .output_errors
             .lock()
@@ -98,6 +117,43 @@ impl ControllerManager {
     }
     pub fn storage_path(&self) -> &Path {
         &self.path
+    }
+    /// Start before assigning/reconnecting. Captures stay in memory until explicitly exported.
+    pub fn start_recording(
+        &self,
+        device: &str,
+        preset: &str,
+        firmware: &str,
+        os: &str,
+    ) -> Result<(), MidiError> {
+        let p = self
+            .preset(preset)
+            .ok_or_else(|| error("Preset unavailable"))?;
+        let mut recording = self.shared.recording.lock().unwrap();
+        if recording.is_some() {
+            return Err(error("A controller capture is already running"));
+        }
+        if self.assignments().iter().any(|a| a.device_id == device) {
+            return Err(error(
+                "Start recording before applying the preset, so initialization is captured",
+            ));
+        }
+        *recording = Some(crate::runtime::recording::Recorder::new(
+            device.into(),
+            crate::replay::ReportTrace {
+                version: 1,
+                preset_digest: crate::community::content_digest(&p),
+                model: p.name,
+                firmware: firmware.into(),
+                os: os.into(),
+                truncated: false,
+                frames: vec![],
+            },
+        ));
+        Ok(())
+    }
+    pub fn stop_recording(&self) -> Result<crate::replay::ReportTrace, MidiError> {
+        self.runtime.stop_recording().map_err(error)
     }
     pub fn last_packet(&self) -> Option<ReceivedPacket> {
         self.shared.last.lock().unwrap().clone()
@@ -138,6 +194,9 @@ impl ControllerManager {
     }
     pub fn save_preset(&self, mut preset: ControllerPreset) -> Result<String, MidiError> {
         preset.validate()?;
+        if preset.adapter.is_some() {
+            crate::adapter::AdapterInstance::new(&preset)?;
+        }
         preset.verification = Verification::Protocol;
         // Built-ins are always copied; their catalogue data is immutable.
         if preset.is_builtin() {
@@ -208,6 +267,9 @@ impl ControllerManager {
     }
     pub fn preview_import(&self, path: &Path) -> Result<ImportReport, MidiError> {
         let preset = read_preset(path)?;
+        if preset.adapter.is_some() {
+            crate::adapter::AdapterInstance::new(&preset)?;
+        }
         let all = self.presets();
         let conflicts = all
             .iter()
@@ -222,7 +284,14 @@ impl ControllerManager {
         let requirements = preset
             .endpoints
             .iter()
-            .map(|e| format!("{}: {:?}", e.id, e.matcher))
+            .map(|e| match &e.matcher {
+                DeviceMatcher::Midi { names } => format!("{}: MIDI {}", e.id, names.join(", ")),
+                DeviceMatcher::Hid {
+                    vendor_id,
+                    product_id,
+                    ..
+                } => format!("{}: HID {:04X}:{:04X}", e.id, vendor_id, product_id),
+            })
             .collect();
         Ok(ImportReport {
             preset,
@@ -283,6 +352,8 @@ impl ControllerManager {
                 }
             }
         }
+        let primary = assignment.device_id.clone();
+        let reapply = self.assignments().contains(&assignment);
         self.store.lock().unwrap().edit(|s| {
             if s.assignments.iter().any(|a| {
                 a.device_id != assignment.device_id && a.ports.values().any(|id| ports.contains(id))
@@ -295,6 +366,9 @@ impl ControllerManager {
             Ok(())
         })?;
         self.changed();
+        if reapply {
+            self.runtime.restart(primary);
+        }
         Ok(())
     }
     pub fn unassign(&self, device: &str) -> Result<(), MidiError> {

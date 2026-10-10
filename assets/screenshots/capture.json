@@ -614,6 +614,582 @@
       "scene": "controller-connected",
       "desktopLocked": true,
       "virtualMidi": true
+    },
+    "community-controllers/adapter-import": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "adapter-import",
+      "capturedAt": "2026-10-10T13:48:44.115064+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:47:46Z"
+      },
+      "binarySha256": "55e4053fe12f1faf37a9c32ee8695b5009ff5fbe14e4edc5e5173632c93400af",
+      "locked": true,
+      "capture": "Native macOS window capture at 2x using the production Preferences view and an isolated temporary data directory. Synthetic community adapter, no physical device. Session locked; no OS pointer-interaction claim.",
+      "file": "community-controllers/adapter-import.png"
+    },
+    "community-controllers/adapter-import-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "adapter-import",
+      "capturedAt": "2026-10-10T13:48:45.176602+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:47:46Z"
+      },
+      "binarySha256": "55e4053fe12f1faf37a9c32ee8695b5009ff5fbe14e4edc5e5173632c93400af",
+      "locked": true,
+      "capture": "Native macOS window capture at 2x using the production Preferences view and an isolated temporary data directory. Synthetic community adapter, no physical device. Session locked; no OS pointer-interaction claim.",
+      "file": "community-controllers/adapter-import-small.png"
+    },
+    "community-controllers/adapter-details": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "adapter-details",
+      "capturedAt": "2026-10-10T13:48:46.244363+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:47:46Z"
+      },
+      "binarySha256": "55e4053fe12f1faf37a9c32ee8695b5009ff5fbe14e4edc5e5173632c93400af",
+      "locked": true,
+      "capture": "Native macOS window capture at 2x using the production Preferences view and an isolated temporary data directory. Synthetic community adapter, no physical device. Session locked; no OS pointer-interaction claim.",
+      "file": "community-controllers/adapter-details.png"
+    },
+    "community-controllers/adapter-details-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "adapter-details",
+      "capturedAt": "2026-10-10T13:48:47.332155+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:47:46Z"
+      },
+      "binarySha256": "55e4053fe12f1faf37a9c32ee8695b5009ff5fbe14e4edc5e5173632c93400af",
+      "locked": true,
+      "capture": "Native macOS window capture at 2x using the production Preferences view and an isolated temporary data directory. Synthetic community adapter, no physical device. Session locked; no OS pointer-interaction claim.",
+      "file": "community-controllers/adapter-details-small.png"
+    },
+    "community-controllers/adapter-mapping": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "adapter-mapping",
+      "capturedAt": "2026-10-10T13:48:48.417927+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:47:46Z"
+      },
+      "binarySha256": "55e4053fe12f1faf37a9c32ee8695b5009ff5fbe14e4edc5e5173632c93400af",
+      "locked": true,
+      "capture": "Native macOS window capture at 2x using the production Preferences view and an isolated temporary data directory. Synthetic community adapter, no physical device. Session locked; no OS pointer-interaction claim.",
+      "file": "community-controllers/adapter-mapping.png"
+    },
+    "community-controllers/adapter-mapping-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "adapter-mapping",
+      "capturedAt": "2026-10-10T13:48:49.607367+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:47:46Z"
+      },
+      "binarySha256": "55e4053fe12f1faf37a9c32ee8695b5009ff5fbe14e4edc5e5173632c93400af",
+      "locked": true,
+      "capture": "Native macOS window capture at 2x using the production Preferences view and an isolated temporary data directory. Synthetic community adapter, no physical device. Session locked; no OS pointer-interaction claim.",
+      "file": "community-controllers/adapter-mapping-small.png"
+    },
+    "community-review/general": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "general",
+      "capturedAt": "2026-10-10T16:54:42.908229+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/general.png"
+    },
+    "community-review/general-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "general",
+      "capturedAt": "2026-10-10T16:54:44.004787+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/general-small.png"
+    },
+    "community-review/audio": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "audio",
+      "capturedAt": "2026-10-10T16:54:45.143789+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/audio.png"
+    },
+    "community-review/audio-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "audio",
+      "capturedAt": "2026-10-10T16:54:46.247997+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/audio-small.png"
+    },
+    "community-review/controllers": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "controllers",
+      "capturedAt": "2026-10-10T16:54:47.343409+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/controllers.png"
+    },
+    "community-review/controllers-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "controllers",
+      "capturedAt": "2026-10-10T16:54:48.453748+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/controllers-small.png"
+    },
+    "community-review/storage": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "storage",
+      "capturedAt": "2026-10-10T16:54:49.567975+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/storage.png"
+    },
+    "community-review/storage-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "storage",
+      "capturedAt": "2026-10-10T16:54:50.664525+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/storage-small.png"
+    },
+    "community-review/adapter-import": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "adapter-import",
+      "capturedAt": "2026-10-10T16:54:51.793058+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/adapter-import.png"
+    },
+    "community-review/adapter-import-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "adapter-import",
+      "capturedAt": "2026-10-10T16:54:52.960995+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/adapter-import-small.png"
+    },
+    "community-review/adapter-mapping": {
+      "width": 1880,
+      "height": 1640,
+      "virtualMidi": false,
+      "scene": "adapter-mapping",
+      "capturedAt": "2026-10-10T16:54:54.057229+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/adapter-mapping.png"
+    },
+    "community-review/adapter-mapping-small": {
+      "width": 1440,
+      "height": 1080,
+      "virtualMidi": false,
+      "scene": "adapter-mapping",
+      "capturedAt": "2026-10-10T16:54:55.160875+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T16:53:24Z"
+      },
+      "binarySha256": "f7ce46aadb680b9d526f49b1d84e0aaa1034c5a67745886e22fd2e192089c2ac",
+      "locked": false,
+      "capture": "Unmodified native macOS window capture at 2x using an isolated offline test configuration. Synthetic presets only; no physical controller. Separate native pointer/keyboard checks are recorded in COMMUNITY_VERIFICATION.md.",
+      "file": "community-review/adapter-mapping-small.png"
+    },
+    "controller-layout-small": {
+      "file": "controller-layout/small.jpg",
+      "capturedAt": "2026-10-10T18:07:55.013Z",
+      "width": 1440,
+      "height": 1080,
+      "scene": "controllers",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:07:13Z"
+      },
+      "binarySha256": "9291ca2aeaecf25660aaffb9b6a8280f5f9c418871e6650aad0fb6d118bab18d",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Always-visible controller layout review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-layout-small-mappings": {
+      "file": "controller-layout/small-mappings.jpg",
+      "capturedAt": "2026-10-10T18:08:32.197Z",
+      "width": 1440,
+      "height": 1080,
+      "scene": "controllers-scrolled",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:07:13Z"
+      },
+      "binarySha256": "9291ca2aeaecf25660aaffb9b6a8280f5f9c418871e6650aad0fb6d118bab18d",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Always-visible controller layout review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-layout-default": {
+      "file": "controller-layout/default.jpg",
+      "capturedAt": "2026-10-10T18:09:04.198Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "controllers",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:07:13Z"
+      },
+      "binarySha256": "9291ca2aeaecf25660aaffb9b6a8280f5f9c418871e6650aad0fb6d118bab18d",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Always-visible controller layout review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-layout-mappings": {
+      "file": "controller-layout/mappings.jpg",
+      "capturedAt": "2026-10-10T18:09:16.073Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "controllers-scrolled",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:07:13Z"
+      },
+      "binarySha256": "9291ca2aeaecf25660aaffb9b6a8280f5f9c418871e6650aad0fb6d118bab18d",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Always-visible controller layout review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-buttons-details": {
+      "file": "controller-buttons/details.jpg",
+      "capturedAt": "2026-10-10T18:16:32.777Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "controller-details",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:12:29Z"
+      },
+      "binarySha256": "c79da8cc1a7c7aebad35af869797f50a282679a16ca363cb5b948ebd4e23d796",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Controller disclosure buttons review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-buttons-default": {
+      "file": "controller-buttons/default.jpg",
+      "capturedAt": "2026-10-10T18:16:55.856Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "controllers",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:12:29Z"
+      },
+      "binarySha256": "c79da8cc1a7c7aebad35af869797f50a282679a16ca363cb5b948ebd4e23d796",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Controller disclosure buttons review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-buttons-inputs": {
+      "file": "controller-buttons/inputs.jpg",
+      "capturedAt": "2026-10-10T18:17:04.203Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "midi-inputs",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:12:29Z"
+      },
+      "binarySha256": "c79da8cc1a7c7aebad35af869797f50a282679a16ca363cb5b948ebd4e23d796",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Controller disclosure buttons review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-buttons-small": {
+      "file": "controller-buttons/small.jpg",
+      "capturedAt": "2026-10-10T18:17:38.932Z",
+      "width": 1440,
+      "height": 1080,
+      "scene": "controllers",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:12:29Z"
+      },
+      "binarySha256": "c79da8cc1a7c7aebad35af869797f50a282679a16ca363cb5b948ebd4e23d796",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Controller disclosure buttons review using the production Preferences view and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build identity and SHA-256 refer to the source executable. No physical controller attached.",
+      "desktopLocked": false
+    },
+    "controller-icons-default": {
+      "file": "controller-icons/default.jpg",
+      "capturedAt": "2026-10-10T18:21:44.583Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "controllers",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:21:08Z"
+      },
+      "binarySha256": "1a9eeaa8c443f7e85597a36f041d4a849220a43afcfd1f00a844ecb0a75ccbcd",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Details/select icon alignment review using prepared production Preferences states and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. Rendering evidence only; mouse toggling was not established in this pass.",
+      "desktopLocked": false
+    },
+    "controller-icons-expanded": {
+      "file": "controller-icons/expanded.jpg",
+      "capturedAt": "2026-10-10T18:24:00.687Z",
+      "width": 1880,
+      "height": 1640,
+      "scene": "controller-details",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:21:08Z"
+      },
+      "binarySha256": "1a9eeaa8c443f7e85597a36f041d4a849220a43afcfd1f00a844ecb0a75ccbcd",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Details/select icon alignment review using prepared production Preferences states and isolated temporary offline data. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. Rendering evidence only; mouse toggling was not established in this pass.",
+      "desktopLocked": false
+    },
+    "controller-columns-default": {
+      "file": "controller-columns/default.jpg",
+      "capturedAt": "2026-10-10T18:36:48.359Z",
+      "scene": "controllers",
+      "width": 1880,
+      "height": 1640,
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:36:01Z"
+      },
+      "binarySha256": "fb59e41fb2ab081948b2ae5b75f85b1af5b822b0c4f9e8779e0695f6ee802056",
+      "desktopLocked": false,
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Responsive controller details review using the production Preferences view and isolated temporary offline data. Native mouse checks verified Details toggling at both sizes and repeated-click preset menu closure at 940 x 820. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. No physical controller attached."
+    },
+    "controller-columns-details": {
+      "file": "controller-columns/details.jpg",
+      "capturedAt": "2026-10-10T18:37:10.717Z",
+      "scene": "controller-details",
+      "width": 1880,
+      "height": 1640,
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:36:01Z"
+      },
+      "binarySha256": "fb59e41fb2ab081948b2ae5b75f85b1af5b822b0c4f9e8779e0695f6ee802056",
+      "desktopLocked": false,
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Responsive controller details review using the production Preferences view and isolated temporary offline data. Native mouse checks verified Details toggling at both sizes and repeated-click preset menu closure at 940 x 820. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. No physical controller attached."
+    },
+    "controller-columns-preset-options": {
+      "file": "controller-columns/preset-options.jpg",
+      "capturedAt": "2026-10-10T18:37:16.035Z",
+      "scene": "preset-options",
+      "width": 1880,
+      "height": 1640,
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:36:01Z"
+      },
+      "binarySha256": "fb59e41fb2ab081948b2ae5b75f85b1af5b822b0c4f9e8779e0695f6ee802056",
+      "desktopLocked": false,
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Responsive controller details review using the production Preferences view and isolated temporary offline data. Native mouse checks verified Details toggling at both sizes and repeated-click preset menu closure at 940 x 820. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. No physical controller attached."
+    },
+    "controller-columns-small": {
+      "file": "controller-columns/small.jpg",
+      "capturedAt": "2026-10-10T18:37:40.417Z",
+      "scene": "controller-details",
+      "width": 1440,
+      "height": 1080,
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-2-ga020455-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T18:36:01Z"
+      },
+      "binarySha256": "fb59e41fb2ab081948b2ae5b75f85b1af5b822b0c4f9e8779e0695f6ee802056",
+      "desktopLocked": false,
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "scope": "Responsive controller details review using the production Preferences view and isolated temporary offline data. Native mouse checks verified Details toggling at both sizes and repeated-click preset menu closure at 940 x 820. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. No physical controller attached."
     }
   }
 }

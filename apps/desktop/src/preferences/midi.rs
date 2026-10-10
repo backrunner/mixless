@@ -44,9 +44,9 @@ fn input_label(binding: &mixless_controllers::Binding) -> String {
 }
 
 impl Preferences {
-    fn mapping_sources(&self, target: &MidiTarget) -> Vec<String> {
+    fn mapping_profile(&self) -> Option<mixless_controllers::ControllerPreset> {
         let hub = self.core.midi.lock().expect("controllers").clone();
-        let profile = hub.as_ref().and_then(|h| {
+        hub.as_ref().and_then(|h| {
             if let Some(device) = &self.controller_device {
                 h.assignments()
                     .iter()
@@ -55,8 +55,26 @@ impl Preferences {
             } else {
                 self.selected_preset.as_ref().and_then(|id| h.preset(id))
             }
-        });
+        })
+    }
+
+    fn mapping_sources(&self, target: &MidiTarget) -> Vec<String> {
+        self.mapping_sources_in(target, self.mapping_profile().as_ref())
+    }
+
+    fn mapping_sources_in(
+        &self,
+        target: &MidiTarget,
+        profile: Option<&mixless_controllers::ControllerPreset>,
+    ) -> Vec<String> {
         if let Some(p) = profile {
+            if let Some(adapter) = &p.adapter {
+                return if adapter.controls.contains(target) {
+                    vec!["Adapter".into()]
+                } else {
+                    vec![]
+                };
+            }
             p.bindings
                 .iter()
                 .filter(|b| &b.target == target)
@@ -305,7 +323,11 @@ impl Preferences {
         let busy = self.job.is_some();
         let ready = self.core.midi.lock().expect("MIDI").is_some();
         let targets = self.midi_targets();
-        let sources: Vec<_> = targets.iter().map(|t| self.mapping_sources(t)).collect();
+        let profile = self.mapping_profile();
+        let sources: Vec<_> = targets
+            .iter()
+            .map(|t| self.mapping_sources_in(t, profile.as_ref()))
+            .collect();
         let selected = self.binding.target.clone();
         let state = cx.entity();
         let table = gpui::uniform_list("midi-control-list", targets.len(), move |range, _, _| {
@@ -376,7 +398,7 @@ impl Preferences {
             .max_w(px(1000.))
             .mx_auto()
             .gap_4()
-            .child(self.controller_panel(cx))
+            .child(self.controller_panel(width, cx))
             .child(
                 div()
                     .flex()
@@ -396,43 +418,17 @@ impl Preferences {
                                 "Preset mappings"
                             }),
                     )
-                    .child(
-                        self.button(
-                            "midi-layout",
-                            if self.midi_layout_open {
-                                "Hide layout"
-                            } else {
-                                "Show layout"
-                            },
-                            true,
-                            |s, _, _| s.midi_layout_open = !s.midi_layout_open,
-                            cx,
-                        )
-                        .bg(theme::BG)
-                        .border_0()
-                        .px_2(),
-                    )
-                    .child(
-                        self.button(
-                            "midi-inputs",
-                            if self.midi_inputs_open {
-                                "Hide inputs"
-                            } else {
-                                "MIDI inputs…"
-                            },
-                            !busy,
-                            |s, _, _| s.midi_inputs_open = !s.midi_inputs_open,
-                            cx,
-                        )
-                        .bg(theme::BG)
-                        .border_0()
-                        .px_2(),
-                    ),
+                    .child(self.disclosure_button(
+                        "midi-inputs",
+                        "MIDI inputs",
+                        self.midi_inputs_open,
+                        !busy,
+                        |s, _, _| s.midi_inputs_open = !s.midi_inputs_open,
+                        cx,
+                    )),
             )
             .when(self.midi_inputs_open, |el| el.child(self.midi_inputs(cx)))
-            .when(self.midi_layout_open, |el| {
-                el.child(self.midi_diagram(width, cx))
-            })
+            .child(self.midi_diagram(width, cx))
             .when(self.quick_learning || self.midi_feedback.is_some(), |el| {
                 el.child(self.midi_learn_bar(cx))
             })
@@ -498,6 +494,7 @@ impl Preferences {
 
     fn midi_editor(&self, enabled: bool, cx: &Context<Self>) -> gpui::AnyElement {
         let sources = self.mapping_sources(&self.binding.target);
+        let adapter = self.mapping_profile().is_some_and(|p| p.adapter.is_some());
         // Layered/high-resolution inputs cannot be represented by the Note/CC
         // form. Show their actual address instead of an invented default value.
         if !self.midi_learn_available() || (self.editing.is_none() && !sources.is_empty()) {
@@ -522,9 +519,15 @@ impl Preferences {
                         .text_size(px(11.))
                         .text_color(theme::MUTED)
                         .when(sources.is_empty(), |el| el.child("Unmapped"))
-                        .children(sources.into_iter().map(|source| div().child(source))),
+                        .children(sources.into_iter().map(|source| {
+                            div().child(if adapter {
+                                "Defined by adapter".to_string()
+                            } else {
+                                source
+                            })
+                        })),
                 )
-                .when(self.selected_preset.is_some(), |el| {
+                .when(self.selected_preset.is_some() && !adapter, |el| {
                     el.child(self.button(
                         "edit-preset-mapping",
                         "Edit MIDI / HID…",
@@ -542,7 +545,21 @@ impl Preferences {
                         cx,
                     ))
                 })
-                .when(self.midi_learn_available(), |el| {
+                .when_some(
+                    self.mapping_profile()
+                        .filter(|p| p.adapter.is_some())
+                        .and_then(|p| p.community),
+                    |el, c| {
+                        el.child(self.button(
+                            "adapter-source",
+                            "View source",
+                            true,
+                            move |_, _, cx| cx.open_url(&c.source_url),
+                            cx,
+                        ))
+                    },
+                )
+                .when(self.midi_learn_available() && !adapter, |el| {
                     el.child(self.button(
                         "midi-preview-learn",
                         if self.learning {

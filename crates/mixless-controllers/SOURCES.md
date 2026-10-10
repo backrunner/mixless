@@ -91,6 +91,12 @@ otherwise unambiguous profiles before adding them.
   wrapping counter) invented for mixless, not captured from another project.
 - CoreMIDI virtual-port tests validate real OS MIDI transport, feedback, hotplug,
   disconnection releases and dispatch latency with no UI polling.
+- The community ABI, C header, declarative example and synthetic HID adapter are
+  independently authored here. Their report layouts, handshake and checksum are
+  fictional test protocols; they do not describe or certify any marketed device.
+  Wasm embedding uses [Wasmi 2.0.0](https://github.com/wasmi-labs/wasmi/tree/v2.0.0)
+  API/source documentation and [HIDAPI](https://libusb.info/hidapi/group__API.html)
+  transport documentation. Their redistribution notices are retained separately.
 
 No HID model is advertised as supported without manufacturer protocol evidence
 or independently collected report traces. A report descriptor alone does not

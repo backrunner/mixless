@@ -173,6 +173,16 @@ pub enum MidiTarget {
 }
 
 impl MidiTarget {
+    /// Every cue on a deck ends the same engine preview; ownership follows that control.
+    pub(crate) fn holds_same_control(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Cue { deck: a, .. } | Self::TemporaryCue { deck: a },
+                Self::Cue { deck: b, .. } | Self::TemporaryCue { deck: b },
+            ) => a == b,
+            _ => self == other,
+        }
+    }
     pub fn all() -> Vec<Self> {
         let mut targets = vec![
             Self::Xfader,

@@ -65,6 +65,12 @@ pub fn write_report_field(
     true
 }
 impl Router {
+    pub(super) fn is_held(&self, target: &MidiTarget) -> bool {
+        self.held
+            .values()
+            .any(|held| held.holds_same_control(target))
+    }
+
     pub fn release_device(&mut self, id: &str) -> Vec<MidiAction> {
         let keys: Vec<_> = self.held.keys().filter(|(d, _)| d == id).cloned().collect();
         let actions: Vec<_> = keys
@@ -81,8 +87,33 @@ impl Router {
         self.scopes.remove(id);
         actions
             .into_iter()
-            .filter(|a| !self.held.values().any(|t| t == &a.target))
+            .filter(|a| !self.is_held(&a.target))
             .collect()
+    }
+    pub(super) fn release_preset(&mut self, preset: &str) -> Vec<(String, MidiAction)> {
+        let prefix = format!("{preset}:");
+        let keys: Vec<_> = self
+            .held
+            .keys()
+            .filter(|(_, binding)| binding.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut actions = Vec::new();
+        for key in keys {
+            if let Some(target) = self.held.remove(&key) {
+                actions.push((
+                    key.0,
+                    MidiAction {
+                        target,
+                        value: MidiValue::Release,
+                    },
+                ));
+            }
+        }
+        self.states
+            .retain(|(_, binding), _| !binding.starts_with(&prefix));
+        actions.retain(|(_, a)| !self.is_held(&a.target));
+        actions
     }
     pub fn release_all(&mut self) -> Vec<(String, MidiAction)> {
         let actions = self
@@ -366,7 +397,7 @@ impl Router {
                 }
                 ValueMode::Auto => unreachable!(),
             };
-            if value == MidiValue::Release && self.held.values().any(|target| target == &b.target) {
+            if value == MidiValue::Release && self.is_held(&b.target) {
                 continue;
             }
             result.push(MidiAction {
@@ -402,9 +433,7 @@ impl Router {
                 }
             }
         }
-        result.retain(|a| {
-            a.value != MidiValue::Release || !self.held.values().any(|t| t == &a.target)
-        });
+        result.retain(|a| a.value != MidiValue::Release || !self.is_held(&a.target));
         result
     }
 }

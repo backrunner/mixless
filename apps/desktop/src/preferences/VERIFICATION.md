@@ -1,6 +1,134 @@
-# Settings UI review — 2026-10-10
+# Settings UI review
 
-## Current revision: selects, switches and concise device details
+The [2026-10-11 follow-up review](../../../../crates/mixless-controllers/COMMUNITY_VERIFICATION.md#follow-up-review-and-fixes--2026-10-11)
+records controller fixes, 124 passing desktop tests and native
+minimum-window checks of import cancellation and preset menus.
+
+## Responsive controller details — 2026-10-11
+
+Device/preset selection occupies the left column; expanded preset type, mapping
+and feedback counts, validation and related actions occupy the right column.
+Below an 848 px window width, details stack beneath the choices. The choices
+keep their width and button alignment when Details toggles. Long detail values
+use one line with the full value available in a tooltip. Controller value menus
+follow the trigger width rather than retaining the old 280/320 px minimum.
+
+The development build, **124 desktop tests (6 ignored)**, **432 workspace tests
+(24 ignored, excluding desktop)**, desktop formatting and `git diff --check` passed.
+The existing mapping regression checks both sides of the responsive breakpoint,
+column bounds, usable preset field width, stable Details/Manage alignment and
+the anchored preset menu. During implementation, it caught an intrinsic-width
+collapse at the minimum window size; explicit panel/choice widths resolved it.
+Workspace-wide rustfmt still reports an existing module-order difference in
+`mixless-protocol/src/lib.rs`; that unrelated file was not changed in this UI revision.
+The subsequent pre-commit review corrected that ordering; workspace formatting now passes.
+
+Native mouse checks at 940 × 820 verified Details expansion/collapse without
+moving the choices and repeated-click closure of the aligned preset menu.
+At 720 × 540, details stacked beneath the choices and collapsed correctly; the
+permanent layout remained below the header and Done remained visible.
+Both isolated offline preview processes exited successfully on Escape.
+
+Original 2× native JPEGs:
+[default](../../../../assets/screenshots/controller-columns/default.jpg),
+[two columns](../../../../assets/screenshots/controller-columns/details.jpg),
+[preset menu](../../../../assets/screenshots/controller-columns/preset-options.jpg)
+and [minimum window](../../../../assets/screenshots/controller-columns/small.jpg).
+Source build/hash, dates and dimensions are in
+[capture.json](../../../../assets/screenshots/capture.json). The distinct test
+bundle was ad hoc signed and used temporary data, preserving the user's running
+application and settings. These are UI checks, with no controller hardware attached.
+
+## Details/select indicator alignment — 2026-10-11
+
+Details now shares Manage's 88 px width and the select's 8 px right inset.
+Disclosure buttons anchor their indicator at the right edge rather than
+centering the label/indicator together. The existing 12 × 16 px vector boxes
+and 1.25 px strokes remain consistent. Closed and expanded arrows stay in the
+same column as the selects above.
+
+The development build, **124 desktop tests (6 ignored)**, **432 workspace tests
+(24 ignored, excluding desktop)**, formatting and `git diff --check` passed.
+The existing interaction test checks that Details and Manage share both edges
+and that expansion preserves the Details button's size. Native prepared-state
+captures confirm the alignment when
+[closed](../../../../assets/screenshots/controller-icons/default.jpg) and
+[expanded](../../../../assets/screenshots/controller-icons/expanded.jpg).
+Coordinates clicked through the automation did not toggle this isolated preview
+window during this pass; these images establish rendering, while toggle behavior
+was verified by GPUI tests. Both preview processes exited successfully on Escape.
+Build/hash, dates and dimensions are in
+[capture.json](../../../../assets/screenshots/capture.json).
+
+## Recognizable controller buttons — 2026-10-11
+
+Details, MIDI inputs, Preset notes and Input monitor share a bordered, filled
+32 px disclosure button. Labels stay fixed while a vector chevron and stronger
+border show the expanded state. Hover uses the shared button surface. Removed
+the overrides that made controller actions look like plain text; recommended
+presets now use a compact, left-aligned button.
+
+Verification passed: **124 desktop tests, 6 ignored**; **432 workspace tests,
+24 ignored** (excluding desktop); the development build, formatting and
+`git diff --check`. The existing mapping interaction test now checks stable
+Details/MIDI inputs button dimensions through expansion and collapse, and
+confirms that opening MIDI inputs preserves the permanent diagram below it.
+Existing device tests cover notes/monitor disclosure and assignment isolation.
+
+Native mouse checks at 940 × 820 confirmed Details, Preset notes and MIDI inputs
+expand and collapse, keep their labels/positions and display the selected
+border and chevron. At 720 × 540 the buttons fit horizontally and MIDI inputs
+opens/closes correctly. The inactive test window first required keyboard focus;
+mouse checks were performed after activation. Done closed both preview processes.
+Checks used a distinct ad hoc signed test bundle with isolated offline data and
+did not change the user's running application or settings. No controller hardware
+was attached; these are UI checks.
+
+Original 2× native JPEGs:
+[default](../../../../assets/screenshots/controller-buttons/default.jpg),
+[Details expanded](../../../../assets/screenshots/controller-buttons/details.jpg),
+[MIDI inputs expanded](../../../../assets/screenshots/controller-buttons/inputs.jpg)
+and [minimum window](../../../../assets/screenshots/controller-buttons/small.jpg).
+Capture dates, dimensions and source build/hash are recorded in
+[capture.json](../../../../assets/screenshots/capture.json).
+
+## Always-visible controller layout — 2026-10-11
+
+Controllers now always renders the clickable layout above the mapping list.
+The Show/Hide layout button and its state have been removed, including the
+preview harness override. MIDI inputs and device details remain disclosures.
+Small windows scroll the layout and mapping workspace together while the tabs
+and Done footer remain fixed. Stem labels have more space at the minimum width.
+The English and Chinese mapping guides describe the permanent layout.
+
+Verification passed: **124 desktop tests, 6 ignored**; **432 workspace tests,
+24 ignored** (excluding desktop); the development build, formatting,
+`git diff --check` and strict bilingual content checks. Existing dependency
+future-compatibility and engine deprecation warnings remain.
+
+The GPUI tests now exercise the layout without opening a disclosure at
+720 × 540, 940 × 820 and 1200 × 900. Mapping group and Learn/editor tests scroll
+to their controls before clicking, and the all-tab test verifies that the final
+mapping controls remain reachable with the footer inside the window.
+
+Native checks on an unlocked desktop used an isolated, offline test bundle with
+a distinct identifier, preserving the user's running application and settings.
+At 940 × 820, clicking Deck B Play selected its mapping and input without arming
+offline learning. At 720 × 540, the permanent layout and separate Stem labels
+rendered correctly; scrolling reached the entire mapping list and inspector.
+Done stayed visible and closed both preview processes successfully.
+
+Four original 2× JPEG captures record the final build:
+[default layout](../../../../assets/screenshots/controller-layout/default.jpg),
+[selected mapping](../../../../assets/screenshots/controller-layout/mappings.jpg),
+[minimum window](../../../../assets/screenshots/controller-layout/small.jpg) and
+[minimum mapping workspace](../../../../assets/screenshots/controller-layout/small-mappings.jpg).
+Dates, dimensions, source build identity and binary SHA-256 are in
+[capture.json](../../../../assets/screenshots/capture.json). The test clone is
+ad hoc signed, so its signed binary hash differs from the recorded source hash.
+These checks establish UI rendering and interaction, not hardware compatibility.
+
+## Previous revision: selects, switches and concise device details — 2026-10-10
 
 - General, Audio I/O, Controllers and Storage use quiet dividers, compact rows,
   smaller button/menu radii and neutral selected states. Removed rounded group
@@ -111,6 +239,17 @@ An unlocked desktop pass for pointer movement, trackpad input and focus changes
 remains a separate verification step.
 
 ## Earlier evidence
+
+The 2026-10-11 overall review additionally checked all four settings tabs and
+community import/mapping at default and minimum sizes, then exercised native
+menus, keyboard selection, mapping groups and scrolling on an unlocked desktop.
+See [the current review record](../../../../crates/mixless-controllers/COMMUNITY_VERIFICATION.md#overall-review-and-fixes--2026-10-11)
+for the twelve captures, exact tested interactions and their limits.
+
+Community adapter import, preset details and read-only mapping rendering were
+checked subsequently at both window sizes. The six native captures, build
+identity, GPUI test results and locked-desktop limits are recorded in
+[Community adapter verification](../../../../crates/mixless-controllers/COMMUNITY_VERIFICATION.md).
 
 `settings-general.png`, the original controller captures and `settings-review/`
 belong to preceding UI revisions. Their timestamps and build records were not

@@ -1,6 +1,7 @@
 use super::*;
 use crate::state::url_input::UrlSelection;
 mod input;
+mod panel;
 
 use mixless_controllers::{ControllerPreset, DeviceAssignment, DeviceMatcher, Endpoint};
 
@@ -374,11 +375,11 @@ impl Preferences {
         let preset = self.selected_profile();
         let mut actions = vec![("new", "New preset…"), ("import", "Import…")];
         if let Some(p) = preset {
-            actions.extend([
-                ("duplicate", "Duplicate…"),
-                ("edit", "Edit MIDI / HID…"),
-                ("export", "Export…"),
-            ]);
+            actions.push(("duplicate", "Duplicate…"));
+            if p.adapter.is_none() {
+                actions.push(("edit", "Edit MIDI / HID…"));
+            }
+            actions.push(("export", "Export…"));
             if !p.is_builtin() {
                 actions.extend([("rename", "Rename…"), ("delete", "Delete…")]);
             }
@@ -410,397 +411,6 @@ impl Preferences {
         }
     }
 
-    pub(super) fn controller_panel(&self, cx: &Context<Self>) -> gpui::AnyElement {
-        let selected = self.selected_profile();
-        let ready = self.job.is_none();
-        let exists = selected.is_some();
-        let device = self
-            .controller_devices
-            .iter()
-            .find(|d| Some(&d.id) == self.controller_device.as_ref());
-        let assigned = self.hub().ok().and_then(|h| {
-            h.assignments()
-                .into_iter()
-                .find(|a| Some(&a.device_id) == self.controller_device.as_ref())
-                .and_then(|a| h.preset(&a.preset_id))
-        });
-        let recommended = device
-            .and_then(|d| {
-                self.hub().ok().map(|h| {
-                    h.presets()
-                        .into_iter()
-                        .filter(|p| p.is_builtin() && p.matches_midi(&d.name))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .filter(|p| p.len() == 1)
-            .and_then(|mut p| p.pop())
-            .filter(|p| Some(&p.id) != self.selected_preset.as_ref());
-        let label = |text: &'static str| {
-            div()
-                .w(px(64.))
-                .flex_none()
-                .text_color(theme::MUTED)
-                .child(text)
-        };
-        let detail = |name: &'static str, value: String| {
-            div()
-                .flex()
-                .gap_3()
-                .text_size(px(11.))
-                .child(
-                    div()
-                        .w(px(88.))
-                        .flex_none()
-                        .text_color(theme::MUTED)
-                        .child(name),
-                )
-                .child(div().flex_1().min_w_0().child(value))
-        };
-        let summary = if device.is_some() {
-            assigned.as_ref().map_or("No preset applied".into(), |p| {
-                format!("Active preset: {}", p.name)
-            })
-        } else if exists {
-            "Preset preview".into()
-        } else {
-            String::new()
-        };
-        div()
-            .max_w(px(600.))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .min_w_0()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(label("Device"))
-                    .child(
-                        self.select_control(
-                            Selector::ControllerDevice,
-                            device.map_or("No device".into(), |d| d.name.clone()),
-                            ready,
-                            cx,
-                        )
-                        .flex_1()
-                        .min_w_0()
-                        .w_0(),
-                    )
-                    .when_some(device, |el, d| {
-                        el.child(
-                            div()
-                                .w(px(88.))
-                                .flex_none()
-                                .text_size(px(11.))
-                                .text_color(theme::MUTED)
-                                .child(device_status(&d.state).to_owned()),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(label("Preset"))
-                    .child(
-                        self.select_control(
-                            Selector::MidiPreset,
-                            selected
-                                .as_ref()
-                                .map_or("Choose a preset…".into(), |p| p.name.clone()),
-                            ready,
-                            cx,
-                        )
-                        .flex_1()
-                        .min_w_0()
-                        .w_0(),
-                    )
-                    .child(
-                        self.primary_button(
-                            "controller-apply",
-                            "Apply",
-                            ready && exists && device.is_some(),
-                            |s, _, _| {
-                                if let Some(id) = s.selected_preset.clone() {
-                                    s.apply_midi_preset(&id, s.controller_device.clone());
-                                }
-                            },
-                            cx,
-                        )
-                        .w(px(64.))
-                        .px_0(),
-                    )
-                    .child(
-                        self.select_control(Selector::PresetActions, "Manage".into(), ready, cx)
-                            .w(px(88.)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .min_w_0()
-                    .pl(px(76.))
-                    .child(
-                        crate::views::ellipsized_text(summary)
-                            .flex_1()
-                            .min_w_0()
-                            .w_0()
-                            .h(px(18.))
-                            .text_size(px(11.))
-                            .text_color(theme::MUTED),
-                    )
-                    .child(
-                        self.button(
-                            "controller-more",
-                            if self.controller_advanced {
-                                "Hide details"
-                            } else {
-                                "Details"
-                            },
-                            true,
-                            |s, _, _| s.controller_advanced = !s.controller_advanced,
-                            cx,
-                        )
-                        .bg(theme::BG)
-                        .border_0()
-                        .px_0(),
-                    ),
-            )
-            .when_some(recommended, |el, p| {
-                el.child(
-                    self.button(
-                        "controller-recommendation",
-                        format!("Select {}", p.name),
-                        ready,
-                        move |s, _, _| {
-                            s.selected_preset = Some(p.id.clone());
-                            s.controller_notes = false;
-                        },
-                        cx,
-                    )
-                    .justify_start()
-                    .bg(theme::BG)
-                    .border_0()
-                    .px_0(),
-                )
-            })
-            .when(self.controller_advanced, |el| {
-                el.child(
-                    div()
-                        .debug_selector(|| "controller-details".into())
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(theme::LINE)
-                        .when_some(selected, |el, p| {
-                            el.child(detail(
-                                "Preset",
-                                if p.is_builtin() {
-                                    "Built-in (edits save a copy)"
-                                } else {
-                                    "User preset"
-                                }
-                                .into(),
-                            ))
-                            .child(detail("Mappings", p.bindings.len().to_string()))
-                            .child(detail("Feedback", p.feedback.len().to_string()))
-                            .child(detail(
-                                "Validation",
-                                match p.verification {
-                                    mixless_controllers::Verification::Protocol => {
-                                        "Not hardware-tested"
-                                    }
-                                    mixless_controllers::Verification::Simulation => {
-                                        "Simulation tested"
-                                    }
-                                    mixless_controllers::Verification::Hardware => {
-                                        "Hardware tested"
-                                    }
-                                }
-                                .into(),
-                            ))
-                            .when(!p.notes.is_empty(), |el| {
-                                el.child(
-                                    self.button(
-                                        "controller-notes",
-                                        if self.controller_notes {
-                                            "Hide preset notes"
-                                        } else {
-                                            "Preset notes"
-                                        },
-                                        true,
-                                        |s, _, _| s.controller_notes = !s.controller_notes,
-                                        cx,
-                                    )
-                                    .bg(theme::BG)
-                                    .border_0()
-                                    .px_0()
-                                    .justify_start(),
-                                )
-                                .when(
-                                    self.controller_notes,
-                                    |el| {
-                                        el.child(
-                                            div()
-                                                .id("controller-notes-text")
-                                                .debug_selector(|| "controller-notes-text".into())
-                                                .max_h(px(120.))
-                                                .overflow_y_scroll()
-                                                .text_size(px(11.))
-                                                .line_height(px(17.))
-                                                .text_color(theme::MUTED)
-                                                .child(p.notes),
-                                        )
-                                    },
-                                )
-                            })
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .child(self.button(
-                                    "endpoints",
-                                    "Ports…",
-                                    ready && exists && device.is_some(),
-                                    |s, _, _| s.begin_preset_dialog(PresetOperation::Endpoints),
-                                    cx,
-                                ))
-                                .when(device.is_some_and(|d| d.hid), |el| {
-                                    el.child(self.button(
-                                        "add-hid-field",
-                                        "Add HID field",
-                                        ready && exists,
-                                        |s, _, _| s.add_hid_field(),
-                                        cx,
-                                    ))
-                                    .child(self.button(
-                                        "read-hid-feature",
-                                        "Read feature…",
-                                        ready,
-                                        |s, _, _| s.begin_preset_dialog(PresetOperation::Feature),
-                                        cx,
-                                    ))
-                                })
-                                .when(
-                                    self.selected_profile().is_some_and(|p| p.audio.is_some()),
-                                    |el| {
-                                        el.child(self.button(
-                                            "controller-audio",
-                                            "Audio routing…",
-                                            ready,
-                                            |s, _, _| s.apply_recommended_audio(),
-                                            cx,
-                                        ))
-                                    },
-                                )
-                                .when(device.is_some(), |el| {
-                                    el.child(self.button(
-                                        "controller-monitor",
-                                        if self.controller_monitor {
-                                            "Hide monitor"
-                                        } else {
-                                            "Input monitor"
-                                        },
-                                        true,
-                                        |s, _, _| s.controller_monitor = !s.controller_monitor,
-                                        cx,
-                                    ))
-                                })
-                                .child(self.button(
-                                    "controller-unassign",
-                                    "Unassign",
-                                    ready && assigned.is_some(),
-                                    |s, _, _| {
-                                        let result = s.hub().and_then(|h| {
-                                            h.unassign(
-                                                s.controller_device.as_deref().unwrap_or_default(),
-                                            )
-                                            .map_err(|e| e.to_string())
-                                        });
-                                        s.result(result, "Device unassigned");
-                                        s.poll();
-                                    },
-                                    cx,
-                                )),
-                        )
-                        .when(self.controller_monitor, |el| {
-                            let packet =
-                                self.hub().ok().and_then(|h| h.last_packet()).filter(|p| {
-                                    Some(&p.device_id) == self.controller_device.as_ref()
-                                });
-                            el.child(
-                                div()
-                                    .debug_selector(|| "controller-monitor-content".into())
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .text_size(px(10.))
-                                    .text_color(theme::MUTED)
-                                    .when_some(device, |el, d| {
-                                        el.child(format!("Device ID: {}", d.id))
-                                    })
-                                    .child(div().font_family("SF Mono").child(packet.map_or(
-                                        "Waiting for input…".into(),
-                                        |p| {
-                                            p.data
-                                                .iter()
-                                                .take(48)
-                                                .map(|b| format!("{b:02X}"))
-                                                .collect::<Vec<_>>()
-                                                .join(" ")
-                                        },
-                                    ))),
-                            )
-                        }),
-                )
-            })
-            .when_some(
-                device.and_then(|d| match &d.state {
-                    mixless_controllers::ConnectionState::Error(error) => Some(error.clone()),
-                    _ => None,
-                }),
-                |el, error| {
-                    el.child(
-                        div()
-                            .id("controller-connection-error")
-                            .text_size(px(11.))
-                            .text_color(theme::DANGER)
-                            .child("Unable to connect. Check the controller and reconnect.")
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| crate::views::TextTip(error.clone())).into()
-                            }),
-                    )
-                },
-            )
-            .when_some(
-                self.controller_device
-                    .as_ref()
-                    .and_then(|id| self.hub().ok().and_then(|h| h.feedback_error(id))),
-                |el, error| {
-                    el.child(
-                        div()
-                            .id("controller-feedback-error")
-                            .text_size(px(11.))
-                            .text_color(theme::DANGER)
-                            .child("Controller feedback unavailable.")
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| crate::views::TextTip(error.clone())).into()
-                            }),
-                    )
-                },
-            )
-            .into_any_element()
-    }
     pub(super) fn controller_dialog(
         &self,
         height: f32,
@@ -826,11 +436,23 @@ impl Preferences {
         if let Some(report) = &self.import_preview {
             panel = panel
                 .child(format!("Import {}", report.preset.name))
-                .child(format!(
-                    "{} inputs, {} feedback rules",
-                    report.preset.bindings.len(),
-                    report.preset.feedback.len()
-                ))
+                .when_some(report.preset.community.as_ref(), |el, c| {
+                    el.child(div().debug_selector(|| "import-community".into()).flex().flex_col().gap_1()
+                        .text_size(px(12.))
+                        .child(format!("Author: {}", c.author))
+                        .child(format!("Version: {}", c.package_version))
+                        .child(format!("License: {}", c.license)))
+                })
+                .child(report.preset.adapter.as_ref().map_or_else(|| format!(
+                    "{} inputs, {} feedback rules", report.preset.bindings.len(), report.preset.feedback.len()),
+                    |a| format!("Device adapter: {} controls", a.controls.len())))
+                .when_some(report.preset.adapter.as_ref(), |el,a| {
+                    el.child(div().debug_selector(|| "import-adapter-access".into()).flex().flex_col().gap_1()
+                        .text_size(px(11.))
+                        .child("HID access only. No files or network.")
+                        .children(a.reports.iter().map(|r| div().child(format!("{}: {} report {}, {} bytes", r.endpoint,
+                            match r.access { mixless_controllers::community::ReportAccess::Output => "Output", mixless_controllers::community::ReportAccess::FeatureWrite => "Write feature", mixless_controllers::community::ReportAccess::FeatureRead => "Read feature" }, r.report_id, r.length)))))
+                })
                 .children(
                     report
                         .requirements
