@@ -53,20 +53,25 @@ impl SyncRequest {
     }
 
     pub fn cancelled_by(&self, command: &Command) -> bool {
-        match command {
-            Command::LoadDeck { .. }
-            | Command::Eject { .. }
-            | Command::SetReverse { .. }
-            | Command::SetJogTouch { touching: true, .. }
-            | Command::Jog { .. }
-            | Command::StartAutomix { .. }
-            | Command::TriggerTemporaryCue { .. }
-            | Command::SetBrake { on: true, .. } => true,
-            Command::SetRate { deck, .. }
-            | Command::DisableSync { deck }
-            | Command::Sync { deck, .. } => *deck == self.follower,
-            _ => false,
-        }
+        cancellation_mask(command) & (1 << self.follower.index()) != 0
+    }
+}
+
+/// Shared cancellation semantics for UI and hardware dispatch.
+pub(crate) fn cancellation_mask(command: &Command) -> u8 {
+    match command {
+        Command::LoadDeck { .. }
+        | Command::Eject { .. }
+        | Command::SetReverse { .. }
+        | Command::SetJogTouch { touching: true, .. }
+        | Command::Jog { .. }
+        | Command::StartAutomix { .. }
+        | Command::TriggerTemporaryCue { .. }
+        | Command::SetBrake { on: true, .. } => 3,
+        Command::SetRate { deck, .. }
+        | Command::DisableSync { deck }
+        | Command::Sync { deck, .. } => 1 << deck.index(),
+        _ => 0,
     }
 }
 

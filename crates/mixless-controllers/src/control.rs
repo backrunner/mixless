@@ -10,22 +10,25 @@ pub enum MidiControlMode {
     #[default]
     Auto,
     Absolute,
+    AbsoluteInverted,
     RelativeTwosComplement,
     RelativeBinaryOffset,
     RelativeSignedBit,
 }
 impl MidiControlMode {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Auto,
         Self::Absolute,
+        Self::AbsoluteInverted,
         Self::RelativeTwosComplement,
         Self::RelativeBinaryOffset,
         Self::RelativeSignedBit,
     ];
     pub fn label(self) -> &'static str {
         match self {
-            Self::Auto => "Auto (target default)",
+            Self::Auto => "Automatic",
             Self::Absolute => "Absolute (0–127)",
+            Self::AbsoluteInverted => "Inverted (127–0)",
             Self::RelativeTwosComplement => "Relative: 1 / 127",
             Self::RelativeBinaryOffset => "Relative: 65 / 63",
             Self::RelativeSignedBit => "Relative: 1 / 65",
@@ -34,7 +37,7 @@ impl MidiControlMode {
     pub fn relative(self, target: &MidiTarget) -> bool {
         match self {
             Self::Auto => target.kind() == ControlKind::Encoder,
-            Self::Absolute => false,
+            Self::Absolute | Self::AbsoluteInverted => false,
             _ => true,
         }
     }
@@ -53,20 +56,23 @@ impl MidiControlMode {
                     -(value as i16 - 64)
                 }
             }
-            Self::Absolute => 0,
+            Self::Absolute | Self::AbsoluteInverted => 0,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MidiValue {
     Absolute(u8),
+    Normalized(f64),
+    JogFrames(f64),
     Relative(i16),
     Press,
+    Hold,
     Release,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MidiAction {
     pub target: MidiTarget,
     pub value: MidiValue,
@@ -76,6 +82,7 @@ impl MidiValue {
     fn ranged(self, current: f32, min: f32, max: f32) -> f32 {
         match self {
             Self::Absolute(v) => min + v as f32 / 127. * (max - min),
+            Self::Normalized(v) => min + v.clamp(0., 1.) as f32 * (max - min),
             Self::Relative(v) => (current + v as f32 / 127. * (max - min)).clamp(min, max),
             _ => current,
         }
@@ -163,7 +170,10 @@ impl MidiAction {
             },
             Jog { deck } => Command::Jog {
                 deck,
-                delta_frames: self.value.steps() as f32 * 16.,
+                delta_frames: match self.value {
+                    MidiValue::JogFrames(v) => v as f32,
+                    _ => self.value.steps() as f32 * 16.,
+                },
             },
             JogTouch { deck } => Command::SetJogTouch {
                 deck,
@@ -203,6 +213,19 @@ impl MidiAction {
                 stem,
                 value: range(d?.stem_gain[stem.index()], 0., 1.),
             },
+            FxOn { deck, slot } => Command::SetFxBypass {
+                deck,
+                slot: *FxSlot::INSERTS.get(slot as usize)?,
+                on: d?.fx.get(slot as usize)?.on,
+            },
+            AutomixPause if snapshot.automix_on => {
+                if snapshot.automix_paused {
+                    Command::ResumeAutomix
+                } else {
+                    Command::PauseAutomix
+                }
+            }
+            AutomixSkip if snapshot.automix_on => Command::SkipAutomix,
             FxMix { deck, slot } => {
                 let mut fx = *d?.fx.get(slot as usize)?;
                 fx.mix = range(fx.mix, 0., 1.);

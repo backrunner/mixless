@@ -1,7 +1,7 @@
 //! A complete control catalogue and clickable deck diagram share one editor.
 use super::*;
 use crate::views::{TextTip, ellipsized_text};
-use mixless_midi::ControlKind;
+use mixless_controllers::ControlKind;
 
 mod diagram;
 
@@ -9,7 +9,68 @@ const MIDI_LABEL_WIDTH: f32 = 74.;
 const MIDI_FIELD_GAP: f32 = 12.;
 const MIDI_CONTROL_WIDTH: f32 = 194.;
 
+fn input_label(binding: &mixless_controllers::Binding) -> String {
+    use mixless_controllers::{InputSource, MidiAddress};
+    let source = match &binding.source {
+        InputSource::Midi { address } => match address {
+            MidiAddress::Note { channel, number } => format!("Note {number} (Ch {})", channel + 1),
+            MidiAddress::Cc { channel, number } => format!("CC {number} (Ch {})", channel + 1),
+            MidiAddress::Cc14 { channel, msb, lsb } => {
+                format!("CC14 {msb}/{lsb} (Ch {})", channel + 1)
+            }
+            MidiAddress::PitchBend { channel } => format!("Pitch bend (Ch {})", channel + 1),
+            MidiAddress::Rpn { channel, parameter } => {
+                format!("RPN {parameter} (Ch {})", channel + 1)
+            }
+            MidiAddress::Nrpn { channel, parameter } => {
+                format!("NRPN {parameter} (Ch {})", channel + 1)
+            }
+            MidiAddress::Sysex { offset, bytes, .. } => {
+                format!("SysEx byte {offset}, {bytes} bytes")
+            }
+        },
+        InputSource::Hid {
+            report_id,
+            bit_offset,
+            bits,
+            ..
+        } => format!("HID report {report_id}, bit {bit_offset}, {bits} bits"),
+    };
+    if binding.endpoint == "main" {
+        source
+    } else {
+        format!("{}: {source}", binding.endpoint)
+    }
+}
+
 impl Preferences {
+    fn mapping_sources(&self, target: &MidiTarget) -> Vec<String> {
+        let hub = self.core.midi.lock().expect("controllers").clone();
+        let profile = hub.as_ref().and_then(|h| {
+            if let Some(device) = &self.controller_device {
+                h.assignments()
+                    .iter()
+                    .find(|a| &a.device_id == device)
+                    .and_then(|a| h.preset(&a.preset_id))
+            } else {
+                self.selected_preset.as_ref().and_then(|id| h.preset(id))
+            }
+        });
+        if let Some(p) = profile {
+            p.bindings
+                .iter()
+                .filter(|b| &b.target == target)
+                .map(input_label)
+                .collect()
+        } else {
+            self.bindings
+                .iter()
+                .filter(|b| b.device_id == self.controller_device && &b.target == target)
+                .map(|b| self.binding_text(b))
+                .collect()
+        }
+    }
+
     fn midi_targets(&self) -> Vec<MidiTarget> {
         MidiTarget::all()
             .into_iter()
@@ -21,12 +82,15 @@ impl Preferences {
         self.cancel_learn();
         self.midi_feedback = None;
         self.selector = None;
-        self.editing = self.bindings.iter().position(|b| b.target == target);
+        self.editing = self
+            .bindings
+            .iter()
+            .position(|b| b.target == target && b.device_id == self.controller_device);
         self.binding = self
             .editing
             .map(|i| self.bindings[i].clone())
             .unwrap_or_else(|| MidiBinding {
-                device_id: self.binding.device_id.clone(),
+                device_id: self.controller_device.clone(),
                 channel: self.binding.channel,
                 number: 0,
                 kind: if matches!(target.kind(), ControlKind::Button | ControlKind::Momentary) {
@@ -52,7 +116,9 @@ impl Preferences {
             return;
         }
         self.select_midi_target(target.clone());
-        let result = if self.job.is_some() {
+        let result = if self.controller_device.is_none() {
+            Err("Select a connected device before learning".into())
+        } else if self.job.is_some() {
             Err("Wait for the current settings operation to finish.".into())
         } else {
             self.core
@@ -61,7 +127,10 @@ impl Preferences {
                 .expect("MIDI")
                 .as_ref()
                 .ok_or_else(|| "MIDI is unavailable".to_string())
-                .and_then(|hub| hub.learn_target(target).map_err(|e| e.to_string()))
+                .and_then(|hub| {
+                    hub.learn_target_for(target, self.controller_device.clone())
+                        .map_err(|e| e.to_string())
+                })
         };
         match result {
             Ok(()) => {
@@ -82,16 +151,17 @@ impl Preferences {
         if !same_input {
             self.binding.mode = MidiControlMode::Auto;
         }
+        self.controller_device = Some(message.device_id.clone());
         self.binding.device_id = Some(message.device_id);
         self.binding.kind = message.kind;
         self.binding.channel = message.channel;
         self.binding.number = message.number;
         let moved = self.source_conflict().map(|b| b.target.label());
         let success = format!(
-            "Bound {} · {}{}",
+            "Mapped {}: {}{}",
             self.binding.target.label(),
             self.binding_text(&self.binding),
-            moved.map_or(String::new(), |from| format!(" · moved from {from}")),
+            moved.map_or(String::new(), |from| format!(" (moved from {from})")),
         );
         // Keep performance commands suppressed through the write. Clear the
         // automatic flag before polling, so a failed write cannot retry itself.
@@ -116,7 +186,7 @@ impl Preferences {
                 ControlKind::Button | ControlKind::Momentary => "Press a MIDI button to bind",
             };
             (
-                format!("{} · {action}…", self.binding.target.label()),
+                format!("{}: {action}…", self.binding.target.label()),
                 theme::ACCENT,
             )
         } else if let Some((feedback, error)) = &self.midi_feedback {
@@ -130,7 +200,13 @@ impl Preferences {
             )
         } else {
             (
-                "Click a control below, then move your MIDI hardware to bind it.".into(),
+                if self.controller_device.is_some() {
+                    "Click a control, then move the corresponding hardware control to learn it."
+                        .into()
+                } else {
+                    "Select a device to learn controls, or choose a preset to view its mappings."
+                        .into()
+                },
                 theme::MUTED,
             )
         };
@@ -171,7 +247,7 @@ impl Preferences {
 
     fn binding_text(&self, binding: &MidiBinding) -> String {
         format!(
-            "Ch {} · {:?} {}",
+            "Ch {}, {:?} {}",
             binding.channel + 1,
             binding.kind,
             binding.number
@@ -185,38 +261,12 @@ impl Preferences {
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         let width = if matches!(selector, Selector::MidiNumber) {
-            58.
+            64.
         } else {
             MIDI_CONTROL_WIDTH
         };
-        let tip = value.clone();
-        div()
-            .id(SharedString::from(format!(
-                "midi-select-{}",
-                selector as u8
-            )))
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
+        self.select_control(selector, value, !self.learning && self.job.is_none(), cx)
             .w(px(width))
-            .h(px(30.))
-            .px_2()
-            .rounded(px(4.))
-            .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL_RAISED)
-            .text_size(px(10.))
-            .cursor_pointer()
-            .child(ellipsized_text(value).flex_1().min_w_0().w_0().h(px(16.)))
-            .child("⌄")
-            .tooltip(move |_, cx| cx.new(|_| TextTip(tip.clone())).into())
-            .on_click(cx.listener(move |s, _, _, cx| {
-                if !s.learning && s.job.is_none() {
-                    s.selector = Some(selector);
-                    cx.notify();
-                }
-            }))
             .into_any_element()
     }
 
@@ -251,26 +301,19 @@ impl Preferences {
         self.poll();
     }
 
-    pub(super) fn midi_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
+    pub(super) fn midi_page(&self, width: f32, cx: &Context<Self>) -> gpui::AnyElement {
         let busy = self.job.is_some();
         let ready = self.core.midi.lock().expect("MIDI").is_some();
         let targets = self.midi_targets();
-        let bindings = self.bindings.clone();
+        let sources: Vec<_> = targets.iter().map(|t| self.mapping_sources(t)).collect();
         let selected = self.binding.target.clone();
         let state = cx.entity();
         let table = gpui::uniform_list("midi-control-list", targets.len(), move |range, _, _| {
             range
                 .map(|index| {
                     let target = targets[index].clone();
-                    let mapped: Vec<_> = bindings.iter().filter(|b| b.target == target).collect();
-                    let address = mapped.first().map_or("Unmapped".into(), |b| {
-                        let extra = if mapped.len() > 1 {
-                            format!(" +{}", mapped.len() - 1)
-                        } else {
-                            String::new()
-                        };
-                        format!("Ch {} · {:?} {}{extra}", b.channel + 1, b.kind, b.number)
-                    });
+                    let mapped = &sources[index];
+                    let address = mapped.first().cloned().unwrap_or("—".into());
                     let tooltip = format!("{}\n{}", target.label(), address);
                     let active = selected == target;
                     let state = state.clone();
@@ -281,7 +324,7 @@ impl Preferences {
                         .gap_2()
                         .w_full()
                         .min_w_0()
-                        .h(px(34.))
+                        .h(px(30.))
                         .px_2()
                         .bg(if active {
                             theme::PANEL_RAISED
@@ -290,16 +333,9 @@ impl Preferences {
                         })
                         .border_b_1()
                         .border_color(theme::LINE_SOFT)
-                        .text_size(px(10.))
+                        .text_size(px(12.))
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::LINE_SOFT))
-                        .child(div().size(px(5.)).flex_none().rounded_full().bg(
-                            if mapped.is_empty() {
-                                theme::LINE
-                            } else {
-                                theme::LED_GREEN
-                            },
-                        ))
                         .child(
                             ellipsized_text(target.label())
                                 .flex_1()
@@ -310,13 +346,11 @@ impl Preferences {
                         .child(
                             div()
                                 .flex_none()
-                                .text_size(px(9.))
-                                .text_color(if mapped.is_empty() {
-                                    theme::MUTED
-                                } else {
-                                    theme::LED_GREEN
-                                })
-                                .child(address),
+                                .w(px(170.))
+                                .h(px(16.))
+                                .text_size(px(10.))
+                                .text_color(theme::MUTED)
+                                .child(ellipsized_text(address).w_full().h_full()),
                         )
                         .tooltip(move |_, cx| cx.new(|_| TextTip(tooltip.clone())).into())
                         .on_click(move |_, _, cx| {
@@ -329,6 +363,7 @@ impl Preferences {
                 })
                 .collect()
         })
+        .debug_selector(|| "mapping-list".into())
         .track_scroll(self.midi_scroll.clone())
         .h(px(310.))
         .w_full()
@@ -340,95 +375,89 @@ impl Preferences {
             .w_full()
             .max_w(px(1000.))
             .mx_auto()
-            .gap_3()
-            .py_3()
+            .gap_4()
+            .child(self.controller_panel(cx))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(self.button(
-                        "midi-inputs",
-                        if self.midi_inputs_open {
-                            "Inputs ▴"
-                        } else {
-                            "Inputs ▾"
-                        },
-                        !busy,
-                        |s, _, _| s.midi_inputs_open = !s.midi_inputs_open,
-                        cx,
-                    ))
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(theme::LINE)
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
-                            .text_size(px(10.))
-                            .text_color(theme::MUTED)
-                            .child(format!(
-                                "{} / {} controls mapped",
-                                MidiTarget::all()
-                                    .iter()
-                                    .filter(|t| self.bindings.iter().any(|b| &b.target == *t))
-                                    .count(),
-                                MidiTarget::all().len()
-                            )),
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(if self.controller_device.is_some() {
+                                "Device mappings"
+                            } else {
+                                "Preset mappings"
+                            }),
                     )
-                    .child(self.button(
-                        "import-map",
-                        "Import…",
-                        ready && !busy,
-                        |s, _, cx| s.file_dialog(false, cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "export-map",
-                        "Export…",
-                        ready && !busy,
-                        |s, _, cx| s.file_dialog(true, cx),
-                        cx,
-                    )),
-            )
-            .when(self.midi_inputs_open, |el| el.child(self.midi_inputs(cx)))
-            .child(self.midi_learn_bar(cx))
-            .child(self.midi_diagram(cx))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
                     .child(
                         self.button(
-                            "midi-all-controls",
-                            "All",
-                            true,
-                            |s, _, _| {
-                                s.midi_group = None;
+                            "midi-layout",
+                            if self.midi_layout_open {
+                                "Hide layout"
+                            } else {
+                                "Show layout"
                             },
-                            cx,
-                        )
-                        .text_color(if self.midi_group.is_none() {
-                            theme::ACCENT
-                        } else {
-                            theme::MUTED
-                        }),
-                    )
-                    .children(MidiGroup::ALL.map(|group| {
-                        self.button(
-                            format!("midi-group-{group:?}"),
-                            group.label(),
                             true,
-                            move |s, _, _| s.midi_group = Some(group),
+                            |s, _, _| s.midi_layout_open = !s.midi_layout_open,
                             cx,
                         )
-                        .px_2()
-                        .text_size(px(10.))
-                        .text_color(if self.midi_group == Some(group) {
-                            theme::ACCENT
-                        } else {
-                            theme::MUTED
-                        })
-                    })),
+                        .bg(theme::BG)
+                        .border_0()
+                        .px_2(),
+                    )
+                    .child(
+                        self.button(
+                            "midi-inputs",
+                            if self.midi_inputs_open {
+                                "Hide inputs"
+                            } else {
+                                "MIDI inputs…"
+                            },
+                            !busy,
+                            |s, _, _| s.midi_inputs_open = !s.midi_inputs_open,
+                            cx,
+                        )
+                        .bg(theme::BG)
+                        .border_0()
+                        .px_2(),
+                    ),
             )
+            .when(self.midi_inputs_open, |el| el.child(self.midi_inputs(cx)))
+            .when(self.midi_layout_open, |el| {
+                el.child(self.midi_diagram(width, cx))
+            })
+            .when(self.quick_learning || self.midi_feedback.is_some(), |el| {
+                el.child(self.midi_learn_bar(cx))
+            })
+            .child(div().flex().child(self.segmented(
+                "mapping-group",
+                &[
+                    (None, "All"),
+                    (Some(MidiGroup::Mixer), "Mixer"),
+                    (Some(MidiGroup::DeckA), "Deck A"),
+                    (Some(MidiGroup::DeckB), "Deck B"),
+                    (Some(MidiGroup::Library), "Library"),
+                ],
+                self.midi_group,
+                |s, value| {
+                    s.cancel_learn();
+                    s.midi_group = value;
+                    s.midi_scroll = gpui::UniformListScrollHandle::new();
+                    if value.is_some_and(|group| s.binding.target.group() != group) {
+                        if let Some(target) = s.midi_targets().into_iter().next() {
+                            s.select_midi_target(target);
+                        }
+                    }
+                },
+                cx,
+            )))
             .child(
                 div()
                     .flex()
@@ -445,7 +474,12 @@ impl Preferences {
                             .overflow_hidden()
                             .child(table),
                     )
-                    .child(self.midi_editor(ready && !busy, cx)),
+                    .child(self.midi_editor(
+                        ready
+                            && !busy
+                            && (self.controller_device.is_some() || self.editing.is_some()),
+                        cx,
+                    )),
             )
             .when_some(
                 self.core.midi_error.lock().expect("MIDI error").clone(),
@@ -454,7 +488,81 @@ impl Preferences {
             .into_any_element()
     }
 
+    pub(super) fn midi_learn_available(&self) -> bool {
+        self.controller_device.is_some()
+            && !self
+                .controller_devices
+                .iter()
+                .any(|d| Some(&d.id) == self.controller_device.as_ref() && d.hid)
+    }
+
     fn midi_editor(&self, enabled: bool, cx: &Context<Self>) -> gpui::AnyElement {
+        let sources = self.mapping_sources(&self.binding.target);
+        // Layered/high-resolution inputs cannot be represented by the Note/CC
+        // form. Show their actual address instead of an invented default value.
+        if !self.midi_learn_available() || (self.editing.is_none() && !sources.is_empty()) {
+            return div()
+                .debug_selector(|| "mapping-preview".into())
+                .w(px(MIDI_LABEL_WIDTH + MIDI_FIELD_GAP + MIDI_CONTROL_WIDTH))
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(self.binding.target.label()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .text_size(px(11.))
+                        .text_color(theme::MUTED)
+                        .when(sources.is_empty(), |el| el.child("Unmapped"))
+                        .children(sources.into_iter().map(|source| div().child(source))),
+                )
+                .when(self.selected_preset.is_some(), |el| {
+                    el.child(self.button(
+                        "edit-preset-mapping",
+                        "Edit MIDI / HID…",
+                        self.job.is_none(),
+                        |s, _, cx| {
+                            if let Some(device) = &s.controller_device {
+                                if let Some(assignment) = s.hub().ok().and_then(|h| {
+                                    h.assignments().into_iter().find(|a| &a.device_id == device)
+                                }) {
+                                    s.selected_preset = Some(assignment.preset_id);
+                                }
+                            }
+                            s.run_preset_action("edit", cx);
+                        },
+                        cx,
+                    ))
+                })
+                .when(self.midi_learn_available(), |el| {
+                    el.child(self.button(
+                        "midi-preview-learn",
+                        if self.learning {
+                            "Cancel learn"
+                        } else {
+                            "Learn"
+                        },
+                        enabled,
+                        |s, _, _| {
+                            if s.learning {
+                                s.cancel_learn();
+                            } else {
+                                s.quick_learn_target(s.binding.target.clone());
+                            }
+                        },
+                        cx,
+                    ))
+                })
+                .into_any_element();
+        }
         let field = |label: &str, control: gpui::AnyElement| {
             div()
                 .flex()
@@ -474,7 +582,9 @@ impl Preferences {
             .bindings
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.target == self.binding.target)
+            .filter(|(_, b)| {
+                b.target == self.binding.target && b.device_id == self.controller_device
+            })
             .collect();
         let conflict = self.source_conflict();
         div()
@@ -590,7 +700,7 @@ impl Preferences {
                     div()
                         .text_size(px(10.))
                         .text_color(theme::MUTED)
-                        .child("Turn right to advance; choose the encoder’s +1 / −1 values."),
+                        .child("Relative values are clockwise / counterclockwise."),
                 )
             })
             .when_some(conflict, |el, other| {
@@ -620,16 +730,13 @@ impl Preferences {
                         |s, _, _| s.toggle_learn(),
                         cx,
                     ))
-                    .child(
-                        self.button(
-                            "midi-assign",
-                            "Assign",
-                            enabled && !self.quick_learning,
-                            |s, _, _| s.save_binding(),
-                            cx,
-                        )
-                        .text_color(theme::ACCENT),
-                    )
+                    .child(self.primary_button(
+                        "midi-assign",
+                        "Assign",
+                        enabled && !self.quick_learning,
+                        |s, _, _| s.save_binding(),
+                        cx,
+                    ))
                     .when(self.editing.is_some(), |el| {
                         el.child(self.button(
                             "midi-clear",
@@ -658,14 +765,14 @@ impl Preferences {
                             .and_then(|h| h.learned())
                             .is_some()
                         {
-                            "Signal captured — Assign to save".into()
+                            "Signal received. Assign to save.".into()
                         } else {
                             "Move a knob or press a button…".into()
                         }
                     } else {
                         self.last.as_ref().map_or("No MIDI signal".into(), |m| {
                             format!(
-                                "Last: Ch {} · {:?} {} · value {}",
+                                "Last: Ch {}, {:?} {}, value {}",
                                 m.channel + 1,
                                 m.kind,
                                 m.number,

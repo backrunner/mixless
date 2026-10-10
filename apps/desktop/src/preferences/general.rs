@@ -103,7 +103,8 @@ impl Preferences {
                     .flex_col()
                     .items_start()
                     .gap_2()
-                    .py_3()
+                    .px_3()
+                    .py_2()
                     .child(div().text_size(px(12.)).child("Crossfader curve"))
                     .child(self.segmented(
                         "curve",
@@ -126,7 +127,8 @@ impl Preferences {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .py_3()
+                    .px_3()
+                    .py_2()
                     .child(
                         row(
                             "Live moves",
@@ -143,6 +145,7 @@ impl Preferences {
                             ),
                         )
                         .border_0()
+                        .px_0()
                         .min_h(px(28.))
                         .py_0(),
                     )
@@ -151,7 +154,7 @@ impl Preferences {
                             .text_size(px(11.))
                             .line_height(px(16.))
                             .text_color(theme::MUTED)
-                            .child("Gentle filter and drum moves. Active also permits spinback accents."),
+                            .child("Active adds spinbacks to filter and drum moves."),
                     ),
             ],
         );
@@ -172,9 +175,9 @@ impl Preferences {
                         .as_ref()
                         .is_some_and(|s| s.has_bundled_models())
                     {
-                        "Runs locally with the models included in this app, even offline."
+                        "Uses the included models offline."
                     } else {
-                        "Runs locally in the background. Downloads the required models on first use."
+                        "Downloads models on first use, then runs locally."
                     },
                     self.toggle(
                         "deep-analysis",
@@ -202,7 +205,8 @@ impl Preferences {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .py_3()
+                    .px_3()
+                    .py_2()
                     .child(
                         row(
                             "Downloaded audio",
@@ -239,6 +243,7 @@ impl Preferences {
                                 .into_any_element(),
                         )
                         .border_0()
+                        .px_0()
                         .min_h(px(30.))
                         .py_0(),
                     )
@@ -259,7 +264,7 @@ impl Preferences {
                             .text_size(px(11.))
                             .line_height(px(16.))
                             .text_color(theme::MUTED)
-                            .child("Spotify downloads are grouped in a folder for each playlist."),
+                            .child("Spotify downloads are grouped by playlist."),
                     ),
             ],
         );
@@ -268,7 +273,6 @@ impl Preferences {
             .w_full()
             .max_w(px(880.))
             .mx_auto()
-            .py_5()
             .child(
                 div()
                     .flex()

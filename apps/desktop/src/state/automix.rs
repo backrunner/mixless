@@ -46,6 +46,9 @@ impl UiState {
         }
         self.deck_load_rx = [None, None];
         self.deck_loading = [None, None];
+        for loading in &self.core.controller_loading {
+            loading.store(false, Ordering::Release);
+        }
         self.grid_rx = [None, None];
         self.start_automix_worker(tracks);
     }

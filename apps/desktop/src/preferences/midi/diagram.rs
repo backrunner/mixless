@@ -22,11 +22,7 @@ impl Preferences {
     ) -> gpui::AnyElement {
         let h = rect[3];
         let selected = self.binding.target == target;
-        let assigned: Vec<_> = self
-            .bindings
-            .iter()
-            .filter(|b| b.target == target)
-            .collect();
+        let assigned = self.mapping_sources(&target);
         let color = if selected && self.quick_learning {
             theme::ACCENT
         } else if assigned.is_empty() {
@@ -44,22 +40,11 @@ impl Preferences {
             if assigned.is_empty() {
                 "Unmapped".into()
             } else {
-                assigned
-                    .iter()
-                    .map(|b| {
-                        format!(
-                            "{} · {}",
-                            b.device_id
-                                .as_ref()
-                                .map_or("Any input".into(), |id| self.port_name(id)),
-                            self.binding_text(b)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                assigned.join("\n")
             }
         );
         let mut control = diagram_rect(rect)
+            .debug_selector(|| format!("diagram-{target:?}"))
             // Reset a visible tooltip when an automatic bind changes its text.
             .id(SharedString::from(format!("map-diagram-{target:?}-{tip}")))
             .flex()
@@ -187,18 +172,25 @@ impl Preferences {
                 gpui::MouseButton::Left,
                 cx.listener(move |s, _, window, cx| {
                     window.prevent_default();
-                    s.quick_learn_target(target.clone());
+                    if s.midi_learn_available() {
+                        s.quick_learn_target(target.clone());
+                    } else {
+                        s.select_midi_target(target.clone());
+                    }
                     cx.notify();
                 }),
             )
             .into_any_element()
     }
 
-    pub(super) fn midi_diagram(&self, cx: &Context<Self>) -> gpui::AnyElement {
+    pub(super) fn midi_diagram(&self, width: f32, cx: &Context<Self>) -> gpui::AnyElement {
         use MidiTarget::*;
         let mut diagram = div()
+            .debug_selector(|| "controller-diagram".into())
             .relative()
-            .w_full()
+            // Absolute percentage children need a definite containing width.
+            // Intrinsic measurement of this all-absolute flex item yields zero.
+            .w(px(width))
             .h(px(342.))
             .flex_none()
             .child(diagram_panel([0., 36., 370., 204.]))
@@ -250,7 +242,7 @@ impl Preferences {
         }
         diagram
             .child(diagram_label(
-                "● Mapped",
+                "Mapped",
                 [870., 315., 130., 16.],
                 theme::LED_GREEN,
             ))
@@ -513,7 +505,7 @@ impl Preferences {
                     theme::MUTED,
                 ))
                 .child(diagram_label(
-                    "···",
+                    "…",
                     rect([x + 50., 277., 15., 14.]),
                     theme::MUTED,
                 ))

@@ -29,6 +29,12 @@ impl UiState {
         if self.audio.pending || self.core.engine.recording_status().active {
             return;
         }
+        let uid = self
+            .audio
+            .devices
+            .iter()
+            .find(|d| name.as_ref() == Some(&d.name))
+            .and_then(|d| d.uid.clone());
         let core = self.core.clone();
         let (tx, rx) = channel();
         self.audio.pending = true;
@@ -42,8 +48,17 @@ impl UiState {
                 let previous = core.engine.audio_config();
                 let mut config = previous.clone();
                 if monitor {
+                    config.cue_uid = uid;
+                    config.cue_channels =
+                        if name.as_deref() == Some(core.engine.snapshot().device_name.as_str()) {
+                            [2, 3]
+                        } else {
+                            [0, 1]
+                        };
                     config.cue_device = name;
                 } else {
+                    config.master_uid = uid;
+                    config.master_channels = [0, 1];
                     config.master_device = name;
                 }
                 core.engine

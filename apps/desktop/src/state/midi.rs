@@ -1,7 +1,7 @@
 //! MIDI performance controls and library browsing use the same UI paths as
 //! mouse / keyboard input; library actions never enter the audio callback.
 use super::*;
-use mixless_midi::{MidiAction, MidiTarget, MidiValue};
+use mixless_controllers::{MidiAction, MidiTarget, MidiValue};
 
 fn stepped_index(current: Option<usize>, count: usize, steps: i16) -> Option<usize> {
     if count == 0 || steps == 0 {
@@ -23,6 +23,9 @@ impl UiState {
         match action.target {
             Play { deck } => self.play_pause(deck),
             Sync { deck } => self.sync(deck),
+            Cue { deck, .. } | TemporaryCue { deck } if action.value == MidiValue::Release => {
+                self.dispatch(Command::EndCuePreview { deck })
+            }
             Cue { deck, index } => self.trigger_cue(deck, index as usize, false),
             ClearCue { deck, index } => self.clear_cue(deck, index as usize),
             TemporaryCue { deck } => self.temporary_cue(deck, false),
@@ -45,8 +48,17 @@ impl UiState {
             BrowsePlaylists => self.midi_browse_playlists(action.value.steps()),
             PlaylistPrevious => self.midi_browse_playlists(-1),
             PlaylistNext => self.midi_browse_playlists(1),
-            LoadSelected { deck } => self.midi_load_selected(deck),
-            LoadFocused => self.midi_load_selected(self.focus),
+            LoadSelected { deck } => {
+                self.core.controller_loading[deck.index()].store(false, Ordering::Release);
+                self.midi_load_selected(deck);
+            }
+            LoadFocused => {
+                for deck in [DeckId::A, DeckId::B] {
+                    self.core.controller_loading[deck.index()]
+                        .store(self.deck_loading[deck.index()].is_some(), Ordering::Release);
+                }
+                self.midi_load_selected(self.focus);
+            }
             Focus { deck } => self.focus = deck,
             _ => {
                 if let Some(command) = action.command(&snapshot) {

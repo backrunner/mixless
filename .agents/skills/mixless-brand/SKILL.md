@@ -17,6 +17,7 @@ Use `mixless` in lowercase everywhere people see the product name, including sen
 
 ## Visual language
 
+- Follow [UI and product copy](../../../CONTRIBUTING.md#ui-and-product-copy): avoid AI slop, decorative settings layouts and verbose default states. Do not use dots or bullets as inline text separators. Keep select options, action buttons and mapping controls concise and consistent.
 - Use the existing rounded M icon from `assets/branding/app-icon-1024.png`. Keep its yellow-to-orange enamel treatment and proportions; do not invent another mark.
 - Website favicons use a rounded rectangle with actual transparent corners and a narrow transparent margin. Generate 32 px and 64 px PNGs from the master with `apps/site/scripts/sync-assets.mjs`; CSS border radius does not apply to browser tab icons.
 - README uses the generated `assets/branding/readme-icon.png` and `assets/screenshots/workspace-readme.webp`, both with transparent rounded corners. Link the screenshot to the unmodified native PNG. GitHub strips inline styling, so never rely on CSS to create these corners; the same asset script regenerates them.

@@ -129,6 +129,7 @@ impl UiState {
         self.pending_play[index] = false;
         self.deck_load_rx[index] = None;
         self.deck_loading[index] = None;
+        self.core.controller_loading[index].store(false, Ordering::Release);
         self.grid_rx[index] = None;
         self.wave[index] = None;
         self.wave_cache[index] = None;

@@ -14,6 +14,7 @@ members = [
     "crates/mixless-acquire",
     "crates/mixless-acquire-yt",
     "crates/mixless-midi",
+    "crates/mixless-controllers",
     "apps/desktop",
 ]
 
@@ -33,6 +34,7 @@ mixless-analyze = { path = "crates/mixless-analyze" }
 mixless-stems = { path = "crates/mixless-stems" }
 mixless-mixplan = { path = "crates/mixless-mixplan" }
 mixless-midi = { path = "crates/mixless-midi" }
+mixless-controllers = { path = "crates/mixless-controllers" }
 mixless-spotify = { path = "crates/mixless-spotify" }
 gpui = "0.2.2"
 rfd = "0.15"

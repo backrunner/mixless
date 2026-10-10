@@ -100,15 +100,21 @@ fn learned_reassignment_persists_and_preserves_other_devices_and_assignments() {
         target: MidiTarget::CueGain,
         mode: MidiControlMode::Auto,
     };
-    hub.replace(2, learned_binding.clone()).unwrap();
+    let index = hub
+        .bindings()
+        .iter()
+        .position(|b| b == &old_assignment)
+        .unwrap();
+    hub.replace(index, learned_binding.clone()).unwrap();
     assert!(hub.drain().is_empty());
     hub.set_learn(false);
     assert!(hub.learned().is_none());
     let reopened = MidiHub::start_with_config(path.clone(), config).unwrap();
-    assert_eq!(
-        reopened.bindings(),
-        vec![other_device, extra_assignment, learned_binding]
-    );
+    let actual = reopened.bindings();
+    assert_eq!(actual.len(), 3);
+    for expected in [other_device, extra_assignment, learned_binding] {
+        assert!(actual.contains(&expected));
+    }
     assert!(reopened.learn_target(MidiTarget::Master).is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -134,6 +140,30 @@ fn catalogue_is_complete_unique_and_validates_every_default_binding() {
             assert!(targets.contains(&MidiTarget::Stem { deck, stem }));
         }
     }
+}
+
+#[test]
+fn absolute_inverted_flips_cc_values_and_still_ignores_note_off() {
+    let map = [cc(
+        MidiTarget::Tempo { deck: DeckId::A },
+        MidiControlMode::AbsoluteInverted,
+    )];
+    assert_eq!(
+        resolve(&map, "port", &[0xb2, 10, 0]).unwrap().value,
+        MidiValue::Absolute(127)
+    );
+    assert_eq!(
+        resolve(&map, "port", &[0xb2, 10, 127]).unwrap().value,
+        MidiValue::Absolute(0)
+    );
+    let map = [MidiBinding {
+        kind: MidiSourceKind::Note,
+        ..cc(
+            MidiTarget::Tempo { deck: DeckId::A },
+            MidiControlMode::AbsoluteInverted,
+        )
+    }];
+    assert!(resolve(&map, "port", &[0x92, 10, 0]).is_none());
 }
 
 #[test]

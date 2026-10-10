@@ -6,6 +6,7 @@ impl Engine {
     pub fn dispatch(&self, cmd: Command) -> Result<(), EngineError> {
         if let Command::SetCueDevice { name } = &cmd {
             let mut config = self.audio_config();
+            config.cue_uid = None;
             config.cue_device = name.clone();
             return self.configure_audio(config);
         }

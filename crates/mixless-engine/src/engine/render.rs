@@ -9,6 +9,8 @@ impl Shared {
         data: &mut [f32],
         channels: usize,
         playback: std::time::Instant,
+        master_pair: [u16; 2],
+        mut cue: Option<([u16; 2], &mut rtrb::Consumer<[f32; 2]>)>,
     ) {
         const MAX: usize = 1024;
         let ch = channels.max(1);
@@ -19,17 +21,15 @@ impl Shared {
             while done < frames {
                 let n = (frames - done).min(MAX);
                 shared.process_block(rt, &mut tmp[..n * 2], 2);
-                if ch == 1 {
-                    for i in 0..n {
-                        data[done + i] = (tmp[i * 2] + tmp[i * 2 + 1]) * 0.5;
-                    }
-                } else {
-                    for i in 0..n {
-                        let o = (done + i) * ch;
-                        data[o] = tmp[i * 2];
-                        data[o + 1] = tmp[i * 2 + 1];
-                        for c in 2..ch {
-                            data[o + c] = 0.0;
+                for i in 0..n {
+                    let frame = &mut data[(done + i) * ch..(done + i + 1) * ch];
+                    device::route_pair(frame, [tmp[i * 2], tmp[i * 2 + 1]], master_pair);
+                    if let Some((pair, consumer)) = cue.as_mut() {
+                        let sample = consumer.pop().unwrap_or([0.0; 2]);
+                        for (channel, value) in pair.iter().zip(sample) {
+                            if let Some(out) = frame.get_mut(*channel as usize) {
+                                *out = value;
+                            }
                         }
                     }
                 }

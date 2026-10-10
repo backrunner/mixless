@@ -108,11 +108,8 @@ fn set<T: Copy>(
     }
 }
 
-fn device_name(id: u32) -> Result<String, DeviceError> {
-    let value: CFStringRef = get(
-        id,
-        &address(kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal),
-    )?;
+fn string_property(id: u32, selector: u32) -> Result<String, DeviceError> {
+    let value: CFStringRef = get(id, &address(selector, kAudioObjectPropertyScopeGlobal))?;
     if value.is_null() {
         return Err(audio_error("device name unavailable"));
     }
@@ -134,6 +131,32 @@ fn device_name(id: u32) -> Result<String, DeviceError> {
     Ok(unsafe { std::ffi::CStr::from_ptr(text.as_ptr()) }
         .to_string_lossy()
         .into_owned())
+}
+
+fn device_name(id: u32) -> Result<String, DeviceError> {
+    string_property(id, kAudioObjectPropertyName)
+}
+pub(super) fn uid(name: &str) -> Result<String, DeviceError> {
+    string_property(find_device(Some(name))?, kAudioDevicePropertyDeviceUID)
+}
+pub(super) fn name_for_uid(uid: &str) -> Result<String, DeviceError> {
+    let ids: Vec<u32> = list(
+        kAudioObjectSystemObject,
+        &address(
+            kAudioHardwarePropertyDevices,
+            kAudioObjectPropertyScopeGlobal,
+        ),
+    )?;
+    for id in ids {
+        if string_property(id, kAudioDevicePropertyDeviceUID)
+            .ok()
+            .as_deref()
+            == Some(uid)
+        {
+            return device_name(id);
+        }
+    }
+    Err(audio_error("Assigned audio device is disconnected"))
 }
 
 fn find_device(name: Option<&str>) -> Result<u32, DeviceError> {

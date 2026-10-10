@@ -36,6 +36,19 @@ bundle by `mixless-tools`. Pinned artifacts and inference boundaries are recorde
 in `.agents/reference/native-inference.md`. The old Python evaluation environment
 is not a runtime or build dependency.
 
+Controller profiles in `crates/mixless-controllers` are independently authored
+from manufacturer protocol specifications. Source URLs, document versions,
+sections, and verification limits are recorded in that crate's `SOURCES.md`.
+Manufacturer manuals are referenced, not redistributed. No Mixxx mapping,
+script, importer, or derived preset is shipped. This provenance statement does
+not replace a license review of a release's complete dependency graph.
+
+MIDI transport uses [midir](https://github.com/Boddlnagg/midir) (MIT).
+HID transport uses [hidapi-rs](https://github.com/ruabmbua/hidapi-rs)
+(MIT) and its bundled [HIDAPI](https://github.com/libusb/hidapi) native backend
+(BSD-3-Clause selected from its licensing alternatives). Preserve their notices
+when distributing binaries.
+
 ## Trademarks
 
 "Spotify" is a trademark of Spotify AB. "YouTube" and "YouTube Music" are

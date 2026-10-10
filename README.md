@@ -24,7 +24,7 @@ mixless turns a folder of music into a continuous set. Mix by hand, let AutoMix 
 - **Hands-on decks.** Beat sync, key lock, hot cues, loops, scratching, four FX slots per deck and 70 effects.
 - **Local AI preparation.** On-device stem separation and note analysis. Shape vocals, drums and instruments independently; no cloud inference or Python runtime.
 - **Your library.** Queue folder imports, organize playlists, reorder tracks by dragging, and bring in Spotify playlist metadata. Reconnect moved files automatically or locate them yourself while preserving playlists and manual cues.
-- **Your setup.** Separate master and headphone outputs, independent deck/master gain and limiters, persistent preferences, and MIDI learning and mapping for decks, mixer and library controls.
+- **Your setup.** Master/headphone device and channel routing, independent deck/master gain and limiters, persistent preferences, and MIDI/HID controller profiles with hotplug discovery, mapping, feedback and portable presets. 12 independent Pioneer DJ, Hercules and Numark profiles are based on manufacturer protocols; physical-device validation is pending.
 
 Audio and analysis stay on your Mac. Choose the standard installer (verified models download on first use) or the installer with models for offline stem analysis on Apple Silicon. Spotify supplies metadata, not mixing audio; optional audio acquisition requires separately installed tools. See [Privacy](PRIVACY.md).
 

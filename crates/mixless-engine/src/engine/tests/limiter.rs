@@ -130,9 +130,8 @@ fn deck_limiter_caps_peaks_before_fader_and_pfl() {
         assert!((full * 0.25 - quiet).abs() < 1e-6);
     }
     assert_eq!(full_cue.len(), full.len());
-    // CueWriter's interpolator introduces one stereo frame of delay even
-    // when both devices run at the same rate.
-    for (master, cue) in full.iter().zip(&full_cue[2..]) {
+    // A shared-rate callback keeps master and cue sample-aligned.
+    for (master, cue) in full.iter().zip(&full_cue) {
         assert!((master - cue).abs() < 1e-6);
     }
     assert_eq!(full_cue, quiet_cue);

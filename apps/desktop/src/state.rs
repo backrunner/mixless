@@ -5,6 +5,7 @@ mod artwork;
 mod artwork_fetch;
 mod audio;
 mod automix;
+mod controller_service;
 mod controls;
 mod cues;
 mod import_retries;
@@ -17,7 +18,7 @@ mod poll;
 pub use packages::PackageAction;
 mod transport;
 mod unloading;
-mod url_input;
+pub(crate) mod url_input;
 pub use transport::TransportButton;
 pub use unloading::{DeckUnloadTarget, UnloadBlock};
 mod library_actions;
@@ -48,6 +49,11 @@ pub struct AppCore {
     pub automix_commit: Mutex<()>,
     pub settings: crate::settings::SettingsStore,
     pub midi_error: Mutex<Option<String>>,
+    pub controller_wake: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    pub controller_effects: Mutex<Vec<Command>>,
+    pub controller_loading: [std::sync::atomic::AtomicBool; 2],
+    pub controller_stop_automix: std::sync::atomic::AtomicBool,
+    pub controller_automix_epoch: Arc<AtomicU64>,
     pub settings_apply: Mutex<()>,
     pub engine: mixless_engine::Engine,
     pub library: mixless_library::Library,
@@ -55,7 +61,7 @@ pub struct AppCore {
     pub stems: Option<mixless_stems::Processor>,
     pub shutting_down: std::sync::atomic::AtomicBool,
     pub acquired_dir: PathBuf,
-    pub midi: Mutex<Option<Arc<mixless_midi::MidiHub>>>,
+    pub midi: Mutex<Option<Arc<mixless_controllers::MidiHub>>>,
     /// Serializes background loads so a cancelled worker cannot overwrite a manual load.
     pub deck_load: Mutex<()>,
     /// Set when a newer build's library had to be set aside; shown once at launch.
@@ -167,9 +173,10 @@ pub fn app_core() -> Arc<AppCore> {
             })
             .expect("initialize channel level");
     }
-    let midi = mixless_midi::MidiHub::start_with_config(data_dir.join("midi.json"), initial.midi);
+    let midi =
+        mixless_controllers::MidiHub::start_with_config(data_dir.join("midi.json"), initial.midi);
     let midi_error = midi.as_ref().err().map(ToString::to_string);
-    Arc::new(AppCore {
+    let core = Arc::new(AppCore {
         analysis: crate::analysis::AnalysisJobs::default(),
         mix_preparation: Default::default(),
         automix_commit: Mutex::new(()),
@@ -190,12 +197,19 @@ pub fn app_core() -> Arc<AppCore> {
         acquired_dir,
         settings,
         midi_error: Mutex::new(midi_error),
+        controller_wake: Mutex::new(None),
+        controller_effects: Mutex::new(Vec::new()),
+        controller_loading: std::array::from_fn(|_| false.into()),
+        controller_stop_automix: false.into(),
+        controller_automix_epoch: Arc::new(AtomicU64::new(0)),
         settings_apply: Mutex::new(()),
         midi: Mutex::new(midi.ok().map(Arc::new)),
         deck_load: Mutex::new(()),
         library_notice,
         update: Mutex::new(None),
-    })
+    });
+    core.attach_controller_runtime();
+    core
 }
 
 fn bundled_models() -> Option<PathBuf> {
@@ -500,7 +514,7 @@ impl UiState {
             automix_status: String::new(),
             automix_preview_revision: 0,
             automix_plan: None,
-            automix_epoch: Arc::new(AtomicU64::new(0)),
+            automix_epoch: core.controller_automix_epoch.clone(),
             automix_rx: None,
             automix_retry: None,
         }

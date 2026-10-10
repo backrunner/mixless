@@ -18,11 +18,16 @@ pub enum DeviceError {
     Cpal(String),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioConfig {
     pub master_device: Option<String>,
+    pub master_uid: Option<String>,
     pub cue_device: Option<String>,
+    pub cue_uid: Option<String>,
+    /// Zero-based output channels; device names remain backward compatible.
+    pub master_channels: [u16; 2],
+    pub cue_channels: [u16; 2],
     /// None uses the selected device's native sample rate.
     pub sample_rate: Option<u32>,
     /// None preserves the physical output depth. Independent of the float DSP stream.
@@ -31,6 +36,42 @@ pub struct AudioConfig {
     /// where supported), or the device default on other platforms. An explicit
     /// size applies to both master and headphone streams and must be supported.
     pub buffer_frames: Option<u32>,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            master_device: None,
+            master_uid: None,
+            cue_device: None,
+            cue_uid: None,
+            master_channels: [0, 1],
+            cue_channels: [0, 1],
+            sample_rate: None,
+            bit_depth: None,
+            buffer_frames: None,
+        }
+    }
+}
+
+pub fn validate_channel_pairs(
+    master: [u16; 2],
+    cue: Option<[u16; 2]>,
+    channels: u16,
+) -> Result<(), DeviceError> {
+    if !(channels == 1 && master == [0, 1] && cue.is_none())
+        && (master[0] == master[1] || master.iter().any(|c| *c >= channels))
+    {
+        return Err(audio_error("master channel pair is unavailable"));
+    }
+    if let Some(cue) = cue {
+        if cue[0] == cue[1] || cue.iter().any(|c| *c >= channels || master.contains(c)) {
+            return Err(audio_error(
+                "headphone channels must be available and separate from master",
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl AudioConfig {
@@ -42,7 +83,7 @@ impl AudioConfig {
 
     pub fn automatic_buffer_label() -> &'static str {
         if cfg!(target_os = "macos") {
-            "Low latency (auto · 256 frames)"
+            "Automatic (256 frames)"
         } else {
             "Device default"
         }
@@ -52,6 +93,8 @@ impl AudioConfig {
 #[derive(Clone, Debug)]
 pub struct AudioDevice {
     pub name: String,
+    pub uid: Option<String>,
+    pub output_channels: u16,
     pub sample_rates: Vec<u32>,
     pub current_sample_rate: u32,
     pub output_formats: Vec<AudioOutputFormat>,
@@ -127,7 +170,13 @@ pub fn output_devices() -> Result<Vec<AudioDevice>, DeviceError> {
                         })
                 })
                 .collect();
+            #[cfg(target_os = "macos")]
+            let uid = macos::uid(&name).ok();
+            #[cfg(not(target_os = "macos"))]
+            let uid = None;
             Ok(AudioDevice {
+                uid,
+                output_channels: configs.iter().map(|c| c.channels()).max().unwrap_or(0),
                 name,
                 sample_rates,
                 current_sample_rate,
@@ -162,6 +211,7 @@ fn stream_config(
     rate: Option<u32>,
     buffer: Option<u32>,
     bit_depth: Option<u16>,
+    required_channels: u16,
 ) -> Result<(cpal::StreamConfig, cpal::SampleFormat), DeviceError> {
     let default = device.default_output_config().map_err(audio_error)?;
     let rate = rate.unwrap_or(default.sample_rate().0);
@@ -175,6 +225,8 @@ fn stream_config(
         .map_err(audio_error)?
         .filter(|c| {
             supported_format(c.sample_format())
+                && (c.channels() >= required_channels
+                    || c.channels() == 1 && required_channels == 2)
                 && bit_depth.is_none_or(|bits| c.sample_format().sample_size() * 8 == bits as usize)
                 && c.min_sample_rate().0 <= rate
                 && c.max_sample_rate().0 >= rate
@@ -251,13 +303,36 @@ impl OutputStreams {
         // CoreAudio starts streams while building them. Emit silence until the
         // host has published the new rate and verified the physical format.
         let enabled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut resolved = settings.clone();
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(uid) = &settings.master_uid {
+                resolved.master_device = Some(macos::name_for_uid(uid)?);
+            }
+            if settings.cue_device.is_some() {
+                if let Some(uid) = &settings.cue_uid {
+                    resolved.cue_device = Some(macos::name_for_uid(uid)?);
+                }
+            }
+        }
+        let settings = &resolved;
         let master_device = find_device(settings.master_device.as_deref())?;
         let device_name = master_device.name().map_err(audio_error)?;
-        if settings.cue_device.as_ref() == Some(&device_name) {
-            return Err(audio_error(
-                "headphone output must be a different device from master",
-            ));
-        }
+        let shared_device = settings.cue_device.as_ref() == Some(&device_name);
+        let master_required = settings
+            .master_channels
+            .iter()
+            .max()
+            .copied()
+            .unwrap_or(1)
+            .saturating_add(1);
+        let cue_required = settings
+            .cue_channels
+            .iter()
+            .max()
+            .copied()
+            .unwrap_or(1)
+            .saturating_add(1);
         #[cfg(target_os = "macos")]
         let master_hardware = macos::HardwareChange::prepare(
             settings.master_device.as_deref(),
@@ -273,18 +348,45 @@ impl OutputStreams {
         } else {
             settings.bit_depth
         };
-        let (config, format) =
-            stream_config(&master_device, rate, settings.buffer_frames, client_depth)?;
+        let (config, format) = stream_config(
+            &master_device,
+            rate,
+            settings.buffer_frames,
+            client_depth,
+            if shared_device {
+                master_required.max(cue_required)
+            } else {
+                master_required
+            },
+        )?;
         let mut master_output = output_snapshot(&config, format);
         #[cfg(target_os = "macos")]
         {
             master_output.hardware_format = Some(master_hardware.description());
         }
+        validate_channel_pairs(
+            settings.master_channels,
+            shared_device.then_some(settings.cue_channels),
+            config.channels,
+        )?;
         let mut cue_output = None;
+        let mut shared_cue = None;
+        let master_pair = settings.master_channels;
+        let cue_pair = settings.cue_channels;
         #[cfg(target_os = "macos")]
         let mut hardware = vec![master_hardware];
         let mut rt = AudioRt::new(config.sample_rate.0 as f32);
-        let cue = if let Some(name) = &settings.cue_device {
+        let cue = if shared_device {
+            let (producer, consumer) = rtrb::RingBuffer::new(2048);
+            rt.cue_output = Some(CueWriter::new(
+                producer,
+                config.sample_rate.0,
+                config.sample_rate.0,
+            ));
+            shared_cue = Some(consumer);
+            cue_output = Some(master_output.clone());
+            None
+        } else if let Some(name) = &settings.cue_device {
             let device = find_device(Some(name))?;
             #[cfg(target_os = "macos")]
             let cue_hardware = macos::HardwareChange::prepare(Some(name), None, None)?;
@@ -292,8 +394,14 @@ impl OutputStreams {
             let cue_rate = Some(cue_hardware.sample_rate());
             #[cfg(not(target_os = "macos"))]
             let cue_rate = None;
-            let (cue_config, cue_format) =
-                stream_config(&device, cue_rate, settings.buffer_frames, None)?;
+            let (cue_config, cue_format) = stream_config(
+                &device,
+                cue_rate,
+                settings.buffer_frames,
+                None,
+                cue_required,
+            )?;
+            validate_channel_pairs(cue_pair, None, cue_config.channels)?;
             let mut status = output_snapshot(&cue_config, cue_format);
             #[cfg(target_os = "macos")]
             {
@@ -325,7 +433,7 @@ impl OutputStreams {
                         }
                     }
                     for frame in data.chunks_mut(channels) {
-                        route_stereo(frame, consumer.pop().unwrap_or([0.0; 2]));
+                        route_pair(frame, consumer.pop().unwrap_or([0.0; 2]), cue_pair);
                     }
                 },
                 move |_| {
@@ -349,7 +457,15 @@ impl OutputStreams {
                 shared
                     .block_frames
                     .store((data.len() / channels) as u32, Ordering::Relaxed);
-                Shared::render_interleaved(&shared, &mut rt, data, channels, playback);
+                Shared::render_interleaved(
+                    &shared,
+                    &mut rt,
+                    data,
+                    channels,
+                    playback,
+                    master_pair,
+                    shared_cue.as_mut().map(|c| (cue_pair, c)),
+                );
             },
             move |_| {
                 error_shared.audio_failed.store(true, Ordering::Relaxed);
@@ -417,7 +533,12 @@ impl OutputStreams {
     pub fn needs_refresh(&self, settings: &AudioConfig) -> bool {
         #[cfg(target_os = "macos")]
         {
-            !self.hardware[0].selected_device_matches(settings.master_device.as_deref())
+            let resolved = settings
+                .master_uid
+                .as_ref()
+                .and_then(|uid| macos::name_for_uid(uid).ok());
+            !self.hardware[0]
+                .selected_device_matches(resolved.as_deref().or(settings.master_device.as_deref()))
                 || self.verify().is_err()
         }
         #[cfg(not(target_os = "macos"))]
@@ -444,12 +565,16 @@ fn output_snapshot(
     }
 }
 
-fn route_stereo(frame: &mut [f32], sample: [f32; 2]) {
-    frame.fill(0.0);
-    if frame.len() == 1 {
+pub(crate) fn route_pair(frame: &mut [f32], sample: [f32; 2], pair: [u16; 2]) {
+    if frame.len() == 1 && pair == [0, 1] {
         frame[0] = (sample[0] + sample[1]) * 0.5;
-    } else {
-        frame[..2].copy_from_slice(&sample);
+        return;
+    }
+    frame.fill(0.0);
+    for (channel, value) in pair.into_iter().zip(sample) {
+        if let Some(out) = frame.get_mut(channel as usize) {
+            *out = value;
+        }
     }
 }
 
@@ -526,6 +651,10 @@ impl CueWriter {
     }
 
     pub fn push(&mut self, sample: [f32; 2]) {
+        if self.step == 1. {
+            let _ = self.producer.push(sample);
+            return;
+        }
         while self.phase < 1.0 {
             let value = std::array::from_fn(|i| {
                 self.previous[i] + (sample[i] - self.previous[i]) * self.phase as f32
@@ -542,6 +671,20 @@ impl CueWriter {
 mod tests {
     use super::*;
 
+    #[test]
+    fn channel_routes_validate_disjoint_buses_and_preserve_silence() {
+        assert!(validate_channel_pairs([0, 1], Some([2, 3]), 4).is_ok());
+        for cue in [[1, 2], [2, 2], [3, 4]] {
+            assert!(validate_channel_pairs([0, 1], Some(cue), 4).is_err());
+        }
+        let mut frame = [9.; 6];
+        route_pair(&mut frame, [0.25, -0.5], [4, 5]);
+        assert_eq!(frame, [0., 0., 0., 0., 0.25, -0.5]);
+        let mut mono = [0.];
+        route_pair(&mut mono, [0.2, 0.6], [0, 1]);
+        assert_eq!(mono, [0.4]);
+        assert_eq!(AudioConfig::default().master_channels, [0, 1]);
+    }
     #[test]
     fn manual_buffer_size_is_validated_without_clamping() {
         let range = cpal::SupportedBufferSize::Range { min: 64, max: 1024 };

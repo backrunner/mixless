@@ -8,7 +8,7 @@ impl Preferences {
         let busy = self.job.is_some();
         let changed = self.audio != self.core.engine.audio_config();
         let routing = setting_group(
-            "Output routing",
+            "Outputs",
             vec![
                 row(
                     "Master output",
@@ -17,15 +17,39 @@ impl Preferences {
                         self.audio
                             .master_device
                             .clone()
-                            .unwrap_or("System Default".into()),
+                            .unwrap_or("System default".into()),
                         cx,
                     ),
                 ),
                 row(
-                    "Headphones · PFL",
+                    "Headphones",
                     self.select(
                         Selector::Cue,
                         self.audio.cue_device.clone().unwrap_or("Disabled".into()),
+                        cx,
+                    ),
+                ),
+                row(
+                    "Master channels",
+                    self.select(
+                        Selector::MasterChannels,
+                        format!(
+                            "{} / {}",
+                            self.audio.master_channels[0] + 1,
+                            self.audio.master_channels[1] + 1
+                        ),
+                        cx,
+                    ),
+                ),
+                row(
+                    "Headphone channels",
+                    self.select(
+                        Selector::CueChannels,
+                        format!(
+                            "{} / {}",
+                            self.audio.cue_channels[0] + 1,
+                            self.audio.cue_channels[1] + 1
+                        ),
                         cx,
                     ),
                 ),
@@ -72,7 +96,7 @@ impl Preferences {
             ],
         );
         let processing = setting_group(
-            "Audio engine",
+            "Format",
             vec![
                 row(
                     "Sample rate",
@@ -80,15 +104,15 @@ impl Preferences {
                         Selector::Rate,
                         self.audio
                             .sample_rate
-                            .map_or("System / device current".into(), |rate| format!("{rate} Hz")),
+                            .map_or("Device default".into(), |rate| format!("{rate} Hz")),
                         cx,
                     ),
                 ),
                 row(
-                    "Output bit depth",
-                    self.select(Selector::Depth, self.audio.bit_depth.map_or("System / device current".into(), |bits| format!("{bits}-bit")), cx),
+                    "Bit depth",
+                    self.select(Selector::Depth, self.audio.bit_depth.map_or("Device default".into(), |bits| format!("{bits}-bit")), cx),
                 ),
-                div().py_2().text_size(px(11.)).text_color(theme::MUTED).child("Sample rate and bit depth set the master output. Headphones follow their own device format. Applying changes briefly interrupts playback."),
+                div().px_3().py_2().text_size(px(11.)).line_height(px(16.)).text_color(theme::MUTED).child("Applies to the master output. A separate headphone device keeps its own format. Playback briefly stops when applying changes."),
                 row(
                     "Buffer size",
                     self.select(
@@ -105,7 +129,8 @@ impl Preferences {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .py_3()
+                    .px_3()
+                    .py_2()
                     .child(self.button(
                         "refresh-audio",
                         "Refresh devices",
@@ -128,14 +153,13 @@ impl Preferences {
                         cx,
                     ))
                     .child(
-                        self.button(
+                        self.primary_button(
                             "apply-audio",
-                            "Apply audio",
+                            "Apply",
                             !busy,
                             |s, _, _| s.apply_audio(),
                             cx,
-                        )
-                        .text_color(theme::ACCENT),
+                        ),
                     ),
             ],
         );
@@ -168,7 +192,7 @@ impl Preferences {
                         .as_ref()
                         .map_or("Unavailable".into(), |output| {
                             format!(
-                                "{} Hz · {}",
+                                "{} Hz, {}",
                                 output.sample_rate,
                                 output
                                     .hardware_format
@@ -195,7 +219,7 @@ impl Preferences {
                         .as_ref()
                         .map_or("Disabled".into(), |output| {
                             format!(
-                                "{} Hz · {}",
+                                "{} Hz, {}",
                                 output.sample_rate,
                                 output
                                     .hardware_format
@@ -204,7 +228,7 @@ impl Preferences {
                             )
                         }),
                 ),
-                div().flex().py_3().children(
+                div().flex().px_3().py_2().children(
                     [
                         ("Sample rate", format!("{} Hz", snapshot.sample_rate)),
                         ("Buffer", format!("{} frames", snapshot.block_frames)),
@@ -245,10 +269,26 @@ impl Preferences {
             .w_full()
             .max_w(px(680.))
             .mx_auto()
-            .py_5()
             .child(routing)
             .child(processing)
-            .child(active)
+            .child(
+                self.button(
+                    "audio-details",
+                    if self.audio_details_open {
+                        "Hide device details"
+                    } else {
+                        "Device details…"
+                    },
+                    true,
+                    |s, _, _| s.audio_details_open = !s.audio_details_open,
+                    cx,
+                )
+                .bg(theme::BG)
+                .border_0()
+                .justify_start()
+                .px_0(),
+            )
+            .when(self.audio_details_open, |el| el.child(active))
             .into_any_element()
     }
 }

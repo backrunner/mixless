@@ -28,6 +28,592 @@
         "profile": "debug",
         "built": "2026-09-21T17:52:00Z"
       }
+    },
+    "controllers": {
+      "file": "controllers.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-09T16:39:12.280614+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-09T16:38:13Z"
+      },
+      "binarySha256": "70e20a1fd3b8d94ca29bc5bec3309f652d7cdc43099d439ca5619333ee429b2b",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated offline test configuration; no physical DJ controller attached."
+    },
+    "controller-editor": {
+      "file": "controller-editor.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-09T16:39:36.642606+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-09T16:38:13Z"
+      },
+      "binarySha256": "70e20a1fd3b8d94ca29bc5bec3309f652d7cdc43099d439ca5619333ee429b2b",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated offline test configuration; no physical DJ controller attached."
+    },
+    "settings-general": {
+      "file": "settings-general.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T11:36:49.351824+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T11:35:58Z"
+      },
+      "binarySha256": "abc64cc003d170043867d204019f2370c5716d5017ae01a398edf27b3367f316",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "General settings rendering during the UI review. Isolated offline data, inactive window in a locked macOS session. This image does not establish desktop pointer interaction."
+    },
+    "settings-review-general": {
+      "file": "settings-review/general.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:48.586473+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared general state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "general",
+      "desktopLocked": true
+    },
+    "settings-review-audio": {
+      "file": "settings-review/audio.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:49.654144+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared audio state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "audio",
+      "desktopLocked": true
+    },
+    "settings-review-storage": {
+      "file": "settings-review/storage.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:50.735193+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared storage state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "storage",
+      "desktopLocked": true
+    },
+    "settings-review-controllers": {
+      "file": "settings-review/controllers.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:51.799722+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared controllers state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "controllers",
+      "desktopLocked": true
+    },
+    "settings-review-preset-options": {
+      "file": "settings-review/preset-options.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:52.857070+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared preset-options state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "preset-options",
+      "desktopLocked": true
+    },
+    "settings-review-preset-actions": {
+      "file": "settings-review/preset-actions.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:53.907328+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared preset-actions state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "preset-actions",
+      "desktopLocked": true
+    },
+    "settings-review-audio-options": {
+      "file": "settings-review/audio-options.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:54.939118+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared audio-options state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "audio-options",
+      "desktopLocked": true
+    },
+    "settings-review-controller-details": {
+      "file": "settings-review/controller-details.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:55.986971+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared controller-details state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "controller-details",
+      "desktopLocked": true
+    },
+    "settings-review-controller-layout": {
+      "file": "settings-review/controller-layout.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T12:43:57.050311+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared controller-layout state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "controller-layout",
+      "desktopLocked": true
+    },
+    "settings-review-controllers-small": {
+      "file": "settings-review/controllers-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T12:43:58.109981+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared controllers state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "controllers",
+      "desktopLocked": true
+    },
+    "settings-review-general-small": {
+      "file": "settings-review/general-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T12:43:59.165769+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared general state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "general",
+      "desktopLocked": true
+    },
+    "settings-review-audio-small": {
+      "file": "settings-review/audio-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T12:44:00.197271+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared audio state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "audio",
+      "desktopLocked": true
+    },
+    "settings-review-storage-small": {
+      "file": "settings-review/storage-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T12:44:01.267544+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T12:43:22Z"
+      },
+      "binarySha256": "c0175234c5fc0ff07cfa6570d3d2cba1533fdf8f42ca2d883950aa8670015427",
+      "capture": "Native macOS window capture at 2x; unmodified pixels, no upscaling or painted UI.",
+      "scope": "Settings review via the debug-only native preview harness. Prepared storage state with isolated temporary offline data. No physical controller; locked desktop; rendering evidence only.",
+      "scene": "storage",
+      "desktopLocked": true
+    },
+    "settings-controls-general": {
+      "file": "settings-controls/general.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:43.372278+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "general",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-audio": {
+      "file": "settings-controls/audio.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:44.437421+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "audio",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-storage": {
+      "file": "settings-controls/storage.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:45.497359+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "storage",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-controllers": {
+      "file": "settings-controls/controllers.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:46.551820+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "controllers",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-preset-options": {
+      "file": "settings-controls/preset-options.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:47.620017+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "preset-options",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-preset-actions": {
+      "file": "settings-controls/preset-actions.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:48.683159+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "preset-actions",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-audio-options": {
+      "file": "settings-controls/audio-options.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:49.727427+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "audio-options",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-controller-details": {
+      "file": "settings-controls/controller-details.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:50.793442+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "controller-details",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-controller-layout": {
+      "file": "settings-controls/controller-layout.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:51.851055+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "controller-layout",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-controllers-small": {
+      "file": "settings-controls/controllers-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T13:00:52.890898+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "controllers",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-general-small": {
+      "file": "settings-controls/general-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T13:00:53.943938+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "general",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-audio-small": {
+      "file": "settings-controls/audio-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T13:00:54.989846+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "audio",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-storage-small": {
+      "file": "settings-controls/storage-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T13:00:56.051408+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated.",
+      "scene": "storage",
+      "desktopLocked": true,
+      "virtualMidi": false
+    },
+    "settings-controls-controller-connected": {
+      "file": "settings-controls/controller-connected.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:57.497039+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated. Connected device is a CoreMIDI virtual source/destination named mixless UI Preview; it is not a physical DDJ-400.",
+      "scene": "controller-connected",
+      "desktopLocked": true,
+      "virtualMidi": true
+    },
+    "settings-controls-controller-connected-details": {
+      "file": "settings-controls/controller-connected-details.png",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-10T13:00:58.973464+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated. Connected device is a CoreMIDI virtual source/destination named mixless UI Preview; it is not a physical DDJ-400.",
+      "scene": "controller-connected-details",
+      "desktopLocked": true,
+      "virtualMidi": true
+    },
+    "settings-controls-controller-connected-small": {
+      "file": "settings-controls/controller-connected-small.png",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-10T13:01:00.444865+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-1-gf457459-dirty",
+        "profile": "debug",
+        "built": "2026-10-10T13:00:17Z"
+      },
+      "binarySha256": "ab2d057cb055acd53aa107a7a1a35119484a8654037c3a04135db43d8684d339",
+      "capture": "Native macOS window capture at 2x; no upscaling or painted UI.",
+      "scope": "Isolated settings preview, locked macOS desktop. Native rendering only; OS pointer delivery and physical hardware are not validated. Connected device is a CoreMIDI virtual source/destination named mixless UI Preview; it is not a physical DDJ-400.",
+      "scene": "controller-connected",
+      "desktopLocked": true,
+      "virtualMidi": true
     }
   }
 }

@@ -409,3 +409,112 @@ fn dispatch_updates_snapshot_without_audio_thread() {
     assert!((snap.xfader - (-1.0)).abs() < 0.01);
     assert!((snap.master - 0.25).abs() < 0.01);
 }
+
+#[test]
+fn multichannel_callback_routes_cue_without_leak_and_zeros_unused_channels() {
+    for (master, cue) in [([0, 1], [2, 3]), ([4, 5], [0, 1])] {
+        let engine = test_engine(48000);
+        engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        engine.dispatch(Command::SetMaster { value: 0. }).unwrap();
+        engine
+            .dispatch(Command::SetPfl {
+                deck: DeckId::A,
+                on: true,
+            })
+            .unwrap();
+        let (producer, mut consumer) = rtrb::RingBuffer::new(2048);
+        let mut rt = engine.rt.lock().unwrap();
+        rt.cue_output = Some(device::CueWriter::new(producer, 48000, 48000));
+        let mut output = vec![99.; 8192 * 8];
+        Shared::render_interleaved(
+            &engine.shared,
+            &mut rt,
+            &mut output,
+            8,
+            std::time::Instant::now(),
+            master,
+            Some((cue, &mut consumer)),
+        );
+        let energy_of = |ch: u16| {
+            output
+                .chunks_exact(8)
+                .skip(4096)
+                .map(|f| f[ch as usize] * f[ch as usize])
+                .sum::<f32>()
+        };
+        assert!(energy_of(cue[0]) > 0.01);
+        assert!(energy_of(cue[1]) > 0.01);
+        for ch in 0..8 {
+            if !cue.contains(&ch) {
+                assert!(energy_of(ch) < 1e-8, "leak to {ch}");
+            }
+        }
+        // Losing the cue sink does not redirect it into the master pair.
+        rt.cue_output = None;
+        Shared::render_interleaved(
+            &engine.shared,
+            &mut rt,
+            &mut output,
+            8,
+            std::time::Instant::now(),
+            master,
+            None,
+        );
+        assert!(output.iter().all(|v| v.abs() < 1e-8));
+    }
+}
+
+#[test]
+fn multichannel_master_and_cue_carry_different_test_tones() {
+    let engine = test_engine(48_000);
+    for (deck, hz) in [(DeckId::A, 440.), (DeckId::B, 997.)] {
+        let slot = &engine.shared.decks[deck.index()];
+        let buffer = sine_buffer(48_000, hz, 4.);
+        slot.frames.store(buffer.frames, Ordering::Relaxed);
+        slot.src_sr.store(48_000, Ordering::Relaxed);
+        *slot.buffer.lock().unwrap() = Some(buffer);
+        engine.dispatch(Command::PlayPause { deck }).unwrap();
+    }
+    engine
+        .dispatch(Command::SetCrossfader { value: -1. })
+        .unwrap();
+    engine
+        .dispatch(Command::SetPfl {
+            deck: DeckId::B,
+            on: true,
+        })
+        .unwrap();
+    let (producer, mut consumer) = rtrb::RingBuffer::new(2048);
+    let mut rt = engine.rt.lock().unwrap();
+    rt.cue_output = Some(device::CueWriter::new(producer, 48_000, 48_000));
+    let mut output = vec![9.; 20_480 * 6];
+    Shared::render_interleaved(
+        &engine.shared,
+        &mut rt,
+        &mut output,
+        6,
+        std::time::Instant::now(),
+        [4, 5],
+        Some(([0, 1], &mut consumer)),
+    );
+    for (channel, hz) in [(4, 440.), (0, 997.)] {
+        let samples: Vec<_> = output
+            .chunks_exact(6)
+            .skip(4096)
+            .map(|f| f[channel])
+            .collect();
+        let crossings = samples
+            .windows(2)
+            .filter(|s| s[0] <= 0. && s[1] > 0.)
+            .count() as f64;
+        let expected = hz * 16384. / 48000.;
+        assert!(
+            (crossings - expected).abs() < 3.,
+            "channel {channel}: {crossings}, expected {expected}"
+        );
+        assert!(energy(&samples) > 0.001);
+    }
+    assert!(output.chunks_exact(6).all(|f| f[2] == 0. && f[3] == 0.));
+}

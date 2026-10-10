@@ -38,6 +38,41 @@ audio device and any listening or frame-time measurements; automated tests do
 not establish listening quality or smooth animation by themselves. Network and
 external-tool tests may be ignored by default; run relevant ones explicitly.
 
+## UI and product copy
+
+These requirements apply to the native app, settings, menus, select options,
+dialogs, website and product documentation, in every language.
+
+- Avoid AI slop: generic promotional copy, vague feature claims, repeated help
+  text and decorative UI that does not help the user complete a task. Use concrete
+  labels and short, direct instructions. Prefer a restrained, modern tool UI with
+  clear hierarchy, consistent spacing and recognizable controls. Do not turn
+  ordinary settings into nested cards, badges or oversized rounded panels.
+- Do not separate inline text with dots or bullets such as `·`, `•` or `●`.
+  Use labeled values, separate rows, parentheses or a short sentence instead.
+  For example, show `Note 11 (Ch 1)` rather than `Ch 1 · Note 11`; show connection
+  status and the active preset in separate fields rather than joining them with
+  a dot. This rule concerns text separators, not normal punctuation, semantic
+  list markers, status indicators or the dot in the `mixless.` wordmark.
+- Keep the primary view concise. Selecting a device or preset must not reveal
+  long protocol descriptions, internal identifiers or raw input data by default.
+  Put those details behind an explicit disclosure. Keep actionable errors and
+  information needed to make a decision visible; do not hide required warnings
+  just to shorten the page.
+- Select options should identify the choice without repeating descriptions or
+  badges on every row. Add only the information needed to distinguish ambiguous
+  choices. Buttons must name their action; segmented controls must show a clear
+  selected state and keep their associated content in sync.
+- Menus must stay anchored to their trigger, fit the viewport and scroll when
+  needed. Hovering across a trigger and its menu must not cause flicker or
+  dismissal. Check outside-click behavior, keyboard navigation and small-window
+  layouts alongside the visual design.
+
+Review UI changes against these rules using actual rendered views, including
+empty, selected, expanded and error states where relevant. Follow the
+[mixless brand guide](.agents/skills/mixless-brand/SKILL.md) for typography,
+colors and screenshot evidence. A successful build alone is not a UI review.
+
 ## Module boundaries
 
 Split growing files by responsibility. Around 400–500 lines is a useful point

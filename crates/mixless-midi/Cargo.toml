@@ -6,7 +6,6 @@ license.workspace = true
 description = "MIDI learn / mapping for Mixless"
 
 [dependencies]
-mixless-protocol = { workspace = true }
 midir = "0.10"
 serde = { workspace = true }
 serde_json = { workspace = true }

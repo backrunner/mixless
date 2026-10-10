@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use mixless_controllers::MidiConfig;
 use mixless_engine::AudioConfig;
-use mixless_midi::MidiConfig;
 use mixless_protocol::{Command, DeckId, LiveMoves, XfCurve};
 use serde::{Deserialize, Serialize};
 

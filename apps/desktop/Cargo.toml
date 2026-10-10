@@ -21,7 +21,7 @@ mixless-mixplan = { workspace = true }
 mixless-spotify = { workspace = true }
 mixless-acquire = { path = "../../crates/mixless-acquire" }
 mixless-acquire-yt = { path = "../../crates/mixless-acquire-yt" }
-mixless-midi = { workspace = true }
+mixless-controllers = { workspace = true }
 gpui = { workspace = true }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 rfd = { workspace = true }
@@ -36,3 +36,7 @@ semver = "1"
 sha2 = "0.10"
 tempfile = "3"
 fs2 = "0.4"
+async-channel = "2"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

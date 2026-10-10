@@ -6,11 +6,11 @@ use gpui::{
     App, Bounds, Context, FocusHandle, IntoElement, Render, SharedString, TitlebarOptions, Window,
     WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
-use mixless_engine::{AudioConfig, AudioDevice};
-use mixless_midi::{
+use mixless_controllers::{
     MidiBinding, MidiConfig, MidiControlMode, MidiGroup, MidiMessage, MidiPort, MidiSourceKind,
     MidiTarget,
 };
+use mixless_engine::{AudioConfig, AudioDevice};
 use mixless_protocol::{Command, DeckId, LiveMoves, XfCurve};
 
 use crate::{
@@ -21,9 +21,16 @@ use crate::{
 };
 
 mod audio;
+mod controllers;
 mod general;
 mod midi;
+#[cfg(debug_assertions)]
+pub mod preview;
+mod select;
+#[cfg(test)]
+mod tests;
 mod widgets;
+use controllers::PresetDialog;
 
 use widgets::{setting_detail, setting_group, setting_stack};
 
@@ -37,10 +44,12 @@ enum Tab {
     Storage,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Selector {
     Master,
     Cue,
+    MasterChannels,
+    CueChannels,
     Rate,
     Depth,
     Buffer,
@@ -48,6 +57,9 @@ enum Selector {
     MidiChannel,
     MidiNumber,
     MidiMode,
+    MidiPreset,
+    ControllerDevice,
+    PresetActions,
 }
 
 enum JobResult {
@@ -57,7 +69,8 @@ enum JobResult {
     ),
     Audio(Result<(), String>),
     Midi(Result<(), String>),
-    File(Result<(), String>),
+    File(Result<String, String>),
+    PresetImport(Result<mixless_controllers::ImportReport, String>),
     Dir(Option<PathBuf>),
     Storage(Result<StorageReport, String>),
     StorageClear(Result<(u64, StorageReport), String>),
@@ -68,6 +81,8 @@ pub struct Preferences {
     focus: FocusHandle,
     tab: Tab,
     selector: Option<Selector>,
+    select_ui: select::SelectState,
+    window_observers: Vec<gpui::Subscription>,
     audio: AudioConfig,
     midi: MidiConfig,
     devices: Vec<AudioDevice>,
@@ -87,6 +102,17 @@ pub struct Preferences {
     error: bool,
     storage: Option<StorageReport>,
     confirm_clear: Option<ClearKind>,
+    confirm_reset: bool,
+    controller_advanced: bool,
+    controller_notes: bool,
+    controller_monitor: bool,
+    midi_layout_open: bool,
+    audio_details_open: bool,
+    controller_device: Option<String>,
+    controller_devices: Vec<mixless_controllers::ControllerDevice>,
+    selected_preset: Option<String>,
+    preset_dialog: Option<PresetDialog>,
+    import_preview: Option<mixless_controllers::ImportReport>,
 }
 
 impl Preferences {
@@ -98,6 +124,8 @@ impl Preferences {
             focus: cx.focus_handle(),
             tab: Tab::General,
             selector: None,
+            select_ui: Default::default(),
+            window_observers: Vec::new(),
             audio: settings.audio,
             midi: settings.midi,
             devices: Vec::new(),
@@ -124,6 +152,17 @@ impl Preferences {
             status,
             storage: None,
             confirm_clear: None,
+            confirm_reset: false,
+            controller_advanced: false,
+            controller_notes: false,
+            controller_monitor: false,
+            midi_layout_open: false,
+            audio_details_open: false,
+            controller_device: None,
+            controller_devices: Vec::new(),
+            selected_preset: None,
+            preset_dialog: None,
+            import_preview: None,
         };
         state.refresh();
         cx.on_release(|state, _| state.cancel_learn()).detach();
@@ -162,7 +201,7 @@ impl Preferences {
         self.start_job(|| {
             JobResult::Devices(
                 mixless_engine::output_devices().map_err(|e| e.to_string()),
-                mixless_midi::input_ports().map_err(|e| e.to_string()),
+                mixless_controllers::input_ports().map_err(|e| e.to_string()),
             )
         });
     }
@@ -181,6 +220,18 @@ impl Preferences {
     }
 
     fn poll(&mut self) {
+        if let Some(hub) = self.core.midi.lock().expect("controllers").as_ref() {
+            self.controller_devices = hub.devices();
+            self.ports = self
+                .controller_devices
+                .iter()
+                .filter(|d| !d.hid && d.state != mixless_controllers::ConnectionState::Offline)
+                .map(|d| MidiPort {
+                    id: d.id.clone(),
+                    name: d.name.clone(),
+                })
+                .collect();
+        }
         if let Some(rx) = self.job.take() {
             match rx.try_recv() {
                 Ok(JobResult::Devices(audio, midi)) => {
@@ -195,7 +246,24 @@ impl Preferences {
                 }
                 Ok(JobResult::Audio(result)) => self.result(result, "Audio settings saved"),
                 Ok(JobResult::Midi(result)) => self.result(result, "MIDI inputs saved"),
-                Ok(JobResult::File(result)) => self.result(result, "MIDI mapping file updated"),
+                Ok(JobResult::PresetImport(result)) => match result {
+                    Ok(report) => {
+                        self.result(Ok(()), "");
+                        self.import_preview = Some(report);
+                    }
+                    Err(error) => self.result(Err(error), ""),
+                },
+                Ok(JobResult::File(result)) => match result {
+                    Ok(message) => self.result(
+                        Ok(()),
+                        if message.is_empty() {
+                            "MIDI mapping file updated"
+                        } else {
+                            &message
+                        },
+                    ),
+                    Err(error) => self.result(Err(error), ""),
+                },
                 Ok(JobResult::Storage(result)) => match result {
                     Ok(report) => self.storage = Some(report),
                     Err(error) => self.result(Err(error), ""),
@@ -360,7 +428,7 @@ impl Preferences {
                 } else {
                     let path = core.settings.path.with_file_name("midi.json");
                     let hub = Arc::new(
-                        mixless_midi::MidiHub::start_with_config(path, config.clone())
+                        mixless_controllers::MidiHub::start_with_config(path, config.clone())
                             .map_err(|e| e.to_string())?,
                     );
                     *core.midi.lock().expect("MIDI") = Some(hub.clone());
@@ -372,6 +440,7 @@ impl Preferences {
                     }
                     return Err(error);
                 }
+                core.attach_controller_runtime();
                 *core.midi_error.lock().expect("MIDI error") = None;
                 Ok(())
             })())
@@ -392,13 +461,33 @@ impl Preferences {
             return;
         }
         self.midi_feedback = None;
-        self.learning = true;
+        if self.controller_device.is_none() {
+            self.result(Err("Select a connected device before learning".into()), "");
+            return;
+        }
         if let Some(hub) = self.core.midi.lock().expect("MIDI").as_ref() {
-            hub.set_learn(self.learning);
+            match hub.learn_target_for(self.binding.target.clone(), self.controller_device.clone())
+            {
+                Ok(()) => self.learning = true,
+                Err(e) => {
+                    self.learning = false;
+                    self.midi_feedback = Some((e.to_string(), true));
+                }
+            }
         }
     }
 
     fn save_binding(&mut self) {
+        if self.controller_device.is_none() && self.editing.is_none() {
+            self.result(
+                Err(
+                    "Select a device before assigning; use Advanced mapping for offline presets"
+                        .into(),
+                ),
+                "",
+            );
+            return;
+        }
         let result = {
             let midi = self.core.midi.lock().expect("MIDI");
             midi.as_ref()
@@ -438,33 +527,47 @@ impl Preferences {
             return;
         }
         self.cancel_learn();
+        let core = self.core.clone();
+        let selected = self.selected_preset.clone();
+        if export && selected.is_none() {
+            self.result(Err("Choose a preset to export".into()), "");
+            return;
+        }
+        self.result(Ok(()), "");
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
-        let core = self.core.clone();
         cx.spawn(async move |_, _| {
-            let dialog = rfd::AsyncFileDialog::new().add_filter("MIDI mapping", &["json"]);
+            let dialog =
+                rfd::AsyncFileDialog::new().add_filter("mixless controller preset", &["json"]);
             let file = if export {
-                dialog.set_file_name("mixless-midi.json").save_file().await
+                dialog
+                    .set_file_name("controller.mixless.json")
+                    .save_file()
+                    .await
             } else {
                 dialog.pick_file().await
             };
-            let result = match file {
-                Some(file) => {
-                    let midi = core.midi.lock().expect("MIDI");
-                    midi.as_ref()
-                        .ok_or_else(|| "MIDI is unavailable".to_string())
-                        .and_then(|hub| {
-                            if export {
-                                hub.export(file.path())
-                            } else {
-                                hub.import(file.path())
-                            }
-                            .map_err(|e| e.to_string())
-                        })
+            let result = if let Some(file) = file {
+                let hub = core.midi.lock().expect("controllers").clone();
+                if export {
+                    JobResult::File(
+                        hub.ok_or("Controllers unavailable".to_string())
+                            .and_then(|h| {
+                                h.export_preset(selected.as_deref().unwrap(), file.path())
+                                    .map_err(|e| e.to_string())
+                            })
+                            .map(|_| "Preset exported".into()),
+                    )
+                } else {
+                    JobResult::PresetImport(
+                        hub.ok_or("Controllers unavailable".to_string())
+                            .and_then(|h| h.preview_import(file.path()).map_err(|e| e.to_string())),
+                    )
                 }
-                None => Ok(()),
+            } else {
+                JobResult::File(Ok("Cancelled".into()))
             };
-            let _ = tx.send(JobResult::File(result));
+            let _ = tx.send(result);
         })
         .detach();
     }
@@ -524,8 +627,9 @@ impl Preferences {
             .items_center()
             .justify_between()
             .gap_4()
-            .min_h(px(40.))
-            .py_2()
+            .min_h(px(56.))
+            .px_4()
+            .py_3()
             .border_b_1()
             .border_color(theme::LINE_SOFT)
             .text_size(px(12.))
@@ -572,11 +676,7 @@ impl Preferences {
                                 },
                                 cx,
                             )
-                            .text_color(if armed {
-                                theme::DANGER
-                            } else {
-                                theme::TEXT
-                            }),
+                            .when(armed, |el| el.text_color(theme::DANGER)),
                         )
                     }),
             )
@@ -584,7 +684,7 @@ impl Preferences {
 
     fn storage_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
         let busy = self.job.is_some();
-        let mut page = setting_stack().w_full().max_w(px(760.)).mx_auto().py_5()
+        let mut page = setting_stack().w_full().max_w(px(760.)).mx_auto()
             .child(div().text_size(px(11.)).line_height(px(16.)).text_color(theme::MUTED)
                 .child("Clear cached data to reclaim space. Source audio, playlists and saved cues are kept."));
         let Some(report) = &self.storage else {
@@ -613,7 +713,7 @@ impl Preferences {
                     self.storage_row(
                         "stems",
                         "Stem cache",
-                        "Separated vocals, drums and instruments used by stem mixing",
+                        "Separated vocals, drums and instruments",
                         report.stems,
                         Some(ClearKind::Stems),
                         cx,
@@ -621,7 +721,7 @@ impl Preferences {
                     self.storage_row(
                         "analysis",
                         "Track analysis",
-                        "Beat grids, keys, structure and note evidence in library.db",
+                        "Beat grids, keys and song structure",
                         report.analysis,
                         Some(ClearKind::Analysis),
                         cx,
@@ -629,7 +729,7 @@ impl Preferences {
                     self.storage_row(
                         "waveforms",
                         "Waveforms",
-                        "Spectral envelopes in library.db, rebuilt from decoded audio",
+                        "Rebuilt from audio when needed",
                         report.waveforms,
                         Some(ClearKind::Waveforms),
                         cx,
@@ -637,14 +737,14 @@ impl Preferences {
                     self.storage_row(
                         "artwork",
                         "Artwork",
-                        "Extracted covers, re-extracted on next launch",
+                        "Rebuilt on next launch",
                         report.artwork,
                         Some(ClearKind::Artwork),
                         cx,
                     ),
                     self.storage_row(
                         "models",
-                        "Downloaded analysis models",
+                        "Analysis models",
                         "Downloaded copies only; models included in the app are kept",
                         report.models,
                         Some(ClearKind::Models),
@@ -658,7 +758,7 @@ impl Preferences {
                     self.storage_row(
                         "database",
                         "Library database",
-                        "Tracks, cues, playlists and analysis payloads",
+                        "Tracks, cues, playlists and analysis",
                         report.database,
                         None,
                         cx,
@@ -668,8 +768,9 @@ impl Preferences {
                         .items_center()
                         .justify_between()
                         .gap_4()
-                        .min_h(px(40.))
-                        .py_2()
+                        .min_h(px(56.))
+                        .px_4()
+                        .py_3()
                         .border_b_1()
                         .border_color(theme::LINE_SOFT)
                         .text_size(px(12.))
@@ -759,22 +860,67 @@ impl Preferences {
         action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
         cx: &Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
+        self.styled_button(id, label, enabled, false, action, cx)
+    }
+
+    fn primary_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        self.styled_button(id, label, enabled, true, action, cx)
+    }
+
+    fn styled_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+        primary: bool,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let id = id.into();
         div()
-            .id(id.into())
-            .h(px(30.))
+            .debug_selector(|| id.to_string())
+            .id(id)
+            .h(px(widgets::CONTROL_HEIGHT))
             .px_3()
             .flex()
             .items_center()
             .justify_center()
             .flex_none()
-            .rounded(px(4.))
+            .rounded(px(widgets::CONTROL_RADIUS))
             .border_1()
-            .border_color(theme::LINE)
-            .bg(theme::PANEL_RAISED)
+            .border_color(theme::with_alpha(
+                theme::TEXT,
+                if enabled { 0.12 } else { 0.05 },
+            ))
+            .bg(if primary && enabled {
+                theme::TEXT
+            } else {
+                theme::PANEL_RAISED
+            })
             .text_size(px(12.))
-            .text_color(if enabled { theme::TEXT } else { theme::MUTED })
+            .text_color(if !enabled {
+                theme::MUTED
+            } else if primary {
+                theme::BG
+            } else {
+                theme::TEXT
+            })
+            .when(primary, |el| el.font_weight(gpui::FontWeight::MEDIUM))
             .when(enabled, |el| {
-                el.cursor_pointer().hover(|el| el.bg(theme::LINE))
+                el.cursor_pointer().hover(move |el| {
+                    el.bg(if primary {
+                        theme::with_alpha(theme::TEXT, 0.9)
+                    } else {
+                        theme::LINE.into()
+                    })
+                })
             })
             .child(div().min_w_0().child(label.into()))
             .on_click(cx.listener(move |state, _, window, cx| {
@@ -794,42 +940,29 @@ impl Preferences {
     ) -> gpui::AnyElement {
         div()
             .id(id)
-            .w(px(32.))
-            .h(px(19.))
+            .debug_selector(move || id.into())
+            .w(px(40.))
+            .h(px(22.))
             .px(px(2.))
             .flex()
             .items_center()
             .flex_none()
-            .rounded_full()
-            .bg(if on { theme::LED_GREEN } else { theme::LINE })
+            .rounded(px(999.))
+            .bg(if on { theme::ACCENT } else { theme::LINE })
             .when(on, |el| el.justify_end())
             .cursor_pointer()
-            .child(div().size(px(15.)).rounded_full().bg(theme::TEXT))
+            .child(
+                div()
+                    .size(px(18.))
+                    .rounded(px(999.))
+                    .bg(theme::TEXT)
+                    .shadow_sm(),
+            )
             .on_click(cx.listener(move |s, _, _, cx| {
                 action(s);
                 cx.notify();
             }))
             .into_any_element()
-    }
-
-    fn select(&self, selector: Selector, value: String, cx: &Context<Self>) -> gpui::AnyElement {
-        self.button(
-            format!("select-{}", selector as u8),
-            value,
-            self.job.is_none(),
-            move |s, _, _| {
-                s.selector = Some(selector);
-            },
-            cx,
-        )
-        .w(px(300.))
-        .h_auto()
-        .min_h(px(30.))
-        .py_2()
-        .gap_2()
-        .justify_between()
-        .child(div().flex_none().child("\u{2304}"))
-        .into_any_element()
     }
 
     fn port_name(&self, id: &str) -> String {
@@ -845,27 +978,21 @@ impl Preferences {
                 let mut options = vec![(
                     String::new(),
                     if selector == Selector::Master {
-                        "System Default"
+                        "System default"
                     } else {
                         "Disabled"
                     }
                     .into(),
                 )];
-                let master = self
-                    .audio
-                    .master_device
-                    .clone()
-                    .unwrap_or_else(|| self.core.engine.snapshot().device_name);
                 options.extend(
                     self.devices
                         .iter()
-                        .filter(|d| selector == Selector::Master || d.name != master)
                         .map(|d| (d.name.clone(), d.name.clone())),
                 );
                 options
             }
             Selector::Rate => {
-                let mut options = vec![(String::new(), "System / device current".into())];
+                let mut options = vec![(String::new(), "Device default".into())];
                 let master = self
                     .audio
                     .master_device
@@ -895,7 +1022,7 @@ impl Preferences {
                 options
             }
             Selector::Depth => {
-                let mut options = vec![(String::new(), "System / device current".into())];
+                let mut options = vec![(String::new(), "Device default".into())];
                 let master = self
                     .audio
                     .master_device
@@ -926,6 +1053,25 @@ impl Preferences {
                 );
                 options
             }
+            Selector::MasterChannels | Selector::CueChannels => {
+                let name = if selector == Selector::MasterChannels {
+                    self.audio
+                        .master_device
+                        .clone()
+                        .unwrap_or_else(|| self.core.engine.snapshot().device_name)
+                } else {
+                    self.audio.cue_device.clone().unwrap_or_default()
+                };
+                let count = self
+                    .devices
+                    .iter()
+                    .find(|d| d.name == name)
+                    .map_or(0, |d| d.output_channels);
+                (0..count.saturating_sub(1))
+                    .step_by(2)
+                    .map(|n| (n.to_string(), format!("{} / {}", n + 1, n + 2)))
+                    .collect()
+            }
             Selector::MidiChannel => (1..=16)
                 .map(|n| (n.to_string(), format!("Channel {n}")))
                 .collect(),
@@ -935,6 +1081,51 @@ impl Preferences {
                 .enumerate()
                 .map(|(i, mode)| (i.to_string(), mode.label().into()))
                 .collect(),
+            Selector::MidiPreset => self
+                .core
+                .midi
+                .lock()
+                .expect("controllers")
+                .as_ref()
+                .map(|hub| hub.presets().into_iter().map(|p| (p.id, p.name)).collect())
+                .unwrap_or_default(),
+            Selector::ControllerDevice => {
+                let mut options = vec![(String::new(), "No device".into())];
+                let mut devices: Vec<_> = self
+                    .controller_devices
+                    .iter()
+                    .filter(|d| {
+                        !(d.hid && d.usage_page == Some(1) && matches!(d.usage, Some(2 | 6)))
+                    })
+                    .collect();
+                // Put musical MIDI ports before the computer's many HID interfaces.
+                devices.sort_by(|a, b| (a.hid, &a.name, &a.id).cmp(&(b.hid, &b.name, &b.id)));
+                options.extend(devices.iter().map(|d| {
+                    let duplicates =
+                        devices.iter().filter(|other| other.name == d.name).count() > 1;
+                    let label = if duplicates {
+                        // Instance identity is needed only when names cannot distinguish devices.
+                        format!(
+                            "{} ({})",
+                            d.name,
+                            d.interface
+                                .filter(|n| devices
+                                    .iter()
+                                    .filter(
+                                        |other| other.name == d.name && other.interface == Some(*n)
+                                    )
+                                    .count()
+                                    == 1)
+                                .map_or_else(|| d.id.clone(), |n| format!("Interface {n}"))
+                        )
+                    } else {
+                        d.name.clone()
+                    };
+                    (d.id.clone(), label)
+                }));
+                options
+            }
+            Selector::PresetActions => self.preset_actions(),
             Selector::Source => {
                 let mut options = vec![(String::new(), "Any enabled input".into())];
                 options.extend(self.ports.iter().map(|p| (p.id.clone(), p.name.clone())));
@@ -943,18 +1134,49 @@ impl Preferences {
         }
     }
 
-    fn choose(&mut self, selector: Selector, value: &str) {
+    fn choose(&mut self, selector: Selector, value: &str, cx: &mut Context<Self>) {
         let optional = (!value.is_empty()).then(|| value.to_string());
         match selector {
             Selector::Master => {
+                self.audio.master_uid = self
+                    .devices
+                    .iter()
+                    .find(|d| optional.as_ref() == Some(&d.name))
+                    .and_then(|d| d.uid.clone());
                 self.audio.master_device = optional;
+                self.audio.master_channels = [0, 1];
                 self.audio.sample_rate = None;
                 self.audio.bit_depth = None;
-                if self.audio.cue_device == self.audio.master_device {
-                    self.audio.cue_device = None;
+            }
+            Selector::Cue => {
+                self.audio.cue_uid = self
+                    .devices
+                    .iter()
+                    .find(|d| optional.as_ref() == Some(&d.name))
+                    .and_then(|d| d.uid.clone());
+                self.audio.cue_device = optional;
+                let master = self
+                    .audio
+                    .master_device
+                    .clone()
+                    .unwrap_or_else(|| self.core.engine.snapshot().device_name);
+                self.audio.cue_channels = if self.audio.cue_device.as_deref() == Some(&master) {
+                    [2, 3]
+                } else {
+                    [0, 1]
+                };
+            }
+            Selector::MasterChannels | Selector::CueChannels => {
+                if let Ok(n) = value.parse::<u16>() {
+                    if let Some(next) = n.checked_add(1) {
+                        if selector == Selector::MasterChannels {
+                            self.audio.master_channels = [n, next];
+                        } else {
+                            self.audio.cue_channels = [n, next];
+                        }
+                    }
                 }
             }
-            Selector::Cue => self.audio.cue_device = optional,
             Selector::Rate => self.audio.sample_rate = value.parse().ok(),
             Selector::Depth => self.audio.bit_depth = value.parse().ok(),
             Selector::Buffer => self.audio.buffer_frames = value.parse().ok(),
@@ -977,9 +1199,55 @@ impl Preferences {
                     self.binding.mode = *mode;
                 }
             }
-            Selector::Source => self.binding.device_id = optional,
+            Selector::MidiPreset => {
+                self.selected_preset = optional;
+                self.controller_advanced = false;
+                self.controller_notes = false;
+                self.controller_monitor = false;
+            }
+            Selector::PresetActions => self.run_preset_action(value, cx),
+            Selector::ControllerDevice | Selector::Source => {
+                self.controller_advanced = false;
+                self.controller_notes = false;
+                self.controller_monitor = false;
+                self.controller_device = optional.clone();
+                self.binding.device_id = optional;
+                self.selected_preset = self
+                    .core
+                    .midi
+                    .lock()
+                    .expect("controllers")
+                    .as_ref()
+                    .and_then(|hub| {
+                        hub.assignments()
+                            .into_iter()
+                            .find(|a| Some(&a.device_id) == self.controller_device.as_ref())
+                            .map(|a| a.preset_id)
+                    });
+                self.select_midi_target(self.binding.target.clone());
+            }
         }
         self.selector = None;
+    }
+
+    pub(super) fn apply_midi_preset(&mut self, preset_id: &str, device_id: Option<String>) {
+        self.cancel_learn();
+        let result = self
+            .core
+            .midi
+            .lock()
+            .expect("controllers")
+            .as_ref()
+            .ok_or("Controllers unavailable".to_string())
+            .and_then(|hub| {
+                let id = device_id
+                    .as_deref()
+                    .ok_or("Select the device to apply this preset to".to_string())?;
+                hub.apply_preset_to(preset_id, id)
+                    .map_err(|e| e.to_string())
+            });
+        self.result(result, "Preset applied to the selected device");
+        self.poll();
     }
 
     fn reset_defaults(&mut self) {
@@ -1012,11 +1280,12 @@ fn row(label: &str, control: gpui::AnyElement) -> gpui::Div {
         .items_center()
         .justify_between()
         .gap_4()
-        .min_h(px(40.))
+        .min_h(px(44.))
+        .px_3()
         .py_2()
         .border_b_1()
         .border_color(theme::LINE_SOFT)
-        .text_size(px(12.))
+        .text_size(px(13.))
         .child(div().flex_1().min_w_0().child(label.to_string()))
         .child(control)
 }
@@ -1037,10 +1306,29 @@ impl Render for Preferences {
         if window.focused(cx).is_none() {
             self.focus.focus(window);
         }
+        if self.window_observers.is_empty() {
+            self.window_observers
+                .push(cx.observe_window_activation(window, |s, window, cx| {
+                    if !window.is_window_active() {
+                        s.selector = None;
+                        cx.notify();
+                    }
+                }));
+            self.window_observers
+                .push(cx.observe_window_bounds(window, |s, _, cx| {
+                    s.selector = None;
+                    cx.notify();
+                }));
+        }
+        self.select_ui.anchors.borrow_mut().clear();
+        let status_tip = self.status.clone();
         let content = match self.tab {
             Tab::General => self.general(f32::from(window.viewport_size().width) >= 860., cx),
             Tab::Audio => self.audio_page(cx),
-            Tab::Midi => self.midi_page(cx),
+            Tab::Midi => self.midi_page(
+                (f32::from(window.viewport_size().width) - 48.).min(1000.),
+                cx,
+            ),
             Tab::Storage => self.storage_page(cx),
         };
         let mut root = div()
@@ -1055,6 +1343,33 @@ impl Render for Preferences {
             .font_family(theme::FONT_UI)
             .text_size(px(12.))
             .on_key_down(cx.listener(|s, ev: &gpui::KeyDownEvent, window, cx| {
+                if s.confirm_reset {
+                    if ev.keystroke.key == "escape" {
+                        s.confirm_reset = false;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.import_preview.is_some() {
+                    if ev.keystroke.key == "escape" {
+                        s.import_preview = None;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.preset_dialog.is_some() {
+                    s.preset_key(&ev.keystroke, cx);
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                if s.selector.is_some() && s.select_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
                 if ev.keystroke.key == "escape" {
                     if s.selector.is_some() {
                         s.selector = None;
@@ -1092,26 +1407,39 @@ impl Render for Preferences {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap_1()
-                    .h(px(44.))
+                    .gap_6()
+                    .h(px(48.))
                     .px_6()
-                    .border_b_1()
-                    .border_color(theme::LINE)
                     .bg(theme::PANEL)
                     .children(
                         [
                             (Tab::General, "General"),
                             (Tab::Audio, "Audio I/O"),
-                            (Tab::Midi, "MIDI Mapping"),
+                            (Tab::Midi, "Controllers"),
                             (Tab::Storage, "Storage"),
                         ]
-                        .map(|(tab, label)| {
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (tab, label))| {
                             let active = self.tab == tab;
-                            self.button(
-                                format!("tab-{label}"),
-                                label,
-                                true,
-                                move |s, _, _| {
+                            div()
+                                .id(("tab", index))
+                                .debug_selector(move || format!("tab-{label}"))
+                                .h_full()
+                                .px_1()
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .text_size(px(13.))
+                                .text_color(if active { theme::TEXT } else { theme::MUTED })
+                                .when(active, |el| {
+                                    el.font_weight(gpui::FontWeight::MEDIUM)
+                                        .border_b_2()
+                                        .border_color(theme::ACCENT)
+                                })
+                                .hover(|el| el.text_color(theme::TEXT))
+                                .child(label)
+                                .on_click(cx.listener(move |s, _, _, cx| {
                                     s.cancel_learn();
                                     s.tab = tab;
                                     s.selector = None;
@@ -1119,31 +1447,21 @@ impl Render for Preferences {
                                     if tab == Tab::Storage && s.storage.is_none() {
                                         s.refresh_storage();
                                     }
-                                },
-                                cx,
-                            )
-                            .h_full()
-                            .px_4()
-                            .rounded_none()
-                            .border_0()
-                            .bg(theme::PANEL)
-                            .text_color(if active { theme::TEXT } else { theme::MUTED })
-                            .when(active, |el| {
-                                el.border_b_2()
-                                    .border_color(theme::ACCENT)
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                            })
+                                    cx.notify();
+                                }))
                         }),
                     ),
             )
             .child(
                 div()
                     .id(("preferences-scroll", self.tab as usize))
+                    .debug_selector(|| "settings-content".into())
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
                     .px_6()
-                    .pb_4()
+                    .pb_6()
+                    .pt_5()
                     .child(content),
             )
             .child(
@@ -1151,109 +1469,79 @@ impl Render for Preferences {
                     .flex()
                     .flex_none()
                     .items_center()
+                    .justify_between()
                     .gap_4()
-                    .min_h(px(56.))
+                    .h(px(64.))
                     .px_6()
-                    .py_3()
                     .bg(theme::PANEL)
                     .border_t_1()
                     .border_color(theme::LINE)
-                    .child(
-                        self.button(
-                            "reset-defaults",
-                            "Reset defaults",
-                            self.job.is_none(),
-                            |s, _, _| s.reset_defaults(),
-                            cx,
-                        )
-                        .border_color(gpui::transparent_black())
-                        .bg(theme::PANEL)
-                        .text_color(theme::MUTED),
-                    )
+                    .child(self.button(
+                        "reset-defaults",
+                        "Reset defaults",
+                        self.job.is_none(),
+                        |s, _, _| {
+                            s.selector = None;
+                            s.confirm_reset = true;
+                        },
+                        cx,
+                    ))
                     .child(
                         div()
+                            .flex()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(11.))
-                            .text_color(if self.error {
-                                theme::DANGER
-                            } else {
-                                theme::MUTED
-                            })
-                            .child(if self.job.is_some() && self.status.is_empty() {
-                                "Loading…".into()
-                            } else if self.status.is_empty() && self.tab == Tab::General {
-                                "Changes save automatically".into()
-                            } else {
-                                self.status.clone()
-                            }),
-                    )
-                    .child(
-                        self.button(
-                            "close-preferences",
-                            "Done",
-                            true,
-                            |s, window, _| {
-                                s.cancel_learn();
-                                window.remove_window();
-                            },
-                            cx,
-                        )
-                        .min_w(px(76.))
-                        .font_weight(gpui::FontWeight::MEDIUM),
-                    ),
-            );
-        if let Some(selector) = self.selector {
-            root = root.child(
-                div()
-                    .absolute()
-                    .top(px(96.))
-                    .right(px(24.))
-                    .w(px(500.))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|s, _, _, cx| {
-                            s.selector = None;
-                            cx.notify();
-                        }),
-                    )
-                    .child(
-                        div()
-                            .id("preference-options")
-                            .max_h(px(430.))
-                            .overflow_y_scroll()
-                            .p(px(3.))
-                            .rounded(px(theme::POPUP_RADIUS))
-                            .bg(theme::PANEL_RAISED)
-                            .border_1()
-                            .border_color(theme::LINE)
-                            .shadow_sm()
-                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation()
-                            })
-                            .children(self.selector_options(selector).into_iter().enumerate().map(
-                                |(index, (value, label))| {
-                                    self.button(
-                                        format!("option-{index}"),
-                                        label,
-                                        true,
-                                        move |s, _, _| s.choose(selector, &value),
-                                        cx,
-                                    )
-                                    .w_full()
-                                    .h_auto()
-                                    .min_h(px(theme::MENU_ROW_HEIGHT))
-                                    .px(px(8.))
-                                    .py(px(3.))
+                            .items_center()
+                            .justify_end()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .id("settings-status")
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| crate::views::TextTip(status_tip.clone())).into()
+                                    })
+                                    .flex_1()
+                                    .min_w_0()
+                                    .max_h(px(40.))
+                                    .overflow_hidden()
                                     .text_size(px(11.))
-                                    .line_height(px(16.))
-                                    .rounded(px(2.))
-                                    .justify_start()
-                                    .border_0()
-                                },
-                            )),
+                                    .text_color(if self.error {
+                                        theme::DANGER
+                                    } else {
+                                        theme::MUTED
+                                    })
+                                    .when(!self.status.is_empty(), |el| {
+                                        el.child(self.status.clone())
+                                    }),
+                            )
+                            .child(
+                                self.primary_button(
+                                    "close-preferences",
+                                    "Done",
+                                    true,
+                                    |s, window, _| {
+                                        s.cancel_learn();
+                                        window.remove_window();
+                                    },
+                                    cx,
+                                )
+                                .min_w(px(80.))
+                                .font_weight(gpui::FontWeight::MEDIUM),
+                            ),
                     ),
             );
+        if self.confirm_reset {
+            root = root.child(self.reset_dialog(cx));
+        }
+        if self.preset_dialog.is_some() || self.import_preview.is_some() {
+            root = root.child(self.controller_dialog(
+                f32::from(window.viewport_size().height),
+                window,
+                cx,
+            ));
+        }
+        if let Some(selector) = self.selector {
+            root = root.child(self.select_menu(selector, window, cx));
         }
         root
     }

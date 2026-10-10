@@ -38,6 +38,7 @@ impl UiState {
         let (tx, rx) = channel();
         let (grid_tx, grid_rx) = channel();
         self.deck_load_rx[index] = Some(rx);
+        self.core.controller_loading[index].store(true, Ordering::Release);
         self.deck_loading[index] = Some(
             self.tracks
                 .iter()

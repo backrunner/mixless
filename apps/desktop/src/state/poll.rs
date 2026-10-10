@@ -3,6 +3,30 @@ use super::*;
 
 impl UiState {
     pub fn poll(&mut self) -> bool {
+        let effects = std::mem::take(
+            &mut *self
+                .core
+                .controller_effects
+                .lock()
+                .expect("controller effects"),
+        );
+        for cmd in effects {
+            if self
+                .sync_request
+                .as_ref()
+                .is_some_and(|r| r.cancelled_by(&cmd))
+            {
+                self.sync_request = None;
+            }
+        }
+        if self
+            .core
+            .controller_stop_automix
+            .swap(false, Ordering::AcqRel)
+            && self.automix_active
+        {
+            self.stop_automix();
+        }
         let mut changed = self.poll_transport_press();
         let preview_revision = self
             .core
@@ -84,6 +108,7 @@ impl UiState {
                 match rx.try_recv() {
                     Ok(Ok(())) => {
                         self.deck_loading[index] = None;
+                        self.core.controller_loading[index].store(false, Ordering::Release);
                         if std::mem::take(&mut self.pending_play[index]) {
                             self.dispatch(Command::PlayPause {
                                 deck: DeckId::from_index(index).unwrap(),
@@ -93,6 +118,7 @@ impl UiState {
                     }
                     Ok(Err(error)) => {
                         self.deck_loading[index] = None;
+                        self.core.controller_loading[index].store(false, Ordering::Release);
                         self.pending_play[index] = false;
                         self.grid_rx[index] = None;
                         self.error = error.into();
@@ -103,6 +129,7 @@ impl UiState {
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         self.deck_loading[index] = None;
+                        self.core.controller_loading[index].store(false, Ordering::Release);
                         self.pending_play[index] = false;
                         self.grid_rx[index] = None;
                         self.error = "Deck load worker stopped unexpectedly".into();

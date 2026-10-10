@@ -34,6 +34,11 @@ use gpui::{
 const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
+    #[cfg(debug_assertions)]
+    if preferences::preview::run() {
+        return;
+    }
+
     if std::env::args().nth(1).as_deref() == Some("--check-bundled-models") {
         tracing_subscriber::fmt()
             .with_env_filter("mixless_stems=info,ort=warn")
@@ -133,6 +138,28 @@ fn main() {
                         state.end_momentary_fx();
                         state.cancel_transport_press();
                         cx.notify();
+                    }
+                })
+                .detach();
+                let (controller_tx, controller_rx) = async_channel::bounded::<()>(1);
+                let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(move || {
+                    let _ = controller_tx.try_send(());
+                });
+                *state.core.controller_wake.lock().expect("controller wake") = Some(wake.clone());
+                if let Some(hub) = state.core.midi.lock().expect("controllers").as_ref() {
+                    hub.set_notify(wake);
+                }
+                cx.spawn(async move |this, cx| {
+                    while controller_rx.recv().await.is_ok() {
+                        if this
+                            .update(cx, |state, cx| {
+                                state.poll();
+                                cx.notify();
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 })
                 .detach();
