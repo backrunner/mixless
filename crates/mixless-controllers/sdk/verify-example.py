@@ -15,11 +15,28 @@ def run(*args):
     return subprocess.check_output([str(arg) for arg in args], cwd=root, text=True)
 
 
-run("cargo", "build", "--locked", "-p", "mixless-controllers", "--features", "tools",
-    "--bin", "mixless-controller")
-compiler = os.environ.get("CLANG", shutil.which("clang"))
-if not compiler:
-    raise SystemExit("Set CLANG to a clang with the wasm32 target")
+def supports_wasm32(compiler):
+    try:
+        targets = run(compiler, "--print-targets")
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return any(line.split()[:1] == ["wasm32"] for line in targets.splitlines())
+
+
+compiler = os.environ.get("CLANG")
+if compiler is None:
+    candidates = [shutil.which("clang")]
+    brew = shutil.which("brew")
+    if brew:
+        try:
+            candidates.append(Path(run(brew, "--prefix", "llvm").strip()) / "bin/clang")
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    compiler = next((p for p in candidates if p and supports_wasm32(p)), None)
+if not compiler or not supports_wasm32(compiler):
+    raise SystemExit("Set CLANG to LLVM clang with the wasm32 target (on macOS: brew install llvm)")
+
+
 def bundled_linker(rustc):
     sysroot = Path(run(rustc, "--print", "sysroot").strip())
     host = next(line.split(": ", 1)[1] for line in run(rustc, "-vV").splitlines()
@@ -42,6 +59,8 @@ if linker is None:
     linker = next((p for p in candidates if p and Path(p).is_file()), None)
 if not linker or not Path(linker).is_file():
     raise SystemExit("Set WASM_LD to wasm-ld (lld or the Rust toolchain's bundled linker)")
+run("cargo", "build", "--locked", "-p", "mixless-controllers", "--features", "tools",
+    "--bin", "mixless-controller")
 tool = root / "target/debug/mixless-controller"
 with tempfile.TemporaryDirectory(prefix="mixless-sdk-") as tmp:
     tmp = Path(tmp)

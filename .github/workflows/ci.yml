@@ -16,4 +16,6 @@ jobs:
       - name: Test controller development tools
         run: cargo test --locked -p mixless-controllers --features tools
       - name: Compile and replay independent HID example
-        run: python3 crates/mixless-controllers/sdk/verify-example.py
+        run: |
+          brew install llvm
+          CLANG="$(brew --prefix llvm)/bin/clang" python3 crates/mixless-controllers/sdk/verify-example.py

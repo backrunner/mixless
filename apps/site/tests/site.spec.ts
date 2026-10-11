@@ -138,7 +138,8 @@ test('all public routes, assets, agent endpoints, missing routes and reduced mot
   for (const [path, content] of [
     ['/sitemap.xml', '<urlset'], ['/robots.txt', 'Sitemap:'],
     ['/llms.txt', 'mixless'], ['/llms-full.txt', 'mixless'],
-    ['/docs/zh/midi/index.md', '# MIDI 控制器']
+    ['/docs/midi/index.md', '# Controllers'],
+    ['/docs/zh/midi/index.md', '# 控制器']
   ]) {
     const response = await request.get(path);
     expect(response.status()).toBe(200);

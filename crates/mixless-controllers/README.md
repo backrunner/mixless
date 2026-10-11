@@ -72,9 +72,10 @@ its BLAKE3 digest and validates it. It never executes compiler commands from a
 package. Output files are created atomically without overwriting an existing file.
 
 `python3 crates/mixless-controllers/sdk/verify-example.py` compiles and checks the
-C example in temporary files. Set `CLANG` and `WASM_LD` when the tools are not on
-PATH; the script can also find wasm-ld bundled with a rustup toolchain. The same
-check runs in repository CI.
+C example in temporary files. It checks that clang supports wasm32 and can find
+Homebrew LLVM (`brew install llvm`) when the clang on PATH does not. Set `CLANG`
+and `WASM_LD` to select tools explicitly; the script can also find wasm-ld bundled
+with a rustup toolchain. The same check runs in repository CI with LLVM clang.
 
 Other languages can target the same ABI. A script written for another DJ app is
 not compatible with this interface and is not an accepted implementation source.
