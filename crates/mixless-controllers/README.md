@@ -73,9 +73,10 @@ package. Output files are created atomically without overwriting an existing fil
 
 `python3 crates/mixless-controllers/sdk/verify-example.py` compiles and checks the
 C example in temporary files. It checks that clang supports wasm32 and can find
-Homebrew LLVM (`brew install llvm`) when the clang on PATH does not. Set `CLANG`
-and `WASM_LD` to select tools explicitly; the script can also find wasm-ld bundled
-with a rustup toolchain. The same check runs in repository CI with LLVM clang.
+Homebrew LLVM (`brew install llvm lld`) when the clang on PATH does not. Set
+`CLANG` and `WASM_LD` to select tools explicitly. The script checks that wasm-ld
+can run and searches PATH, Homebrew lld and the rustup toolchain. Repository CI
+uses explicit paths to LLVM clang and lld.
 
 Other languages can target the same ABI. A script written for another DJ app is
 not compatible with this interface and is not an accepted implementation source.

@@ -23,15 +23,15 @@ def supports_wasm32(compiler):
     return any(line.split()[:1] == ["wasm32"] for line in targets.splitlines())
 
 
+def homebrew_tool(formula, name):
+    brew = shutil.which("brew")
+    # Resolve keg paths without starting Homebrew's update/bootstrap process.
+    return Path(brew).parent.parent / "opt" / formula / "bin" / name if brew else None
+
+
 compiler = os.environ.get("CLANG")
 if compiler is None:
-    candidates = [shutil.which("clang")]
-    brew = shutil.which("brew")
-    if brew:
-        try:
-            candidates.append(Path(run(brew, "--prefix", "llvm").strip()) / "bin/clang")
-        except (OSError, subprocess.CalledProcessError):
-            pass
+    candidates = [shutil.which("clang"), homebrew_tool("llvm", "clang")]
     compiler = next((p for p in candidates if p and supports_wasm32(p)), None)
 if not compiler or not supports_wasm32(compiler):
     raise SystemExit("Set CLANG to LLVM clang with the wasm32 target (on macOS: brew install llvm)")
@@ -44,9 +44,20 @@ def bundled_linker(rustc):
     return sysroot / "lib/rustlib" / host / "bin/gcc-ld/wasm-ld"
 
 
+def runnable_linker(linker):
+    try:
+        subprocess.run([str(linker), "--version"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 linker = os.environ.get("WASM_LD")
 if linker is None:
-    candidates = [shutil.which("wasm-ld"), bundled_linker("rustc")]
+    candidates = [shutil.which("wasm-ld"), Path(compiler).parent / "wasm-ld",
+                  homebrew_tool("lld", "wasm-ld")]
+    candidates.append(bundled_linker("rustc"))
     # Homebrew's rustc may precede rustup on PATH and does not bundle wasm-ld.
     # Ask rustup for its selected compiler without changing the user's toolchain.
     rustup = shutil.which("rustup")
@@ -56,9 +67,9 @@ if linker is None:
             candidates.append(bundled_linker(rustup_rustc))
         except (OSError, subprocess.CalledProcessError):
             pass
-    linker = next((p for p in candidates if p and Path(p).is_file()), None)
-if not linker or not Path(linker).is_file():
-    raise SystemExit("Set WASM_LD to wasm-ld (lld or the Rust toolchain's bundled linker)")
+    linker = next((p for p in candidates if p and runnable_linker(p)), None)
+if not linker or not runnable_linker(linker):
+    raise SystemExit("Set WASM_LD to a runnable wasm-ld (on macOS: brew install lld)")
 run("cargo", "build", "--locked", "-p", "mixless-controllers", "--features", "tools",
     "--bin", "mixless-controller")
 tool = root / "target/debug/mixless-controller"
