@@ -254,3 +254,46 @@ identity, GPUI test results and locked-desktop limits are recorded in
 `settings-general.png`, the original controller captures and `settings-review/`
 belong to preceding UI revisions. Their timestamps and build records were not
 relabeled as evidence for this revision.
+
+## NI mapping and headphone mix — 2026-10-12
+
+The editor accepts Pitch Bend and explicit 14-bit CC pairs, with relevant
+calibration fields behind Calibration. Relative sensitivity and jog resolution
+are only shown for controls that use them; absolute controls expose pickup.
+Audio I/O includes Headphone mix, and the diagram/catalogue share CUE MIX.
+
+The 125 desktop tests passed after the change. The new regression exercises
+message/channel/MSB/LSB selection, invalid pairing errors, editor bounds at
+940 × 820 and 720 × 540, and applying a stored zero mix over a MIDI-updated
+engine value. NI tests use synthetic messages and an offline UI identity.
+
+Native screenshot review is **not completed**: the host was locked and the
+window service returned `cgWindowNotFound`. No screenshot was substituted with
+a mockup. The isolated preview was stopped. See the
+[controller validation record](../../../../crates/mixless-controllers/VERIFICATION.md#ni-offline-development--2026-10-12)
+for the build and other checks.
+
+## NI audio source expansion — 2026-10-12
+
+The 13 exact NI controller names with per-device output pairs confirmed in the
+Traktor source audit now receive an Audio routing proposal. The existing control
+opens an Audio draft for review, including without a control preset; it does not
+apply settings or assign a controller automatically.
+
+Desktop tests: **127 passed, 6 ignored**, included in the 567-test workspace
+result. New render-tree tests use fictional controller identities and a disabled
+hub to check the routing control at 940 × 820 and 720 × 540, click-through to
+Audio settings, preservation of stored output settings, and absence for an
+unknown NI generation. GPUI 0.2.2 retains old debug bounds across frames, so the
+absence assertion uses a fresh window. Native pixel review remains incomplete
+while the host is locked; no physical audio output was tested.
+
+## Learn lifecycle review — 2026-10-12
+
+Manual message/channel/CC-half changes now disarm pending Learn, and shortcut
+Learn uses the same explicit-pair arming path as the editor. Workspace checks
+include **128 desktop tests passed, 7 ignored**. The new ignored GPUI/CoreMIDI
+test was additionally run explicitly and passed using a single selected virtual
+source: MSB alone does not complete Learn, LSB completes the full address, and
+the saved calibration remains intact. No real controller was opened. The host
+remains locked, so these checks do not add native pixel evidence.

@@ -120,6 +120,9 @@ impl MidiAction {
             MasterGain => Command::SetMasterGain {
                 db: range(snapshot.master_gain_db, -12., 12.),
             },
+            CueMix => Command::SetCueMix {
+                value: range(snapshot.cue_mix, 0., 1.),
+            },
             CueGain => Command::SetCueGain {
                 value: range(snapshot.cue_gain, 0., 1.),
             },

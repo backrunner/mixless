@@ -71,6 +71,11 @@ fn cue_targets_share_the_decks_preview_hold() {
         let (_temp, mut w, rx, events) = worker();
         let mut p = ControllerPreset::blank("Independent cue hold fixture");
         let mut binding = Binding::from_legacy(&MidiBinding {
+            address: None,
+            inverted: false,
+            sensitivity: 1.,
+            ticks_per_revolution: None,
+            pickup: false,
             device_id: None,
             kind: MidiSourceKind::Note,
             channel: 0,
@@ -145,6 +150,11 @@ fn declarative_and_adapter_holds_share_release_ownership() {
             };
             let mut p = ControllerPreset::blank("MIDI hold");
             p.bindings.push(Binding::from_legacy(&MidiBinding {
+                address: None,
+                inverted: false,
+                sensitivity: 1.,
+                ticks_per_revolution: None,
+                pickup: false,
                 device_id: None,
                 kind: MidiSourceKind::Note,
                 channel: 0,
@@ -352,6 +362,11 @@ fn input_overflow_cannot_replay_stale_presses_after_releasing_holds() {
     let (_temp, mut w, _rx, events) = worker();
     let mut p = ControllerPreset::blank("MIDI hold");
     p.bindings.push(Binding::from_legacy(&MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Note,
         channel: 0,

@@ -21,6 +21,7 @@ pub fn run() -> bool {
                 | "preset-actions"
                 | "controller-layout"
                 | "controller-details"
+                | "controller-calibration"
                 | "controller-connected"
                 | "controller-connected-details"
                 | "adapter-import"
@@ -168,6 +169,34 @@ pub fn run() -> bool {
                                 );
                                 state.select_midi_target(MidiTarget::Play { deck: DeckId::A });
                             }
+                        }
+                        if scene == "controller-calibration" {
+                            let hub = state.hub().expect("offline preview controllers");
+                            hub.upsert(MidiBinding {
+                                device_id: None,
+                                address: Some(mixless_controllers::MidiAddress::Cc14 {
+                                    channel: 0,
+                                    msb: 1,
+                                    lsb: 33,
+                                }),
+                                inverted: false,
+                                sensitivity: 1.,
+                                ticks_per_revolution: None,
+                                pickup: false,
+                                kind: MidiSourceKind::Cc,
+                                channel: 0,
+                                number: 1,
+                                target: MidiTarget::CueMix,
+                                mode: MidiControlMode::Absolute,
+                            })
+                            .expect("save synthetic preview source");
+                            state.controller_device = Some("offline-calibration-fixture".into());
+                            state.midi.enabled = true;
+                            state.midi.input_ids = Some(vec!["offline-calibration-fixture".into()]);
+                            state.selected_preset = None;
+                            state.bindings = hub.bindings();
+                            state.select_midi_target(MidiTarget::CueMix);
+                            state.mapping_calibration_open = true;
                         }
                         state.audio_details_open = scene == "audio-details";
                         state

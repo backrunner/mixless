@@ -251,6 +251,7 @@ pub struct Shared {
     master_gain_centi: AtomicU32,
     master_level: [AtomicU32; 2],
     recorder: recording::Recorder,
+    cue_mix: AtomicU32,
     cue_gain: AtomicU32,
     quantize: AtomicBool,
     fx_auto_fade: AtomicBool,

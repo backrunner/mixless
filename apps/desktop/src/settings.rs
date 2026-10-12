@@ -24,6 +24,7 @@ pub struct Settings {
     pub filter_resonance: bool,
     pub xf_curve: XfCurve,
     pub xf_reverse: bool,
+    pub cue_mix: f32,
     pub cue_gain: f32,
     pub keylock: bool,
     pub vinyl: bool,
@@ -49,6 +50,7 @@ impl Default for Settings {
             filter_resonance: true,
             xf_curve: XfCurve::EqualPower,
             xf_reverse: false,
+            cue_mix: 0.,
             cue_gain: 0.8,
             keylock: true,
             vinyl: false,
@@ -61,6 +63,9 @@ impl Default for Settings {
 
 impl Settings {
     fn validate(&self) -> Result<(), String> {
+        if !self.cue_mix.is_finite() || !(0.0..=1.0).contains(&self.cue_mix) {
+            return Err("Headphone mix must be between Cue and Master.".into());
+        }
         if !self.cue_gain.is_finite() || !(0.0..=1.0).contains(&self.cue_gain) {
             return Err("Headphone volume must be between 0 and 100%.".into());
         }
@@ -107,6 +112,9 @@ impl Settings {
             },
             Command::SetXfReverse {
                 on: self.xf_reverse,
+            },
+            Command::SetCueMix {
+                value: self.cue_mix,
             },
             Command::SetCueGain {
                 value: self.cue_gain,
@@ -201,6 +209,7 @@ mod tests {
             serde_json::from_str(r#"{"show_fx":false,"audio":{"master_device":"USB"}}"#).unwrap();
         assert!(!settings.show_fx);
         assert!(settings.quantize);
+        assert_eq!(settings.cue_mix, 0.);
         assert!(settings.fx_auto_fade);
         assert!(settings.midi.enabled);
         assert_eq!(settings.audio.master_device.as_deref(), Some("USB"));
@@ -226,6 +235,7 @@ mod tests {
         let store = SettingsStore::load(path.clone());
         store
             .update(|s| {
+                s.cue_mix = 0.5;
                 s.show_fx = false;
                 s.fx_auto_fade = false;
                 s.midi.enabled = false;
@@ -235,6 +245,7 @@ mod tests {
             })
             .unwrap();
         let saved = SettingsStore::load(path).get();
+        assert_eq!(saved.cue_mix, 0.5);
         assert!(!saved.midi.enabled);
         assert!(!saved.fx_auto_fade);
         assert_eq!(saved.audio.buffer_frames, Some(128));

@@ -366,18 +366,15 @@ impl Preferences {
                             cx,
                         ))
                     })
-                    .when(
-                        self.selected_profile().is_some_and(|p| p.audio.is_some()),
-                        |el| {
-                            el.child(self.button(
-                                "controller-audio",
-                                "Audio routing…",
-                                ready,
-                                |s, _, _| s.apply_recommended_audio(),
-                                cx,
-                            ))
-                        },
-                    )
+                    .when(self.recommended_audio().is_some(), |el| {
+                        el.child(self.button(
+                            "controller-audio",
+                            "Audio routing…",
+                            ready,
+                            |s, _, _| s.apply_recommended_audio(),
+                            cx,
+                        ))
+                    })
                     .when(device.is_some(), |el| {
                         el.child(self.disclosure_button(
                             "controller-monitor",

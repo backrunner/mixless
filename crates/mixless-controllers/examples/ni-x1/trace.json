@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "preset_digest": "093618e9dcf61e919f38d90cc0a5debc025de5422e35053d204cc75aac69971b",
+  "model": "Traktor Kontrol X1 MK1 (SSL 2.2 template)",
+  "firmware": "synthetic-template-2.8.2",
+  "os": "offline",
+  "truncated": false,
+  "frames": [
+    {
+      "event": {
+        "kind": "connect",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 0
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          40,
+          127
+        ],
+        "at_ms": 1
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "play",
+              "deck": "a"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          40,
+          127
+        ],
+        "at_ms": 2
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          40,
+          0
+        ],
+        "at_ms": 3
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          41,
+          127
+        ],
+        "at_ms": 4
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "play",
+              "deck": "b"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          36,
+          127
+        ],
+        "at_ms": 5
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "pfl",
+              "deck": "a"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          16,
+          1
+        ],
+        "at_ms": 6
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "browse_tracks"
+            },
+            "value": {
+              "kind": "relative",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          16,
+          127
+        ],
+        "at_ms": 7
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "browse_tracks"
+            },
+            "value": {
+              "kind": "relative",
+              "value": -1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          0,
+          127
+        ],
+        "at_ms": 8
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "fx_mix",
+              "deck": "a",
+              "slot": 0
+            },
+            "value": {
+              "kind": "absolute",
+              "value": 127
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          84,
+          127
+        ],
+        "at_ms": 9
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "state",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 10
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "disconnect",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 11
+      },
+      "expected": []
+    }
+  ]
+}

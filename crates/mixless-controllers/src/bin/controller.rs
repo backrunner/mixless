@@ -10,6 +10,11 @@ fn main() -> Result {
     match args.first().map(String::as_str) {
         Some("schema") if args.len() == 1 => print_json(&schema::preset_schema()),
         Some("targets") if args.len() == 1 => print_json(&MidiTarget::all()),
+        Some("presets") if args.len() == 1 => { for p in builtin_presets() { println!("{}\t{}", p.id, p.name); } Ok(()) },
+        Some("export-builtin") if args.len() == 3 => {
+            let p = builtin_presets().into_iter().find(|p| p.id == args[1]).ok_or("Unknown built-in preset")?;
+            write_new(Path::new(&args[2]), &p)
+        },
         Some("fingerprint") if args.len() == 2 => { println!("{}", content_digest(&read_preset(Path::new(&args[1]))?)); Ok(()) }
         Some("validate") if args.len() == 2 => {
             let p = read_preset(Path::new(&args[1]))?;
@@ -42,7 +47,8 @@ fn main() -> Result {
             Ok(())
         }
         Some("record") if args.len() == 7 => record(&args[1..]),
-        _ => Err("Usage: mixless-controller schema | targets | devices\n  validate PRESET\n  fingerprint PRESET\n  pack TEMPLATE WASM_OR_WAT OUTPUT\n  pin-trace PRESET TRACE_TEMPLATE OUTPUT\n  replay PRESET TRACE [--check]\n  record PRESET PORTS_JSON OUTPUT SECONDS FIRMWARE OS\nPORTS_JSON maps each logical endpoint to the exact ID printed by devices. Record applies the preset and sends its initialization and feedback reports.".into()),
+        Some("capture-input") if args.len() == 8 => capture_input(&args[1..]),
+        _ => Err("Usage: mixless-controller schema | targets | presets | devices\n  export-builtin ID OUTPUT\n  validate PRESET\n  fingerprint PRESET\n  pack TEMPLATE WASM_OR_WAT OUTPUT\n  pin-trace PRESET TRACE_TEMPLATE OUTPUT\n  replay PRESET TRACE [--check]\n  record PRESET PORTS_JSON OUTPUT SECONDS FIRMWARE OS\n  capture-input MIDI_OR_HID DEVICE_ID OUTPUT SECONDS MODEL FIRMWARE OS\nPORTS_JSON maps each logical endpoint to the exact ID printed by devices. Record applies the preset and sends its initialization and feedback reports.".into()),
     }
 }
 fn validate_adapter(p: &ControllerPreset) -> Result {
@@ -130,6 +136,70 @@ fn record(args: &[String]) -> Result {
     println!(
         "Captured {} frames. Review replay output before adding fixture expectations.",
         trace.frames.len()
+    );
+    Ok(())
+}
+
+fn capture_input(args: &[String]) -> Result {
+    use std::io::BufRead;
+    if Path::new(&args[2]).exists() {
+        return Err("Capture output already exists".into());
+    }
+    let seconds = args[3].parse()?;
+    let (tx, rx) = std::sync::mpsc::sync_channel(32);
+    let marker_loss = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let overflow = marker_loss.clone();
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        let mut pending = Vec::with_capacity(200);
+        let mut oversized = false;
+        loop {
+            let Ok(buffer) = stdin.fill_buf() else {
+                break;
+            };
+            if buffer.is_empty() {
+                break;
+            }
+            let consumed = buffer.len();
+            for byte in buffer {
+                if *byte == b'\n' {
+                    if oversized {
+                        overflow.store(true, std::sync::atomic::Ordering::Relaxed);
+                    } else if let Ok(label) = String::from_utf8(std::mem::take(&mut pending)) {
+                        let label = label.trim().to_owned();
+                        if !label.is_empty() {
+                            match tx.try_send(label) {
+                                Ok(()) => {}
+                                Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                    overflow.store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return,
+                            }
+                        }
+                    }
+                    pending.clear();
+                    oversized = false;
+                } else if pending.len() < 200 {
+                    pending.push(*byte);
+                } else {
+                    oversized = true;
+                }
+            }
+            stdin.consume(consumed);
+        }
+    });
+    eprintln!("Input observation only. No preset or output reports. Type control labels followed by Enter.");
+    let mut capture = mixless_controllers::capture::capture_input(
+        &args[0], &args[1], seconds, &args[4], &args[5], &args[6], rx,
+    )?;
+    capture.truncated |= marker_loss.load(std::sync::atomic::Ordering::Relaxed);
+    write_new(Path::new(&args[2]), &capture)?;
+    if capture.truncated {
+        return Err("Saved truncated input observation; not a reviewed replay fixture".into());
+    }
+    println!(
+        "Observed {} frames. Hardware compatibility has not been verified.",
+        capture.frames.len()
     );
     Ok(())
 }

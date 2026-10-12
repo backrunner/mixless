@@ -45,6 +45,9 @@
           "type": "cue_gain"
         },
         {
+          "type": "cue_mix"
+        },
+        {
           "type": "quantize"
         },
         {

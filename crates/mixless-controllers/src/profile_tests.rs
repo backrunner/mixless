@@ -28,6 +28,11 @@ fn manager(t: &Temp) -> ControllerManager {
 }
 fn binding(target: MidiTarget) -> Binding {
     Binding::from_legacy(&MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Cc,
         channel: 2,
@@ -45,10 +50,160 @@ fn assign(h: &ControllerManager, preset: &str, device: &str) {
     })
     .unwrap();
 }
+
+#[test]
+fn ni_template_fixtures_match_catalogue_and_do_not_claim_factory_or_hardware_support() {
+    for (id, preset_json, trace_json) in [
+        (
+            "builtin-ni-f1-fl-studio-v1",
+            include_str!("../examples/ni-f1/preset.json"),
+            include_str!("../examples/ni-f1/trace.json"),
+        ),
+        (
+            "builtin-ni-x1-ssl22-v1",
+            include_str!("../examples/ni-x1/preset.json"),
+            include_str!("../examples/ni-x1/trace.json"),
+        ),
+    ] {
+        let packaged: ControllerPreset = serde_json::from_str(preset_json).unwrap();
+        let current = builtin_presets().into_iter().find(|p| p.id == id).unwrap();
+        assert_eq!(current, packaged);
+        assert!(!current.bindings.is_empty());
+        assert!(current
+            .bindings
+            .iter()
+            .all(|b| b.legacy(Some("offline-fixture".into())).is_some()));
+        assert!(
+            current.notes.contains("template") && current.notes.contains("Hardware unverified")
+        );
+        let trace = serde_json::from_str(trace_json).unwrap();
+        let result = crate::replay::replay(&current, &trace, true).unwrap();
+        assert!(result.assertions >= 10);
+        assert_eq!(current.verification, Verification::Protocol);
+    }
+    assert!(!builtin_presets()
+        .iter()
+        .any(|p| p.name.contains("MX2") || p.name.contains("MK3") || p.name.contains("Z1")));
+    let audio = ni_audio_recommendation("Traktor MX2").unwrap();
+    assert_eq!((audio.master, audio.cue), ([0, 1], [2, 3]));
+    assert!(ni_audio_recommendation("Traktor MX4").is_none());
+}
+
+#[test]
+fn native_positive_sensitivity_remains_editable_in_legacy_rows() {
+    let temp = Temp::new();
+    let manager = manager(&temp);
+    let mut native = binding(MidiTarget::Master);
+    native.sensitivity = 0.0000001;
+    let mut preset = ControllerPreset::blank("Fine calibration fixture");
+    preset.bindings.push(native.clone());
+    preset.validate().unwrap();
+    let row = native.legacy(Some("offline-fine-control".into())).unwrap();
+    manager.upsert(row.clone()).unwrap();
+    assert!(manager.bindings().contains(&row));
+}
+
+#[test]
+fn ni_audio_pairs_match_traktor_source_audit_without_creating_controller_presets() {
+    let audit: serde_json::Value =
+        serde_json::from_str(include_str!("../research/ni/traktor-4.4.1-audit.json")).unwrap();
+    assert_eq!(audit["hardware_verified"], false);
+    let devices = audit["audio"]["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 13);
+    for source in devices {
+        let name = source["device_name"].as_str().unwrap();
+        let proposal = ni_audio_recommendation(name).unwrap();
+        assert_eq!(proposal.device_name, name);
+        assert_eq!(
+            serde_json::to_value(proposal.master).unwrap(),
+            source["master"]
+        );
+        assert_eq!(serde_json::to_value(proposal.cue).unwrap(), source["cue"]);
+        assert!(ni_audio_recommendation(&format!("{name} extra")).is_none());
+    }
+    for unknown in [
+        "Traktor Kontrol S2 MK4",
+        "Traktor Kontrol S4 MK4",
+        "Traktor Z1 MK3",
+        "Traktor Kontrol X1",
+        "Traktor X1 MK3",
+        "Traktor Kontrol F1",
+        "Traktor Kontrol D2",
+        "Native Instruments",
+    ] {
+        assert!(ni_audio_recommendation(unknown).is_none());
+    }
+    assert_eq!(
+        builtin_presets()
+            .iter()
+            .filter(|p| p.manufacturer == "Native Instruments")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn full_midi_addresses_and_calibration_survive_editing_and_restart() {
+    let t = Temp::new();
+    let h = manager(&t);
+    let mut b = MidiBinding {
+        device_id: Some("offline-fixture".into()),
+        address: None,
+        inverted: true,
+        kind: MidiSourceKind::Cc,
+        channel: 0,
+        number: 1,
+        target: MidiTarget::CueMix,
+        mode: MidiControlMode::Absolute,
+        sensitivity: 2.,
+        ticks_per_revolution: Some(1024.),
+        pickup: false,
+    };
+    b.set_address(MidiAddress::PitchBend { channel: 3 });
+    h.upsert(b.clone()).unwrap();
+    let mut other = b.clone();
+    other.target = MidiTarget::CueGain;
+    other.set_address(MidiAddress::Cc {
+        channel: 3,
+        number: 0,
+    });
+    h.upsert(other.clone()).unwrap();
+    assert_eq!(h.bindings().len(), 2);
+    let initial = h.bindings().into_iter().position(|x| x == b).unwrap();
+    b.set_address(MidiAddress::Cc14 {
+        channel: 3,
+        msb: 1,
+        lsb: 33,
+    });
+    h.replace(initial, b.clone()).unwrap();
+    let reopened = manager(&t);
+    assert!(reopened.bindings().contains(&b));
+    assert!(reopened.bindings().contains(&other));
+    let id = reopened
+        .assignments()
+        .into_iter()
+        .find(|a| a.device_id == "offline-fixture")
+        .unwrap()
+        .preset_id;
+    let p = reopened.preset(&id).unwrap();
+    let mut r = Router::default();
+    let s = EngineSnapshot::default();
+    assert!(r
+        .route("offline-fixture", "main", &p, false, &[0xb3, 1, 127], &s)
+        .is_empty());
+    let actions = r.route("offline-fixture", "main", &p, false, &[0xb3, 33, 127], &s);
+    assert_eq!(
+        actions,
+        vec![MidiAction {
+            target: MidiTarget::CueMix,
+            value: MidiValue::Normalized(0.)
+        }]
+    );
+}
 #[test]
 fn catalogue_has_independent_sources_and_valid_complete_packets() {
     let p = builtin_presets();
-    assert_eq!(p.len(), 12);
+    assert_eq!(p.len(), 14);
     let mut ids = std::collections::BTreeSet::new();
     for p in p {
         p.validate().unwrap_or_else(|e| panic!("{}: {e}", p.name));
@@ -58,6 +213,7 @@ fn catalogue_has_independent_sources_and_valid_complete_packets() {
             "Pioneer DJ / AlphaTheta" => "https://downloads.support.alphatheta.com/",
             "Hercules" => "https://ts.hercules.com/",
             "Numark" => "https://www.numark.com/",
+            "Native Instruments" => "https://support.native-instruments.com/",
             other => panic!("Unreviewed manufacturer source: {other}"),
         };
         assert!(!p.provenance.is_empty());
@@ -67,8 +223,12 @@ fn catalogue_has_independent_sources_and_valid_complete_packets() {
             .all(|s| s.url.starts_with(domain) && !s.revision.is_empty() && !s.section.is_empty()));
         assert!(!p.notes.is_empty());
         assert!(p.bindings.len() > 20, "{}", p.name);
-        assert!(p.feedback.len() >= 8, "{}", p.name);
-        assert!(p.matches_midi(&p.name));
+        if p.manufacturer != "Native Instruments" {
+            assert!(p.feedback.len() >= 8, "{}", p.name);
+        }
+        if p.manufacturer != "Native Instruments" {
+            assert!(p.matches_midi(&p.name));
+        }
         assert!(!p.matches_midi("Unrelated keyboard"));
         assert!(!p.matches_midi(&format!("{} MK2", p.name)));
         // Sharing preserves coverage notes but never introduces local device IDs.
@@ -89,7 +249,10 @@ fn builtin(name: &str) -> ControllerPreset {
 
 #[test]
 fn catalogue_routes_both_decks_and_temporary_cue_edges() {
-    for p in builtin_presets() {
+    for p in builtin_presets()
+        .into_iter()
+        .filter(|p| p.manufacturer != "Native Instruments")
+    {
         for deck in [DeckId::A, DeckId::B] {
             for (target, down, up) in [
                 (MidiTarget::Play { deck }, MidiValue::Press, None),

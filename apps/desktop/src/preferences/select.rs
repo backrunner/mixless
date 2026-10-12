@@ -171,6 +171,23 @@ impl Preferences {
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
             Selector::Source => self.binding.device_id.clone().unwrap_or_default(),
+            Selector::MidiType => match self.binding.midi_address() {
+                mixless_controllers::MidiAddress::Note { .. } => "note",
+                mixless_controllers::MidiAddress::Cc14 { .. } => "cc14",
+                mixless_controllers::MidiAddress::PitchBend { .. } => "pitch_bend",
+                _ => "cc",
+            }
+            .into(),
+            Selector::MidiLsb => match self.binding.midi_address() {
+                mixless_controllers::MidiAddress::Cc14 { lsb, .. } => lsb.to_string(),
+                _ => String::new(),
+            },
+            Selector::MidiSensitivity => self.binding.sensitivity.to_string(),
+            Selector::MidiTicks => self
+                .binding
+                .ticks_per_revolution
+                .unwrap_or(720.)
+                .to_string(),
             Selector::MidiChannel => (self.binding.channel + 1).to_string(),
             Selector::MidiNumber => self.binding.number.to_string(),
             Selector::MidiMode => MidiControlMode::ALL

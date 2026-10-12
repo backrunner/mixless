@@ -1,6 +1,19 @@
 use super::*;
 
 impl Preferences {
+    pub(super) fn save_headphone_mix(&mut self, value: f32) {
+        let result = self
+            .core
+            .settings
+            .update(|p| p.cue_mix = value)
+            .and_then(|()| {
+                self.core
+                    .engine
+                    .dispatch(Command::SetCueMix { value })
+                    .map_err(|e| e.to_string())
+            });
+        self.result(result, "Headphone mix saved");
+    }
     pub(super) fn audio_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
         let snapshot = self.core.engine.snapshot();
         let settings = self.core.settings.get();
@@ -85,6 +98,48 @@ impl Preferences {
                                 settings.cue_gain < 1.,
                                 |s, _, _| {
                                     s.save_general(|p| p.cue_gain = (p.cue_gain + 0.05).min(1.))
+                                },
+                                cx,
+                            )
+                            .w(px(30.))
+                            .px_0(),
+                        )
+                        .into_any_element(),
+                ),
+                row(
+                    "Headphone mix",
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            self.button(
+                                "cue-mix-down",
+                                "−",
+                                snapshot.cue_mix > 0.,
+                                |s, _, _| {
+                                    let value = (s.core.engine.snapshot().cue_mix - 0.05).max(0.);
+                                    s.save_headphone_mix(value)
+                                },
+                                cx,
+                            )
+                            .w(px(30.))
+                            .px_0(),
+                        )
+                        .child(
+                            div()
+                                .w(px(92.))
+                                .text_center()
+                                .child(format!("{:.0}% Master", snapshot.cue_mix * 100.)),
+                        )
+                        .child(
+                            self.button(
+                                "cue-mix-up",
+                                "+",
+                                snapshot.cue_mix < 1.,
+                                |s, _, _| {
+                                    let value = (s.core.engine.snapshot().cue_mix + 0.05).min(1.);
+                                    s.save_headphone_mix(value)
                                 },
                                 cx,
                             )

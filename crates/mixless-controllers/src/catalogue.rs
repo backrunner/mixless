@@ -5,6 +5,11 @@ use mixless_protocol::{DeckId, EqBand};
 
 fn input(p: &mut ControllerPreset, address: MidiAddress, target: MidiTarget, mode: ValueMode) {
     let mut b = Binding::from_legacy(&MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Note,
         channel: 0,
@@ -69,6 +74,7 @@ fn led(p: &mut ControllerPreset, ch: u8, number: u8, target: MidiTarget) {
     });
 }
 mod hercules;
+mod native_instruments;
 mod numark;
 mod pioneer;
 
@@ -77,6 +83,7 @@ pub(crate) fn catalogue() -> Vec<ControllerPreset> {
     profiles.extend(pioneer::additional());
     profiles.extend(hercules::profiles());
     profiles.push(numark::dj2go());
+    profiles.extend(native_instruments::profiles());
     profiles
 }
 

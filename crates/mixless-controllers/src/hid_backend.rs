@@ -136,3 +136,21 @@ mod tests {
         }
     }
 }
+
+/// Shared stable identity for enumeration and explicitly selected input capture.
+pub(crate) fn identity(info: &DeviceInfo) -> String {
+    let identity = info
+        .serial_number()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| info.path().to_string_lossy().into_owned());
+    format!(
+        "hid:{:04x}:{:04x}:{}:{}:{}:{}",
+        info.vendor_id(),
+        info.product_id(),
+        identity,
+        info.interface_number(),
+        info.usage_page(),
+        info.usage()
+    )
+}

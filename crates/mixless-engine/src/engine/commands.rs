@@ -30,6 +30,7 @@ impl Engine {
             | Command::SetBalance { value, .. }
             | Command::SetStemGain { value, .. }
             | Command::SetFxSend { value, .. }
+            | Command::SetCueMix { value }
             | Command::SetCueGain { value } => value.is_finite(),
             Command::SetFx { deck, slot, params } => {
                 if deck.is_none() && insert_index(*slot).is_some() {
@@ -346,6 +347,10 @@ impl Shared {
             }
             Command::SetPfl { deck, on } => {
                 self.decks[deck.index()].pfl.store(on, Ordering::Relaxed);
+            }
+            Command::SetCueMix { value } => {
+                self.cue_mix
+                    .store((value.clamp(0., 1.) * 1000.) as u32, Ordering::Relaxed);
             }
             Command::SetCueGain { value } => {
                 let v = (value.clamp(0.0, 1.0) * 1000.0) as u32;

@@ -3,6 +3,11 @@ use mixless_protocol::{Command, EngineSnapshot, StemKind};
 
 fn cc(target: MidiTarget, mode: MidiControlMode) -> MidiBinding {
     MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Cc,
         channel: 2,
@@ -26,8 +31,13 @@ fn targeted_learning_ignores_touch_notes_releases_and_encoder_idle() {
         assert!(input.learned.is_none());
     }
     input.receive(&[], "controller", &[0xb2, 11, 127]);
-    assert_eq!(input.learned.as_ref().unwrap().kind, MidiSourceKind::Cc);
-    assert_eq!(input.learned.as_ref().unwrap().number, 11);
+    assert_eq!(
+        input.learned.as_ref().unwrap().address,
+        MidiAddress::Cc {
+            channel: 2,
+            number: 11
+        }
+    );
 
     input.start_learning(Some(MidiTarget::Play { deck: DeckId::B }));
     for message in [[0x82, 40, 127], [0x92, 40, 0], [0xb2, 40, 0], [0xf8, 0, 0]] {
@@ -37,7 +47,13 @@ fn targeted_learning_ignores_touch_notes_releases_and_encoder_idle() {
     input.receive(&[], "controller", &[0x92, 40, 100]);
     input.receive(&[], "another controller", &[0x92, 41, 127]);
     assert_eq!(input.learned.as_ref().unwrap().device_id, "controller");
-    assert_eq!(input.learned.as_ref().unwrap().number, 40);
+    assert_eq!(
+        input.learned.as_ref().unwrap().address,
+        MidiAddress::Note {
+            channel: 2,
+            number: 40
+        }
+    );
     assert!(input.queued.is_empty());
 }
 
@@ -54,7 +70,13 @@ fn targeted_learning_accepts_zero_for_faders_and_retargeting_discards_old_captur
     input.start_learning(Some(MidiTarget::CueGain));
     assert!(input.learned.is_none());
     input.receive(&map, "controller", &[0xb2, 12, 50]);
-    assert_eq!(input.learned.as_ref().unwrap().number, 12);
+    assert_eq!(
+        input.learned.as_ref().unwrap().address,
+        MidiAddress::Cc {
+            channel: 2,
+            number: 12
+        }
+    );
 }
 
 #[test]
@@ -67,10 +89,20 @@ fn learned_reassignment_persists_and_preserves_other_devices_and_assignments() {
     };
     let hub = MidiHub::start_with_config(path.clone(), config.clone()).unwrap();
     let source = MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: Some("one".into()),
         ..cc(MidiTarget::Master, MidiControlMode::Auto)
     };
     let other_device = MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: Some("two".into()),
         ..source.clone()
     };
@@ -92,14 +124,20 @@ fn learned_reassignment_persists_and_preserves_other_devices_and_assignments() {
         input.receive(&hub.bindings(), "one", &[0xb2, 10, 90]);
     }
     let captured = hub.learned().unwrap();
-    let learned_binding = MidiBinding {
+    let mut learned_binding = MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: Some(captured.device_id),
-        kind: captured.kind,
-        channel: captured.channel,
-        number: captured.number,
+        kind: MidiSourceKind::Cc,
+        channel: 2,
+        number: 10,
         target: MidiTarget::CueGain,
         mode: MidiControlMode::Auto,
     };
+    learned_binding.set_address(captured.address);
     let index = hub
         .bindings()
         .iter()
@@ -382,4 +420,16 @@ fn remapping_and_disabling_release_the_previous_held_target() {
         }]
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn legacy_helper_respects_direction_and_does_not_alias_pitch_bend_to_cc() {
+    let mut b = cc(MidiTarget::Master, MidiControlMode::Absolute);
+    b.inverted = true;
+    assert_eq!(
+        resolve(&[b.clone()], "port", &[0xb2, 10, 0]).unwrap().value,
+        MidiValue::Absolute(127)
+    );
+    b.set_address(MidiAddress::PitchBend { channel: 2 });
+    assert!(resolve(&[b], "port", &[0xb2, 0, 127]).is_none());
 }

@@ -1,0 +1,630 @@
+{
+  "version": 1,
+  "preset_digest": "",
+  "model": "Traktor Kontrol F1 (FL Studio template)",
+  "firmware": "synthetic-template-2.8.2",
+  "os": "offline",
+  "frames": [
+    {
+      "event": {
+        "kind": "connect",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 0
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          159,
+          0,
+          127
+        ],
+        "at_ms": 1
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "play",
+              "deck": "a"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          159,
+          0,
+          127
+        ],
+        "at_ms": 2
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          143,
+          0,
+          0
+        ],
+        "at_ms": 3
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          159,
+          8,
+          127
+        ],
+        "at_ms": 4
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "play",
+              "deck": "b"
+            },
+            "value": {
+              "kind": "press"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          176,
+          0,
+          0
+        ],
+        "at_ms": 5
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "stem",
+              "deck": "a",
+              "stem": "vocals"
+            },
+            "value": {
+              "kind": "absolute",
+              "value": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          177,
+          0,
+          127
+        ],
+        "at_ms": 6
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "stem",
+              "deck": "b",
+              "stem": "vocals"
+            },
+            "value": {
+              "kind": "absolute",
+              "value": 127
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          188,
+          127,
+          65
+        ],
+        "at_ms": 7
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "browse_tracks"
+            },
+            "value": {
+              "kind": "relative",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          188,
+          127,
+          63
+        ],
+        "at_ms": 8
+      },
+      "expected": [
+        {
+          "type": "action",
+          "action": {
+            "target": {
+              "type": "browse_tracks"
+            },
+            "value": {
+              "kind": "relative",
+              "value": -1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "input",
+        "endpoint": "main",
+        "data": [
+          159,
+          106,
+          127
+        ],
+        "at_ms": 9
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "state",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 10
+      },
+      "expected": [
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              0,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              1,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              2,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              3,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              4,
+              127
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              5,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              6,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              7,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              8,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              9,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              10,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              11,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              12,
+              127
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              13,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              14,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              15,
+              0
+            ],
+            "report": null
+          }
+        }
+      ]
+    },
+    {
+      "event": {
+        "kind": "state",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 11
+      },
+      "expected": []
+    },
+    {
+      "event": {
+        "kind": "disconnect",
+        "endpoint": "",
+        "data": [],
+        "at_ms": 12
+      },
+      "expected": [
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              0,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              1,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              2,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              3,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              4,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              5,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              6,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              7,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              8,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              9,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              10,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              11,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              12,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              13,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              14,
+              0
+            ],
+            "report": null
+          }
+        },
+        {
+          "type": "write",
+          "packet": {
+            "endpoint": "main",
+            "data": [
+              187,
+              15,
+              0
+            ],
+            "report": null
+          }
+        }
+      ]
+    }
+  ]
+}

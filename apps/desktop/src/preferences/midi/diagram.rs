@@ -208,6 +208,7 @@ impl Preferences {
                 diagram.child(self.map_control(target, label, [x, 4., w, 21.], Shape::Button, cx));
         }
         for (target, label, x) in [
+            (CueMix, "CUE MIX", 580.),
             (MasterGain, "MASTER GAIN", 690.),
             (Master, "MASTER", 800.),
             (CueGain, "CUE VOL", 910.),

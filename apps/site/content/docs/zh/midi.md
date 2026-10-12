@@ -21,7 +21,7 @@ imageType: image/png
 
 ## 映射与报告监视
 
-控制器示意图常驻显示在映射列表上方；点击控制项或列表条目可查看输入消息。先选择输入设备，再点击示意图中的控制项并操作硬件。离线点击示意图只查看映射。MIDI 学习会保存首次匹配的 Note 或 CC；取消不会修改映射。简单编辑器支持通道、Note/CC，以及 1/127、65/63、1/65 三种相对编码。复杂映射显示真实输入，通过 Edit MIDI / HID 修改规则。
+控制器示意图常驻显示在映射列表上方；点击控制项或列表条目可查看输入消息。先选择输入设备，再点击示意图中的控制项并操作硬件。离线点击示意图只查看映射。MIDI 学习会保存首次匹配的 Note、CC 或 Pitch Bend；取消不会修改映射。编辑器支持通道、Note、CC、Pitch Bend，以及显式指定 MSB/LSB 的 14 位 CC。14 位配对不会自动推测。CC 支持 1/127、65/63、1/65 三种相对编码，Calibration 中可以调整方向、灵敏度、软接管和 Jog 每圈计数。复杂映射显示真实输入，通过 Edit MIDI / HID 修改规则。
 
 **Manage → Edit MIDI / HID…** 编辑预设的声明式 JSON，支持 Pitch Bend、14-bit CC、RPN/NRPN、SysEx、校准、软接管、设备独立的 Shift 层及按住/切换行为。Jog 的 `ticks_per_revolution` 可调整，应用默认值仍需实机校准。**Details → Ports…** 为每个逻辑端口明确指定本机输入和输出 ID。
 
@@ -39,13 +39,14 @@ HID 预设指定 VID/PID、接口和 Usage，以及 Report ID、位偏移、宽�
 
 ## 内置预设与验证状态
 
-预设库提供 **12 个依据厂商官方 MIDI 消息表独立编写的预设**：
+预设库提供 **14 个独立编写的预设**，其中 12 个依据厂商官方 MIDI 消息表，另两个使用指定的 NI Controller Editor 模板：
 
 | 厂商 | 型号 |
 | --- | --- |
 | Pioneer DJ / AlphaTheta | DDJ-200、DDJ-400、DDJ-FLX4、DDJ-SB、DDJ-SB2、DDJ-SB3、DDJ-RB、DDJ-REV1、DDJ-WeGO3 |
 | Hercules | DJControl Inpulse 200、DJControl Inpulse 300（初代） |
 | Numark | DJ2GO（初代） |
+| Native Instruments | F1（FL Studio 模板）、X1 MK1（SSL 2.2 模板） |
 
 按型号覆盖有协议依据的传输控制、混音、Jog、浏览加载、Hot Cue 和反馈。选中预设后展开 **Details** 可查看验证状态；**Preset notes** 提供使用说明和功能限制。SB2/SB3/REV1 使用 Deck 1/2；SB/SB2、WeGO3 和 Inpulse 200 每个 Deck 提供四个 Hot Cue。不默认覆盖其他 Pad 模式、效果和后续硬件代际。
 
@@ -54,3 +55,13 @@ HID 预设指定 VID/PID、接口和 Usage，以及 Report ID、位偏移、宽�
 ## 控制器声卡
 
 在 **Audio I/O** 分别选择 Master、Headphones 设备和通道对。四通道控制器可使用 Master 1/2、Cue 3/4，同设备只创建一个音频流。通道重叠或超出范围会被拒绝，其余通道输出静音。**Details → Audio routing…** 只填写建议配置，需在 Audio I/O 中点击 **Apply** 才会切换输出。监听设备故障不会将 Cue 信号转入主输出。
+
+**Headphone mix** 从 Cue 混合到 Master，0% Master 保持纯 Cue，100% Master 只监听主输出，中间位置线性混合。耳机音量作用于混合后的信号，不影响主输出。该控制也可通过示意图中的 **CUE MIX** 映射。
+
+## NI DJ 设备
+
+F1 和初代 X1 的预设要求加载 Controller Editor 2.8.2 中指定的原始模板，并选择 Basic 页和 MIDI 模式；不是出厂地址，也不覆盖后续代际或 Shift 页。F1 提供两组唱盘按钮、Stem 音量和 Pad 亮度反馈；X1 提供传输控制、FX/EQ、浏览和加载，没有灯光反馈。打开 Preset notes 查看具体布局。
+
+MX2 可通过双侧 Shift 切换 MIDI 模式后使用 Learn；目前没有完整预设或 NI 原生协议适配。X1 MK3、Z1 MK2 和其他 NI 型号仍有消息定义缺口，不能将它们视为已验证兼容。
+
+依据 Traktor 逐型号输出配置，MX2、Z1（初代和 MK2）、Z2、S2 和 S4（初代、MK2 和 MK3）、S3、S5、S8 提供音频建议。选择匹配设备后，**Details → Audio routing…** 可填写主输出 1/2、耳机 3/4，无需先选择控制预设。请在 Audio I/O 检查并显式应用；这不代表新增控制映射或已验证实际输出。详见[NI 兼容矩阵](https://github.com/backrunner/mixless/blob/main/crates/mixless-controllers/NI_COMPATIBILITY.md)。

@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn headphone_mix_blends_cue_and_master_without_changing_master() {
+    let render = |mix: f32, pfl: bool| {
+        let engine = test_engine(48_000);
+        for (deck, hz) in [(DeckId::A, 440.), (DeckId::B, 997.)] {
+            let slot = &engine.shared.decks[deck.index()];
+            let buffer = sine_buffer(48_000, hz, 4.);
+            slot.frames.store(buffer.frames, Ordering::Relaxed);
+            slot.src_sr.store(48_000, Ordering::Relaxed);
+            *slot.buffer.lock().unwrap() = Some(buffer);
+            engine.dispatch(Command::PlayPause { deck }).unwrap();
+        }
+        engine
+            .dispatch(Command::SetCrossfader { value: -1. })
+            .unwrap();
+        engine.dispatch(Command::SetMaster { value: 0.2 }).unwrap();
+        engine.dispatch(Command::SetCueGain { value: 0.2 }).unwrap();
+        engine
+            .dispatch(Command::SetPfl {
+                deck: DeckId::B,
+                on: pfl,
+            })
+            .unwrap();
+        engine.dispatch(Command::SetCueMix { value: mix }).unwrap();
+        engine.render_offline(8192);
+        let (producer, mut consumer) = rtrb::RingBuffer::new(4096);
+        let mut rt = engine.rt.lock().unwrap();
+        rt.cue_output = Some(device::CueWriter::new(producer, 48_000, 48_000));
+        let mut output = vec![0.; 4096 * 2];
+        engine.shared.process_block(&mut rt, &mut output, 2);
+        let cue: Vec<_> = std::iter::from_fn(|| consumer.pop().ok())
+            .flatten()
+            .collect();
+        (output, cue)
+    };
+    let (master0, cue0) = render(0., true);
+    let (master1, cue1) = render(1., true);
+    let (master_half, cue_half) = render(0.5, true);
+    assert_eq!(master0, master1);
+    assert_eq!(master0, master_half);
+    assert!(energy(&cue0[4000..]) > 0.00001);
+    for i in 4000..cue_half.len() {
+        assert!((cue_half[i] - (cue0[i] + cue1[i]) * 0.5).abs() < 0.00001);
+    }
+    let (_, no_pfl_cue) = render(0., false);
+    let (master, no_pfl_master) = render(1., false);
+    assert!(no_pfl_cue.iter().all(|v| v.abs() < 1e-8));
+    assert!(energy(&no_pfl_master[4000..]) > 0.00001);
+    for (cue, master) in no_pfl_master.iter().zip(&master).skip(4000) {
+        assert!((*cue - *master * 0.2).abs() < 0.00001);
+    }
+    let engine = test_engine(48_000);
+    assert!(engine
+        .dispatch(Command::SetCueMix { value: f32::NAN })
+        .is_err());
+    engine.dispatch(Command::SetCueMix { value: 3. }).unwrap();
+    assert_eq!(engine.snapshot().cue_mix, 1.);
+}
+
+#[test]
 fn source_normalization_reaches_both_master_and_cue_without_moving_manual_gain() {
     let render = |amplitude: f32| {
         let engine = test_engine(48_000);

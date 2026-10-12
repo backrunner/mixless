@@ -50,17 +50,32 @@ pub enum MidiSourceKind {
 }
 
 pub mod adapter;
+#[cfg(feature = "tools")]
+pub mod capture;
 mod catalogue;
 pub mod community;
 mod control;
+mod learning;
+use learning::default_sensitivity;
+pub use learning::LearnedInput;
 mod hid_backend;
 pub mod replay;
 mod targets;
 pub use control::{MidiAction, MidiControlMode, MidiValue};
 pub use targets::{ControlKind, MidiGroup, MidiTarget};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MidiBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<MidiAddress>,
+    #[serde(default)]
+    pub inverted: bool,
+    #[serde(default = "default_sensitivity")]
+    pub sensitivity: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticks_per_revolution: Option<f64>,
+    #[serde(default)]
+    pub pickup: bool,
     /// Absent in legacy maps: match this address on any enabled input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
@@ -91,8 +106,12 @@ struct InputState {
     learning: bool,
     learn_target: Option<MidiTarget>,
     learn_device: Option<String>,
-    learned: Option<MidiMessage>,
+    learn_since: Option<std::time::Instant>,
+    learned: Option<LearnedInput>,
+    learn_address: Option<MidiAddress>,
+    learn_decoders: std::collections::HashMap<String, mixless_midi::Decoder>,
     last: Option<MidiMessage>,
+    last_input: Option<LearnedInput>,
     queued: Vec<MidiAction>,
     held: Vec<(MidiMessage, MidiTarget)>,
 }
@@ -102,6 +121,9 @@ impl InputState {
         self.learning = true;
         self.learn_target = target;
         self.learned = None;
+        self.learn_since = Some(std::time::Instant::now());
+        self.learn_address = None;
+        self.learn_decoders.clear();
         self.queued
             .retain(|action| action.value == MidiValue::Release);
         self.release_held();
@@ -116,38 +138,33 @@ impl InputState {
         }
     }
     fn receive(&mut self, bindings: &[MidiBinding], device_id: &str, msg: &[u8]) {
-        let Some((kind, channel, number, value)) = parse_msg(msg) else {
-            return;
-        };
-        let message = MidiMessage {
+        if let Some(input) = LearnedInput::from_packet(device_id, msg) {
+            self.last_input = Some(input);
+        }
+        let legacy = parse_msg(msg).map(|(kind, channel, number, value)| MidiMessage {
             device_id: device_id.into(),
             kind,
             channel,
             number,
             value,
-        };
-        self.last = Some(message.clone());
+        });
+        if let Some(message) = &legacy {
+            self.last = Some(message.clone());
+        }
         if self.learning {
-            let compatible = match self.learn_target.as_ref().map(MidiTarget::kind) {
-                Some(ControlKind::Continuous) => kind == MidiSourceKind::Cc,
-                Some(ControlKind::Encoder) => {
-                    kind == MidiSourceKind::Cc && !matches!(value, 0 | 64)
-                }
-                Some(ControlKind::Button | ControlKind::Momentary) => value > 0,
-                None => !(kind == MidiSourceKind::Note && value == 0),
-            };
-            if self.learned.is_none() && compatible {
-                self.learned = Some(message);
-            }
+            self.receive_learn(device_id, msg);
             return;
         }
+        let Some(message) = legacy else {
+            return;
+        };
         if let Some(cmd) = resolve(bindings, device_id, msg) {
             if cmd.target.kind() == ControlKind::Momentary {
                 let same = |(held, _): &(MidiMessage, MidiTarget)| {
                     held.device_id == device_id
-                        && held.kind == kind
-                        && held.channel == channel
-                        && held.number == number
+                        && held.kind == message.kind
+                        && held.channel == message.channel
+                        && held.number == message.number
                 };
                 if cmd.value == MidiValue::Press {
                     if self.held.iter().any(same) {
@@ -181,7 +198,7 @@ pub use profile::*;
 pub use runtime::{ConnectionState, ControllerDevice, ReceivedPacket};
 
 fn same_source(a: &MidiBinding, b: &MidiBinding) -> bool {
-    a.device_id == b.device_id && a.kind == b.kind && a.channel == b.channel && a.number == b.number
+    a.device_id == b.device_id && a.midi_address() == b.midi_address()
 }
 
 fn validate(binding: &MidiBinding) -> Result<(), MidiError> {
@@ -193,12 +210,36 @@ fn validate(binding: &MidiBinding) -> Result<(), MidiError> {
     if !MidiTarget::all().contains(&binding.target) {
         return Err(error("unknown MIDI control or out-of-range cue / FX slot"));
     }
+    let address = binding.midi_address();
+    if !address.valid() {
+        return Err(error("Invalid MIDI address"));
+    }
+    if !binding.sensitivity.is_finite()
+        || binding.sensitivity <= 0.
+        || binding.sensitivity > 1000.
+        || binding
+            .ticks_per_revolution
+            .is_some_and(|v| !v.is_finite() || v <= 0.)
+    {
+        return Err(error("Invalid control calibration"));
+    }
+    if matches!(
+        address,
+        MidiAddress::PitchBend { .. } | MidiAddress::Cc14 { .. }
+    ) && matches!(
+        binding.target.kind(),
+        ControlKind::Button | ControlKind::Momentary
+    ) {
+        return Err(error(
+            "Pitch bend and 14-bit CC require a continuous target",
+        ));
+    }
     let relative = binding.mode.relative(&binding.target);
     if binding.target.kind() == ControlKind::Encoder && !relative {
         return Err(error("jog and browse encoders require a relative CC mode"));
     }
     if relative
-        && (binding.kind != MidiSourceKind::Cc
+        && (!matches!(address, MidiAddress::Cc { .. })
             || matches!(
                 binding.target.kind(),
                 ControlKind::Button | ControlKind::Momentary
@@ -211,14 +252,24 @@ fn validate(binding: &MidiBinding) -> Result<(), MidiError> {
 
 fn resolve(bindings: &[MidiBinding], device_id: &str, msg: &[u8]) -> Option<MidiAction> {
     let (kind, ch, num, val) = parse_msg(msg)?;
+    let address = match kind {
+        MidiSourceKind::Note => MidiAddress::Note {
+            channel: ch,
+            number: num,
+        },
+        MidiSourceKind::Cc => MidiAddress::Cc {
+            channel: ch,
+            number: num,
+        },
+    };
     let binding = bindings
         .iter()
-        .filter(|b| b.kind == kind && b.channel == ch && b.number == num)
+        .filter(|b| b.midi_address() == address)
         .find(|b| b.device_id.as_deref() == Some(device_id))
         .or_else(|| {
-            bindings.iter().find(|b| {
-                b.kind == kind && b.channel == ch && b.number == num && b.device_id.is_none()
-            })
+            bindings
+                .iter()
+                .find(|b| b.midi_address() == address && b.device_id.is_none())
         })?;
     let value = match binding.target.kind() {
         ControlKind::Momentary => {
@@ -235,7 +286,10 @@ fn resolve(bindings: &[MidiBinding], device_id: &str, msg: &[u8]) -> Option<Midi
             MidiValue::Press
         }
         _ if binding.mode.relative(&binding.target) => {
-            let delta = binding.mode.delta(val);
+            let mut delta = binding.mode.delta(val);
+            if binding.inverted {
+                delta = -delta;
+            }
             if delta == 0 {
                 return None;
             }
@@ -245,7 +299,7 @@ fn resolve(bindings: &[MidiBinding], device_id: &str, msg: &[u8]) -> Option<Midi
             if kind == MidiSourceKind::Note && val == 0 {
                 return None;
             }
-            if binding.mode == MidiControlMode::AbsoluteInverted {
+            if binding.inverted || binding.mode == MidiControlMode::AbsoluteInverted {
                 MidiValue::Absolute(127 - val)
             } else {
                 MidiValue::Absolute(val)
@@ -305,6 +359,11 @@ mod tests {
 
     fn binding() -> MidiBinding {
         MidiBinding {
+            address: None,
+            inverted: false,
+            sensitivity: 1.,
+            ticks_per_revolution: None,
+            pickup: false,
             device_id: None,
             kind: MidiSourceKind::Note,
             channel: 0,
@@ -350,7 +409,13 @@ mod tests {
         input.receive(&[binding()], "one", &[0x90, 60, 127]);
         input.receive(&[binding()], "two", &[0x90, 61, 127]);
         assert_eq!(input.learned.as_ref().unwrap().device_id, "one");
-        assert_eq!(input.learned.as_ref().unwrap().number, 60);
+        assert_eq!(
+            input.learned.as_ref().unwrap().address,
+            MidiAddress::Note {
+                channel: 0,
+                number: 60
+            }
+        );
         assert!(input.queued.is_empty());
     }
 
@@ -359,6 +424,11 @@ mod tests {
         let map = [
             binding(),
             MidiBinding {
+                address: None,
+                inverted: false,
+                sensitivity: 1.,
+                ticks_per_revolution: None,
+                pickup: false,
                 device_id: Some("two".into()),
                 target: MidiTarget::Play { deck: DeckId::B },
                 ..binding()

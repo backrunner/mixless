@@ -167,6 +167,9 @@ pub enum Command {
         deck: DeckId,
         on: bool,
     },
+    SetCueMix {
+        value: f32,
+    },
     SetCueGain {
         value: f32,
     },

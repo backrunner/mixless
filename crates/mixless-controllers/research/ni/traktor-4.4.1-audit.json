@@ -1,0 +1,752 @@
+{
+  "format": "ni_traktor_source_audit",
+  "version": 1,
+  "factory_version": "4.4.1",
+  "tsi": [
+    {
+      "sha256": "ad60c37811639720d2e8bf4cd65dfa048a68c1219b5f6a9523401bd25ac0eec7",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol F1.User",
+          "addressing": "native_symbols",
+          "input_count": 42,
+          "output_count": 271
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol F1/Kontrol F1 - AB Track Deck.tsi"
+    },
+    {
+      "sha256": "d1a8218b8a7623d262c46737a95111ebf5b24f182859703fcdc23dae228d45f2",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol X1",
+          "addressing": "native_symbols",
+          "input_count": 120,
+          "output_count": 88
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol X1/Pro/Kontrol X1 - AB.tsi"
+    },
+    {
+      "sha256": "2cba4551e2c18c1adb3c672958cc8cd63b8a230fcd92f3a73ec0386ee8b8a55b",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol X1",
+          "addressing": "native_symbols",
+          "input_count": 120,
+          "output_count": 88
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol X1/Pro/Kontrol X1 - AC.tsi"
+    },
+    {
+      "sha256": "ea92268d5e4ab1b45fe40623e4e7f21292a3ca55f35f6ca0fb59a6c22fccf183",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol X1",
+          "addressing": "native_symbols",
+          "input_count": 120,
+          "output_count": 88
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol X1/Pro/Kontrol X1 - BD.tsi"
+    },
+    {
+      "sha256": "4f2fbf04845ce03fb369df0da43c8b4abbae3dec4d82d31c7d9a9a58409511fe",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol X1",
+          "addressing": "native_symbols",
+          "input_count": 120,
+          "output_count": 88
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol X1/Pro/Kontrol X1 - CD.tsi"
+    },
+    {
+      "sha256": "fc72f19d5fbb5020db0a2202ca141b3828223c0cd556bfa3c01dd3eaf5bc8322",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol X1",
+          "addressing": "native_symbols",
+          "input_count": 120,
+          "output_count": 88
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol X1/Pro/Kontrol X1 - CDSmp.tsi"
+    },
+    {
+      "sha256": "fbffb962a1735ff6f679db29afe6a0c316594abc4eb3b6946210de07906498ae",
+      "devices": [],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "AutoConfig/Native Instruments/Kontrol X1/Pro/Kontrol X1 - Presets.tsi"
+    },
+    {
+      "sha256": "0038e966bc0e8db6e03f464816b039f974315eb4559766b21864734e72705333",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4112,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/03 - Controller - Native Instruments - Maschine Track Decks.tsi"
+    },
+    {
+      "sha256": "45cf99ac4d8cefe64f0566696c06941308b237912f503cbb81bd35ba9566ad5e",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4114,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/04 - Controller - Native Instruments - Maschine Remix Decks.tsi"
+    },
+    {
+      "sha256": "9fb32e1c3ce308450030899c059e2362fc631737cd0f45ae2cb35f2d5c538a20",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4112,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/05 - Controller - Native Instruments - Maschine Mikro Track Decks.tsi"
+    },
+    {
+      "sha256": "ab8df5587a4c41895971464b7185c3bfb98d2ae14064d6013e53961321c7bf3a",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4114,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/06 - Controller - Native Instruments - Maschine Mikro Remix Decks.tsi"
+    },
+    {
+      "sha256": "1040bd0109dc543bcca7e76b8f672fb161be98b4e9b1c6bcadab0f07b2a7dffc",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4112,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/07 - Controller - Native Instruments - Maschine MK2 Track Decks.tsi"
+    },
+    {
+      "sha256": "9bf19192165fdbf5900aa0837299e363a91ded1d308c8df5435c33ac4014df26",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4114,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/08 - Controller - Native Instruments - Maschine MK2 Remix Decks.tsi"
+    },
+    {
+      "sha256": "43ac15e4f01e3b0e95421cd18c70c1c360bc06748aceae1a2b981dcb7c5af164",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4112,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/09 - Controller - Native Instruments - Maschine Mikro MK2 Track Decks.tsi"
+    },
+    {
+      "sha256": "c1d6d68077d5161d5e5448caab05db4b2ff3f7fd122a44f0227ca8feb3282def",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4114,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/10 - Controller - Native Instruments - Maschine Mikro MK2 Remix Decks.tsi"
+    },
+    {
+      "sha256": "762f76cd453df4a601f603f7902dbe4398cb4a2c719f8abfa62ca7198482b8d4",
+      "devices": [
+        {
+          "device_class": "Generic MIDI",
+          "addressing": "generic_midi",
+          "input_count": 4112,
+          "output_count": 4112
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/12 - Controller - Native Instruments - Kore 2.tsi"
+    },
+    {
+      "sha256": "372016fb89e41d6ed165800465f63c44461e3a3bf42384b4d5ecdbf24080cef8",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol F1.User",
+          "addressing": "native_symbols",
+          "input_count": 42,
+          "output_count": 269
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/13 - Controller - Native Instruments - F1 Step Sequencer Deck A.tsi"
+    },
+    {
+      "sha256": "35fdc063d273537b0d1fc06c528cea2fbda3badd7d0d08cf0f7b8831139265f0",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol F1.User",
+          "addressing": "native_symbols",
+          "input_count": 42,
+          "output_count": 269
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/14 - Controller - Native Instruments - F1 Step Sequencer Deck B.tsi"
+    },
+    {
+      "sha256": "b8239ecc6523f8fb4bd376199ad6d400b92f39ad152a57b9a8d9dc4b8f861f15",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol F1.User",
+          "addressing": "native_symbols",
+          "input_count": 42,
+          "output_count": 269
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/15 - Controller - Native Instruments - F1 Step Sequencer Deck C.tsi"
+    },
+    {
+      "sha256": "5049745326203d7a60a9d83dd78b30d2c77929baa99335e0832e9376e430d22b",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol F1.User",
+          "addressing": "native_symbols",
+          "input_count": 42,
+          "output_count": 269
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/16 - Controller - Native Instruments - F1 Step Sequencer Deck D.tsi"
+    },
+    {
+      "sha256": "1d208640b957aa1fb1372736d135490ea47a003eb960821f2e481af458c086e9",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol F1.User",
+          "addressing": "native_symbols",
+          "input_count": 42,
+          "output_count": 269
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/17 - Controller - Native Instruments - F1 Pattern Player.tsi"
+    },
+    {
+      "sha256": "25be80e66ccd1674c8197df27b53079b8b8d11df2e6e533824c39a8b57260b28",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol S4.User",
+          "addressing": "native_symbols",
+          "input_count": 128,
+          "output_count": 108
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/_01 - Controller - Native Instruments - S4 User Mapping.tsi"
+    },
+    {
+      "sha256": "9cb0c346b01dd54ed9030239d96d3e930e17cef7eff39e17510f6f6daec3d4fd",
+      "devices": [
+        {
+          "device_class": "Traktor.Kontrol S2.User",
+          "addressing": "native_symbols",
+          "input_count": 81,
+          "output_count": 52
+        }
+      ],
+      "evidence": "source_only",
+      "wire_protocol_confirmed": false,
+      "file": "Default Settings/Controller/Native Instruments/_02 - Controller - Native Instruments - S2 User Mapping.tsi"
+    }
+  ],
+  "csi": [
+    {
+      "device_directory": "D2",
+      "qml_files": [
+        {
+          "file": "D2/D2.qml",
+          "sha256": "8bdfde9883f379796ddcc848eae78c39986bce15c9bdbb46620f3ab24388b838"
+        }
+      ]
+    },
+    {
+      "device_directory": "MX2",
+      "qml_files": [
+        {
+          "file": "MX2/MX2.qml",
+          "sha256": "25d20d40d4cd3448e4f45cf028001d52fba56443f8df25164079fb29ab101409"
+        },
+        {
+          "file": "MX2/MX2Channel.qml",
+          "sha256": "ce92282f926b1dcd050af52cf99dafaf2d71c412dd81659d33c76b4dd1d6a178"
+        },
+        {
+          "file": "MX2/MX2Deck.qml",
+          "sha256": "157e55bc372d8eae5e84b39f49976bc62aab39451615c1319625f94326c5b1b1"
+        },
+        {
+          "file": "MX2/MX2KeyControl.qml",
+          "sha256": "64acc58d9ba7500b748045bc6e98389792fb357e249c430939778133565ecb68"
+        },
+        {
+          "file": "MX2/MX2Stems.qml",
+          "sha256": "83b8d12dcfa315d25fdf09ab68ff038e20e1e4e59d6f17b47ad4eaf1aa7ae5bc"
+        }
+      ]
+    },
+    {
+      "device_directory": "S2MK3",
+      "qml_files": [
+        {
+          "file": "S2MK3/S2MK3.qml",
+          "sha256": "a72d07a2d261eafc2457c68d78f6f1f5c3fa79cbb9885656fa3ed861e297b518"
+        },
+        {
+          "file": "S2MK3/S2MK3Channel.qml",
+          "sha256": "a676ce0649dbdb2e10be50eb839d00d65a0c47b7664dc94c3350074f1c2bd494"
+        },
+        {
+          "file": "S2MK3/S2MK3ChannelFxSelection.qml",
+          "sha256": "74f90bf856b0955ab8c2eed0922120ee2dfb67617d8936d5929b3065a7dc2f0c"
+        },
+        {
+          "file": "S2MK3/S2MK3Deck.qml",
+          "sha256": "0c02fdd96aab929841c22ecaa9b056345cc6692e9ec1933422c1100b132ff808"
+        },
+        {
+          "file": "S2MK3/S2MK3Mixer.qml",
+          "sha256": "b76b419f54087ed67ab7add5dfa5a1436abbbcc8807c2f3ade60534470da9e25"
+        },
+        {
+          "file": "S2MK3/S2MK3SamplesModule.qml",
+          "sha256": "c8ec02496c01f0ca35925f7b21d9bea875b4b124bb94f76bee4f3261e1a0fdc6"
+        },
+        {
+          "file": "S2MK3/S2MK3Stems.qml",
+          "sha256": "83b8d12dcfa315d25fdf09ab68ff038e20e1e4e59d6f17b47ad4eaf1aa7ae5bc"
+        },
+        {
+          "file": "S2MK3/S2MK3TempoControl.qml",
+          "sha256": "1182d1c0fd37cf5e3e8517975ed81929e6f035b995e21516593b0a5a24578d99"
+        },
+        {
+          "file": "S2MK3/S2MK3TransportButtons.qml",
+          "sha256": "49a240e58e8faaf33ddf967b16dbbb55d21bacaf5d290bff6788e9095e3d8639"
+        }
+      ]
+    },
+    {
+      "device_directory": "S3",
+      "qml_files": [
+        {
+          "file": "S3/S3.qml",
+          "sha256": "6141c3071fa6fcf3cf93900bd3b51a2bc7106270d9ac2cd8562b2d1f65fb3f64"
+        },
+        {
+          "file": "S3/S3Channel.qml",
+          "sha256": "2f8b0d389fae11c301edc2e7bea865f2c29718775b5a4097efd89c733d5b33d9"
+        },
+        {
+          "file": "S3/S3Deck.qml",
+          "sha256": "384ee61efad2eba6d4384cf24f8368560432d6dc0dc65925a49b4a76b5009a96"
+        },
+        {
+          "file": "S3/S3Mixer.qml",
+          "sha256": "6744412b4770a6417cf7a26934dc6f2e7fe4658a6f049e34ac63a3b4c9024603"
+        },
+        {
+          "file": "S3/S3Samples.qml",
+          "sha256": "ea29817406bf89e2bea49fb50097adb6b8867cff20a48c0a0780aea0f03170bb"
+        },
+        {
+          "file": "S3/S3Side.qml",
+          "sha256": "7bb85ca4118cfaef9e3d2e7e8680ef36ad4872e5a0d63a9df408bf8fc6294f3a"
+        },
+        {
+          "file": "S3/S3Stems.qml",
+          "sha256": "83b8d12dcfa315d25fdf09ab68ff038e20e1e4e59d6f17b47ad4eaf1aa7ae5bc"
+        },
+        {
+          "file": "S3/S3Transport.qml",
+          "sha256": "e2508881c8db74e6d99fb63ef217227978a6b9b19918c5203a4be433a6da0930"
+        }
+      ]
+    },
+    {
+      "device_directory": "S4MK3",
+      "qml_files": [
+        {
+          "file": "S4MK3/S4MK3.qml",
+          "sha256": "db14d6e371bc2b936a585d6d44271704c4fc87448c0f56ef5eb5a6756b035369"
+        },
+        {
+          "file": "S4MK3/S4MK3Channel.qml",
+          "sha256": "02ba5e6088f40688e280e5b1263fee021b4c132420ce11861edd100c86265e2a"
+        },
+        {
+          "file": "S4MK3/S4MK3Deck.qml",
+          "sha256": "02b119f1663947b0ecb0cdd250a4436716543439d102ca7f061ef9efd183d72e"
+        },
+        {
+          "file": "S4MK3/S4MK3DeckFX.qml",
+          "sha256": "38602f88a59ab9e0fe36ba5289f4cbd49060d4d477741c9b9b25d2cde29f2819"
+        },
+        {
+          "file": "S4MK3/S4MK3Mixer.qml",
+          "sha256": "ec7193260c3f9f3bbb5dc9a6d6c3edcfe2155bc374abef83b04c6d56330e4bf2"
+        },
+        {
+          "file": "S4MK3/S4MK3Samples.qml",
+          "sha256": "8df3311a4e952849dec7cbb7e48cd44ccfd5be63faf17686676a57ddfdfda11c"
+        },
+        {
+          "file": "S4MK3/S4MK3Side.qml",
+          "sha256": "4af2b9150b42d4f84433452c6af224acd4efa80eb95c66b44ffa525e37cf9220"
+        },
+        {
+          "file": "S4MK3/S4MK3Stems.qml",
+          "sha256": "83b8d12dcfa315d25fdf09ab68ff038e20e1e4e59d6f17b47ad4eaf1aa7ae5bc"
+        },
+        {
+          "file": "S4MK3/S4MK3TempoControl.qml",
+          "sha256": "e3937f37775cb46d408737cb67eab6e5b1ada890ffae08a0249c0f8ecd933750"
+        },
+        {
+          "file": "S4MK3/S4MK3TransportButtons.qml",
+          "sha256": "6979aa0cf4306966a2a87e280195c0b18d66ee3eb94bc6ca979d7614fdc774de"
+        }
+      ]
+    },
+    {
+      "device_directory": "S5",
+      "qml_files": [
+        {
+          "file": "S5/Channel.qml",
+          "sha256": "7a306906bd08bb879920ae87a371b733c24c6a2fceb16edf6ca7fdde2992d888"
+        },
+        {
+          "file": "S5/Mixer.qml",
+          "sha256": "2b9f593184d9e4811730bf72b222204a1df06d3de2822215b7f08e2e8579e938"
+        },
+        {
+          "file": "S5/S5.qml",
+          "sha256": "9a8c3046ad88ad8aadbcbefe154f47a7ed4dbcab274cc341ab43946653d7b0a4"
+        },
+        {
+          "file": "S5/S5Deck.qml",
+          "sha256": "8c6b845dc8f6e1d06661fed32843c3304f03cc74820bc5c0fce937ce8177113d"
+        }
+      ]
+    },
+    {
+      "device_directory": "S8",
+      "qml_files": [
+        {
+          "file": "S8/Channel.qml",
+          "sha256": "0a92e3c41086f24a5503ce638b550b1069ef06394ef26752f086f2d2c1d7ae06"
+        },
+        {
+          "file": "S8/Mixer.qml",
+          "sha256": "eecc88296935a18dd3b7b24f1a7ae51fc1d1e814a5a5f9ead210a91ab8410e1f"
+        },
+        {
+          "file": "S8/S8.qml",
+          "sha256": "c720cd78585f32cd485fe929244a743af40051ca34091248b025927a6dce0135"
+        }
+      ]
+    },
+    {
+      "device_directory": "X1MK3",
+      "qml_files": [
+        {
+          "file": "X1MK3/Defines/BrowseEncoderAction.qml",
+          "sha256": "07928b50784fa5fa1826f27cad4a33e03b26806f9ebbf3fe4f34e8bc1c094091"
+        },
+        {
+          "file": "X1MK3/Defines/DeviceAssignment.qml",
+          "sha256": "a6cf9b6943b239e3bb3ba61d1d47b870391ff62087d73c3bbba891bdba5d6b48"
+        },
+        {
+          "file": "X1MK3/Defines/DeviceSetupState.qml",
+          "sha256": "5ccaa0ee80dd73e55e130167fd0c30a6e2a29032c6268ffecf9c581c902e263d"
+        },
+        {
+          "file": "X1MK3/Defines/FXSectionLayer.qml",
+          "sha256": "816826175e14de7aaa639bcd15dccd1f113e5204ba2b1f8f340f1cd0fde58b8b"
+        },
+        {
+          "file": "X1MK3/Defines/HotcueAction.qml",
+          "sha256": "2d62e023c7616973a2f8c2a1a53496ed5dade6fd80dd44e02f96caf236b75084"
+        },
+        {
+          "file": "X1MK3/X1MK3.qml",
+          "sha256": "38bb4765896b4fcc261ca8e5fc63c6b24d1e805a938849ace124996a1305e495"
+        },
+        {
+          "file": "X1MK3/X1MK3Deck.qml",
+          "sha256": "24a800f678ae381cfd2977b356b74d6bc4adb07c15123170434351744c8b87c9"
+        },
+        {
+          "file": "X1MK3/X1MK3DeviceSetup.qml",
+          "sha256": "40f6338b1e87e799ab0bd131fce0f8fb29677a40aa384bf96712ecc580c3eae8"
+        },
+        {
+          "file": "X1MK3/X1MK3FXSection.qml",
+          "sha256": "a30e0aae1f8049a518bd1fc94a55425759822dc0737d7a50193667f67e0445c5"
+        },
+        {
+          "file": "X1MK3/X1MK3FXSectionSide.qml",
+          "sha256": "d97f81327fdf91f06969a3b1979d576059713df53b76cf5fee885b8249760367"
+        },
+        {
+          "file": "X1MK3/X1MK3HotcueButtons.qml",
+          "sha256": "d89a7f95e0d043284971225bf16186f53d357d11ca46d3395a8ef9249013ae5f"
+        },
+        {
+          "file": "X1MK3/X1MK3Side.qml",
+          "sha256": "d93eaa4e33331732a338ee76d61788f8b1cc4e9c9f9e8a6f04e52804694caa80"
+        },
+        {
+          "file": "X1MK3/X1MK3TransportButtons.qml",
+          "sha256": "f0551b9688ddcbb71e9360a0b796634a1370f2bfd7b758b7900ad8372e806f25"
+        }
+      ]
+    },
+    {
+      "device_directory": "Z1MK2",
+      "qml_files": [
+        {
+          "file": "Z1MK2/Defines/ButtonsActions.qml",
+          "sha256": "6f20f93e420ea0daa70f96c7643a71a8675883fe3a1f1c39ef4fade537db939c"
+        },
+        {
+          "file": "Z1MK2/Defines/DeviceAssignment.qml",
+          "sha256": "c500b7fecf8922bad88c4263e7a00515bf737138788377a629ca0e3d55d50003"
+        },
+        {
+          "file": "Z1MK2/Z1MK2.qml",
+          "sha256": "f49f1979f88ce6322e5e76ae239130f88649c2cf2d066efdd173d4da4ac827db"
+        },
+        {
+          "file": "Z1MK2/Z1MK2FXSelector.qml",
+          "sha256": "82c693e64371c15b6a5560ef1a94255e08d322d50c6e745ea09322b92558bc18"
+        },
+        {
+          "file": "Z1MK2/Z1MK2Side.qml",
+          "sha256": "53b67ca278a396aa4422545cd12a213e6837b2c27932d37f5ef6717f44309d1a"
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "sha256": "cdc051995be78f6cfa88e3da1ccc7eee0bd6a982e27351177140bc184fe3ecb6",
+    "devices": [
+      {
+        "device_name": "Traktor Kontrol S2",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S2 MK2",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S2 MK3",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S3",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S4",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S4 MK2",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S4 MK3",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S5",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol S8",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol Z1",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor Kontrol Z2",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ]
+      },
+      {
+        "device_name": "Traktor MX2",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ],
+        "mac_driver_name": "Traktor MX2"
+      },
+      {
+        "device_name": "Traktor Z1 MK2",
+        "master": [
+          0,
+          1
+        ],
+        "cue": [
+          2,
+          3
+        ],
+        "mac_driver_name": "Traktor Z1 MK2"
+      }
+    ]
+  },
+  "hardware_verified": false
+}

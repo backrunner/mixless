@@ -36,6 +36,7 @@ pub enum MidiTarget {
     Master,
     MasterGain,
     CueGain,
+    CueMix,
     Quantize,
     XfReverse,
     Automix,
@@ -189,6 +190,7 @@ impl MidiTarget {
             Self::Master,
             Self::MasterGain,
             Self::CueGain,
+            Self::CueMix,
             Self::Quantize,
             Self::XfReverse,
             Self::Automix,
@@ -337,6 +339,7 @@ impl MidiTarget {
             Xfader
             | Master
             | MasterGain
+            | CueMix
             | CueGain
             | Fader { .. }
             | Gain { .. }
@@ -360,6 +363,7 @@ impl MidiTarget {
             Xfader => "Crossfader".into(),
             Master => "Master volume".into(),
             MasterGain => "Master gain".into(),
+            CueMix => "Headphone mix".into(),
             CueGain => "Headphone volume".into(),
             Quantize => "Quantize".into(),
             XfReverse => "Crossfader reverse".into(),

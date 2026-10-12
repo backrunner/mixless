@@ -2,33 +2,39 @@
 use super::*;
 use crate::views::{TextTip, ellipsized_text};
 use mixless_controllers::ControlKind;
+use mixless_controllers::MidiAddress;
 
+mod actions;
 mod diagram;
 
 const MIDI_LABEL_WIDTH: f32 = 74.;
 const MIDI_FIELD_GAP: f32 = 12.;
 const MIDI_CONTROL_WIDTH: f32 = 194.;
 
+fn address_label(address: &MidiAddress) -> String {
+    match address {
+        MidiAddress::Note { channel, number } => format!("Note {number} (Ch {})", channel + 1),
+        MidiAddress::Cc { channel, number } => format!("CC {number} (Ch {})", channel + 1),
+        MidiAddress::Cc14 { channel, msb, lsb } => {
+            format!("CC14 {msb}/{lsb} (Ch {})", channel + 1)
+        }
+        MidiAddress::PitchBend { channel } => format!("Pitch bend (Ch {})", channel + 1),
+        MidiAddress::Rpn { channel, parameter } => {
+            format!("RPN {parameter} (Ch {})", channel + 1)
+        }
+        MidiAddress::Nrpn { channel, parameter } => {
+            format!("NRPN {parameter} (Ch {})", channel + 1)
+        }
+        MidiAddress::Sysex { offset, bytes, .. } => {
+            format!("SysEx byte {offset}, {bytes} bytes")
+        }
+    }
+}
+
 fn input_label(binding: &mixless_controllers::Binding) -> String {
-    use mixless_controllers::{InputSource, MidiAddress};
+    use mixless_controllers::InputSource;
     let source = match &binding.source {
-        InputSource::Midi { address } => match address {
-            MidiAddress::Note { channel, number } => format!("Note {number} (Ch {})", channel + 1),
-            MidiAddress::Cc { channel, number } => format!("CC {number} (Ch {})", channel + 1),
-            MidiAddress::Cc14 { channel, msb, lsb } => {
-                format!("CC14 {msb}/{lsb} (Ch {})", channel + 1)
-            }
-            MidiAddress::PitchBend { channel } => format!("Pitch bend (Ch {})", channel + 1),
-            MidiAddress::Rpn { channel, parameter } => {
-                format!("RPN {parameter} (Ch {})", channel + 1)
-            }
-            MidiAddress::Nrpn { channel, parameter } => {
-                format!("NRPN {parameter} (Ch {})", channel + 1)
-            }
-            MidiAddress::Sysex { offset, bytes, .. } => {
-                format!("SysEx byte {offset}, {bytes} bytes")
-            }
-        },
+        InputSource::Midi { address } => address_label(address),
         InputSource::Hid {
             report_id,
             bit_offset,
@@ -108,6 +114,11 @@ impl Preferences {
             .editing
             .map(|i| self.bindings[i].clone())
             .unwrap_or_else(|| MidiBinding {
+                address: None,
+                inverted: false,
+                sensitivity: 1.,
+                ticks_per_revolution: None,
+                pickup: false,
                 device_id: self.controller_device.clone(),
                 channel: self.binding.channel,
                 number: 0,
@@ -119,6 +130,11 @@ impl Preferences {
                 mode: MidiControlMode::Auto,
                 target: target.clone(),
             });
+        if let Some(canonical) = mixless_controllers::Binding::from_legacy(&self.binding)
+            .legacy(self.binding.device_id.clone())
+        {
+            self.binding = canonical;
+        }
         if self.midi_group.is_some_and(|g| g != target.group()) {
             self.midi_group = Some(target.group());
         }
@@ -134,22 +150,7 @@ impl Preferences {
             return;
         }
         self.select_midi_target(target.clone());
-        let result = if self.controller_device.is_none() {
-            Err("Select a connected device before learning".into())
-        } else if self.job.is_some() {
-            Err("Wait for the current settings operation to finish.".into())
-        } else {
-            self.core
-                .midi
-                .lock()
-                .expect("MIDI")
-                .as_ref()
-                .ok_or_else(|| "MIDI is unavailable".to_string())
-                .and_then(|hub| {
-                    hub.learn_target_for(target, self.controller_device.clone())
-                        .map_err(|e| e.to_string())
-                })
-        };
+        let result = self.start_binding_learn();
         match result {
             Ok(()) => {
                 self.learning = true;
@@ -159,21 +160,21 @@ impl Preferences {
         }
     }
 
-    pub(super) fn finish_quick_learn(&mut self, message: MidiMessage) {
+    pub(super) fn finish_quick_learn(&mut self, message: LearnedInput) {
         // Preserve an explicitly chosen mode when relearning the same input.
         // A new physical control starts with the target's normal default.
         let same_input = self.binding.device_id.as_ref() == Some(&message.device_id)
-            && self.binding.kind == message.kind
-            && self.binding.channel == message.channel
-            && self.binding.number == message.number;
+            && self.binding.midi_address() == message.address;
         if !same_input {
             self.binding.mode = MidiControlMode::Auto;
+            self.binding.inverted = false;
+            self.binding.sensitivity = 1.;
+            self.binding.ticks_per_revolution = None;
+            self.binding.pickup = false;
         }
         self.controller_device = Some(message.device_id.clone());
         self.binding.device_id = Some(message.device_id);
-        self.binding.kind = message.kind;
-        self.binding.channel = message.channel;
-        self.binding.number = message.number;
+        self.binding.set_address(message.address);
         let moved = self.source_conflict().map(|b| b.target.label());
         let success = format!(
             "Mapped {}: {}{}",
@@ -264,12 +265,7 @@ impl Preferences {
     }
 
     fn binding_text(&self, binding: &MidiBinding) -> String {
-        format!(
-            "Ch {}, {:?} {}",
-            binding.channel + 1,
-            binding.kind,
-            binding.number
-        )
+        input_label(&mixless_controllers::Binding::from_legacy(binding))
     }
 
     fn midi_select(
@@ -295,9 +291,7 @@ impl Preferences {
             .find(|(index, b)| {
                 Some(*index) != self.editing
                     && b.device_id == self.binding.device_id
-                    && b.kind == self.binding.kind
-                    && b.channel == self.binding.channel
-                    && b.number == self.binding.number
+                    && b.midi_address() == self.binding.midi_address()
             })
             .map(|(_, b)| b)
     }
@@ -495,8 +489,8 @@ impl Preferences {
     fn midi_editor(&self, enabled: bool, cx: &Context<Self>) -> gpui::AnyElement {
         let sources = self.mapping_sources(&self.binding.target);
         let adapter = self.mapping_profile().is_some_and(|p| p.adapter.is_some());
-        // Layered/high-resolution inputs cannot be represented by the Note/CC
-        // form. Show their actual address instead of an invented default value.
+        // Layered/adapter inputs need their full definition. Show the real source
+        // when it cannot be edited here, or when no MIDI device is selected.
         if !self.midi_learn_available() || (self.editing.is_none() && !sources.is_empty()) {
             return div()
                 .debug_selector(|| "mapping-preview".into())
@@ -666,52 +660,129 @@ impl Preferences {
             ))
             .child(field(
                 "Message",
-                div()
-                    .flex()
-                    .items_center()
-                    .w(px(MIDI_CONTROL_WIDTH))
-                    .flex_none()
-                    .gap_1()
-                    .children(
-                        [(MidiSourceKind::Cc, "CC"), (MidiSourceKind::Note, "Note")].map(
-                            |(kind, label)| {
-                                self.button(
-                                    format!("midi-kind-{label}"),
-                                    label,
-                                    enabled && !self.learning,
-                                    move |s, _, _| {
-                                        s.binding.kind = kind;
-                                        if kind == MidiSourceKind::Note {
-                                            s.binding.mode = MidiControlMode::Auto;
-                                        }
-                                    },
-                                    cx,
-                                )
-                                .flex_1()
-                                .min_w_0()
-                                .px_0()
-                                .text_color(
-                                    if kind == self.binding.kind {
-                                        theme::ACCENT
-                                    } else {
-                                        theme::MUTED
-                                    },
-                                )
-                            },
-                        ),
-                    )
-                    .child(select(
-                        Selector::MidiNumber,
-                        self.binding.number.to_string(),
-                    ))
-                    .into_any_element(),
+                select(
+                    Selector::MidiType,
+                    match self.binding.midi_address() {
+                        MidiAddress::Note { .. } => "Note",
+                        MidiAddress::Cc14 { .. } => "14-bit CC",
+                        MidiAddress::PitchBend { .. } => "Pitch bend",
+                        _ => "CC",
+                    }
+                    .into(),
+                ),
             ))
-            .when(self.binding.kind == MidiSourceKind::Cc, |el| {
-                el.child(field(
-                    "Mode",
-                    select(Selector::MidiMode, self.binding.mode.label().into()),
-                ))
-            })
+            .when(
+                !matches!(self.binding.midi_address(), MidiAddress::PitchBend { .. }),
+                |el| {
+                    el.child(field(
+                        if matches!(self.binding.midi_address(), MidiAddress::Cc14 { .. }) {
+                            "MSB"
+                        } else {
+                            "Number"
+                        },
+                        select(Selector::MidiNumber, self.binding.number.to_string()),
+                    ))
+                },
+            )
+            .when_some(
+                match self.binding.midi_address() {
+                    MidiAddress::Cc14 { lsb, .. } => Some(lsb),
+                    _ => None,
+                },
+                |el, lsb| el.child(field("LSB", select(Selector::MidiLsb, lsb.to_string()))),
+            )
+            .when(
+                matches!(self.binding.midi_address(), MidiAddress::Cc { .. }),
+                |el| {
+                    el.child(field(
+                        "Mode",
+                        select(Selector::MidiMode, self.binding.mode.label().into()),
+                    ))
+                },
+            )
+            .when(
+                matches!(
+                    self.binding.target.kind(),
+                    ControlKind::Continuous | ControlKind::Encoder
+                ),
+                |el| {
+                    el.child(self.disclosure_button(
+                        "mapping-calibration",
+                        "Calibration",
+                        self.mapping_calibration_open,
+                        enabled,
+                        |s, _, _| {
+                            s.mapping_calibration_open = !s.mapping_calibration_open;
+                        },
+                        cx,
+                    ))
+                },
+            )
+            .when(
+                self.mapping_calibration_open
+                    && matches!(
+                        self.binding.target.kind(),
+                        ControlKind::Continuous | ControlKind::Encoder
+                    ),
+                |el| {
+                    el.when(self.binding.mode.relative(&self.binding.target), |el| {
+                        el.child(field(
+                            "Sensitivity",
+                            select(
+                                Selector::MidiSensitivity,
+                                format!("{}×", self.binding.sensitivity),
+                            ),
+                        ))
+                    })
+                    .when(
+                        matches!(self.binding.target, MidiTarget::Jog { .. }),
+                        |el| {
+                            el.child(field(
+                                "Ticks / turn",
+                                select(
+                                    Selector::MidiTicks,
+                                    self.binding
+                                        .ticks_per_revolution
+                                        .unwrap_or(720.)
+                                        .to_string(),
+                                ),
+                            ))
+                        },
+                    )
+                    .child(self.button(
+                        "mapping-direction",
+                        if self.binding.inverted {
+                            "Direction: inverted"
+                        } else {
+                            "Direction: normal"
+                        },
+                        enabled,
+                        |s, _, _| {
+                            s.binding.inverted = !s.binding.inverted;
+                        },
+                        cx,
+                    ))
+                    .when(
+                        self.binding.target.kind() == ControlKind::Continuous
+                            && !self.binding.mode.relative(&self.binding.target),
+                        |el| {
+                            el.child(self.button(
+                                "mapping-pickup",
+                                if self.binding.pickup {
+                                    "Pickup: on"
+                                } else {
+                                    "Pickup: off"
+                                },
+                                enabled,
+                                |s, _, _| {
+                                    s.binding.pickup = !s.binding.pickup;
+                                },
+                                cx,
+                            ))
+                        },
+                    )
+                },
+            )
             .when(self.binding.target.kind() == ControlKind::Encoder, |el| {
                 el.child(
                     div()
@@ -788,13 +859,7 @@ impl Preferences {
                         }
                     } else {
                         self.last.as_ref().map_or("No MIDI signal".into(), |m| {
-                            format!(
-                                "Last: Ch {}, {:?} {}, value {}",
-                                m.channel + 1,
-                                m.kind,
-                                m.number,
-                                m.value
-                            )
+                            format!("Last: {}, value {}", address_label(&m.address), m.value)
                         })
                     }),
             )

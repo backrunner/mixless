@@ -7,6 +7,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test NI source inspector
+        run: |
+          python3 -B -m unittest discover -s crates/mixless-controllers/research/ni -p 'test_*.py'
       - name: Install stable Rust
         run: rustup update stable && rustup default stable
       - name: Install WebAssembly C toolchain

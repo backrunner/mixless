@@ -39,5 +39,6 @@ fs2 = "0.4"
 async-channel = "2"
 
 [dev-dependencies]
+mixless-midi = { workspace = true }
 gpui = { workspace = true, features = ["test-support"] }
 wat = "1"

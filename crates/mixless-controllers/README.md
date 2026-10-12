@@ -148,3 +148,23 @@ physical latency or audio routing. Firmware and OS evidence are needed from
 community members with the actual controller.
 
 See [ADAPTER_API.md](ADAPTER_API.md) for the ABI and failure behavior.
+
+## NI controllers and input-only observation
+
+See [NI_COMPATIBILITY.md](NI_COMPATIBILITY.md) for template-specific F1/X1 MK1
+profiles and the MX2, X1 MK3, Z1 MK2 and other NI protocol gaps.
+`presets` lists built-in IDs; `export-builtin ID OUTPUT` exports a portable copy.
+
+NI controller audio recommendations use Traktor's per-device internal-mixer
+configuration for 13 exact model names. **Details → Audio routing…** proposes
+Master 1/2 and Cue 3/4 for review, including without a control preset. Apply in
+Audio I/O is still required. A recommendation is not controller compatibility.
+The [read-only Traktor inspector](research/ni/README.md) can reproduce the NI
+factory-source audit without device access or running vendor software.
+
+`capture-input midi|hid DEVICE_ID OUTPUT SECONDS MODEL FIRMWARE OS` opens one
+exact input without a preset or any output/feature requests. Type a control label
+and Enter for an operation marker. It records observations rather than reviewed
+replay fixtures. Do not use the existing `record` command when you need passive
+input capture: `record` applies a preset and can send initialization/feedback.
+No physical captures were performed for the NI offline release.

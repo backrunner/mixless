@@ -143,6 +143,7 @@ impl Engine {
             master_gain_centi: AtomicU32::new(1200),
             master_level: std::array::from_fn(|_| AtomicU32::new(0)),
             recorder: recording::Recorder::default(),
+            cue_mix: AtomicU32::new(0),
             cue_gain: AtomicU32::new(800),
             quantize: AtomicBool::new(true),
             fx_auto_fade: AtomicBool::new(true),

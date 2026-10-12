@@ -372,23 +372,11 @@ impl Shared {
         let preview = std::array::from_fn::<_, 2, _>(|i| {
             self.decks[i].preview_cue.load(Ordering::Acquire) > 0
         });
+        let cue_mix = self.cue_mix.load(Ordering::Relaxed) as f32 / 1000.0;
         let cue_gain = self.cue_gain.load(Ordering::Relaxed) as f32 / 1000.0;
         for i in 0..frames {
             let (mut al, mut ar) = self.render_deck(0, &mut rt.decks[0], sr, bufs[0].as_deref());
             let (mut bl, mut br) = self.render_deck(1, &mut rt.decks[1], sr, bufs[1].as_deref());
-            if let Some(cue) = &mut rt.cue_output {
-                let mut sample = [0.0; 2];
-                for (index, enabled) in pfl.iter().enumerate() {
-                    if *enabled || preview[index] || bufs[index].is_none() {
-                        sample[0] += rt.decks[index].cue_sample[0];
-                        sample[1] += rt.decks[index].cue_sample[1];
-                    }
-                }
-                let (left, right) = rt
-                    .cue_limiter
-                    .process(sample[0] * cue_gain, sample[1] * cue_gain);
-                cue.push([left, right]);
-            }
             if preview[0] {
                 (al, ar) = (0., 0.);
             }
@@ -429,6 +417,20 @@ impl Shared {
                 last_ok = false;
                 l = 0.0;
                 r = 0.0;
+            }
+            if let Some(cue) = &mut rt.cue_output {
+                let mut sample = [0.0; 2];
+                for (index, enabled) in pfl.iter().enumerate() {
+                    if *enabled || preview[index] || bufs[index].is_none() {
+                        sample[0] += rt.decks[index].cue_sample[0];
+                        sample[1] += rt.decks[index].cue_sample[1];
+                    }
+                }
+                let (left, right) = rt.cue_limiter.process(
+                    (sample[0] * (1. - cue_mix) + l * cue_mix) * cue_gain,
+                    (sample[1] * (1. - cue_mix) + r * cue_mix) * cue_gain,
+                );
+                cue.push([left, right]);
             }
             if channels == 1 {
                 out[i] = (l + r) * 0.5;

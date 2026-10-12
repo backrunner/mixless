@@ -3766,6 +3766,7 @@ dependencies = [
  "mixless-controllers",
  "mixless-engine",
  "mixless-library",
+ "mixless-midi",
  "mixless-mixplan",
  "mixless-pack",
  "mixless-protocol",

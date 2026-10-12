@@ -200,6 +200,11 @@ fn declarative_replay_failure_releases_holds_before_reconnect() {
     let mut p = ControllerPreset::blank("Independent hold fixture");
     let target = MidiTarget::JogTouch { deck: DeckId::A };
     p.bindings.push(Binding::from_legacy(&MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Note,
         channel: 0,
@@ -262,6 +267,11 @@ fn virtual_midi_capture_round_trip_excludes_local_identity() {
     .unwrap();
     let mut p = ControllerPreset::blank("Independent capture fixture");
     p.bindings.push(Binding::from_legacy(&MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Cc,
         channel: 0,

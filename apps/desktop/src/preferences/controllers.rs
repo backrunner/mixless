@@ -359,8 +359,17 @@ impl Preferences {
             d.selection.move_to(d.text.len(), false);
         }
     }
+    fn recommended_audio(&self) -> Option<mixless_controllers::AudioRecommendation> {
+        self.selected_profile().and_then(|p| p.audio).or_else(|| {
+            let device = self
+                .controller_devices
+                .iter()
+                .find(|d| Some(&d.id) == self.controller_device.as_ref())?;
+            mixless_controllers::ni_audio_recommendation(&device.name)
+        })
+    }
     fn apply_recommended_audio(&mut self) {
-        if let Some(audio) = self.selected_profile().and_then(|p| p.audio) {
+        if let Some(audio) = self.recommended_audio() {
             self.audio.master_uid = None;
             self.audio.cue_uid = None;
             self.audio.master_device = Some(audio.device_name.clone());

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 struct BindingState {
     raw: Option<f64>,
+    relative_remainder: f64,
     down: bool,
     latched: bool,
     picked: bool,
@@ -390,9 +391,15 @@ impl Router {
                                 / b.ticks_per_revolution.unwrap_or(720.),
                         )
                     } else {
-                        MidiValue::Relative(
-                            delta.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16
-                        )
+                        // Sub-unit sensitivity must accumulate across reports;
+                        // rounding each pulse makes slow encoders stop moving.
+                        let total = state.relative_remainder + delta;
+                        let steps = total.trunc();
+                        state.relative_remainder = total - steps;
+                        if steps == 0. {
+                            continue;
+                        }
+                        MidiValue::Relative(steps.clamp(i16::MIN as f64, i16::MAX as f64) as i16)
                     }
                 }
                 ValueMode::Auto => unreachable!(),
@@ -445,6 +452,7 @@ pub(crate) fn target_value(target: &MidiTarget, s: &EngineSnapshot) -> f64 {
         Xfader => (s.xfader + 1.) / 2.,
         Master => s.master,
         MasterGain => (s.master_gain_db + 12.) / 24.,
+        CueMix => s.cue_mix,
         CueGain => s.cue_gain,
         Quantize => u8::from(s.quantize) as f32,
         XfReverse => u8::from(s.xf_reverse) as f32,
@@ -502,9 +510,70 @@ mod tests {
         assert_eq!(read_hid_field(&[0, 0xff], 8, 8, true, true), Some(-1));
     }
     #[test]
+    fn fractional_relative_sensitivity_accumulates_and_resets_per_device() {
+        for (mode, forward, backward) in [
+            (MidiControlMode::RelativeTwosComplement, 1, 127),
+            (MidiControlMode::RelativeBinaryOffset, 65, 63),
+            (MidiControlMode::RelativeSignedBit, 1, 65),
+        ] {
+            let mut p = ControllerPreset::blank("Fractional encoder fixture");
+            p.bindings.push(Binding::from_legacy(&MidiBinding {
+                address: None,
+                inverted: false,
+                sensitivity: 0.25,
+                ticks_per_revolution: None,
+                pickup: false,
+                device_id: None,
+                kind: MidiSourceKind::Cc,
+                channel: 0,
+                number: 1,
+                target: MidiTarget::BrowseTracks,
+                mode,
+            }));
+            p.validate().unwrap();
+            let mut router = Router::default();
+            let snapshot = EngineSnapshot::default();
+            for value in [forward, backward] {
+                let actions: Vec<_> = (0..4)
+                    .flat_map(|_| {
+                        router.route("one", "main", &p, false, &[0xb0, 1, value], &snapshot)
+                    })
+                    .collect();
+                assert_eq!(actions.len(), 1);
+                assert_eq!(
+                    actions[0].value,
+                    MidiValue::Relative(if value == forward { 1 } else { -1 })
+                );
+            }
+            assert!(router
+                .route("one", "main", &p, false, &[0xb0, 1, forward], &snapshot)
+                .is_empty());
+            router.release_device("one");
+            // Reconnection and another physical input never inherit a partial step.
+            for device in ["one", "two"] {
+                for _ in 0..3 {
+                    assert!(router
+                        .route(device, "main", &p, false, &[0xb0, 1, forward], &snapshot)
+                        .is_empty());
+                }
+                assert_eq!(
+                    router.route(device, "main", &p, false, &[0xb0, 1, forward], &snapshot)[0]
+                        .value,
+                    MidiValue::Relative(1)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn momentary_disconnect_and_counter_wrap() {
         let mut p = ControllerPreset::blank("test");
         p.bindings.push(Binding::from_legacy(&MidiBinding {
+            address: None,
+            inverted: false,
+            sensitivity: 1.,
+            ticks_per_revolution: None,
+            pickup: false,
             device_id: None,
             kind: MidiSourceKind::Note,
             channel: 0,

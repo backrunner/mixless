@@ -4,6 +4,11 @@ use crate::runtime::test_support::worker;
 fn midi_preset(target: MidiTarget) -> ControllerPreset {
     let mut p = ControllerPreset::blank("Independent MIDI fixture");
     p.bindings.push(Binding::from_legacy(&MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Note,
         channel: 0,
@@ -28,6 +33,141 @@ fn packet(id: &str, at: Instant) -> ReceivedPacket {
         data: vec![0x90, 4, 127],
         received_at: at,
     }
+}
+
+#[test]
+fn learn_transition_keeps_post_arm_pairs_but_rejects_pre_arm_packets() {
+    let (_temp, mut w, _rx, _events) = worker();
+    let stale = ReceivedPacket {
+        device_id: "unit".into(),
+        hid: false,
+        data: vec![0xb0, 1, 20],
+        received_at: Instant::now(),
+    };
+    {
+        let mut input = w.shared.input.lock().unwrap();
+        input.start_learning(Some(MidiTarget::CueMix));
+        input.learn_device = Some("unit".into());
+        input.learn_address = Some(MidiAddress::Cc14 {
+            channel: 0,
+            msb: 1,
+            lsb: 33,
+        });
+    }
+    w.receive(stale);
+    w.receive(ReceivedPacket {
+        device_id: "unit".into(),
+        hid: false,
+        data: vec![0xb0, 33, 7],
+        received_at: Instant::now(),
+    });
+    assert!(w.shared.input.lock().unwrap().learned.is_none());
+    w.receive(ReceivedPacket {
+        device_id: "unit".into(),
+        hid: false,
+        data: vec![0xb0, 1, 100],
+        received_at: Instant::now(),
+    });
+    assert_eq!(
+        w.shared
+            .input
+            .lock()
+            .unwrap()
+            .learned
+            .as_ref()
+            .unwrap()
+            .value,
+        12807
+    );
+    w.release_for_learning("unit");
+    assert_eq!(
+        w.shared
+            .input
+            .lock()
+            .unwrap()
+            .learned
+            .as_ref()
+            .unwrap()
+            .value,
+        12807
+    );
+
+    {
+        let mut input = w.shared.input.lock().unwrap();
+        input.start_learning(Some(MidiTarget::CueMix));
+        input.learn_device = Some("unit".into());
+        input.learn_address = Some(MidiAddress::Cc14 {
+            channel: 0,
+            msb: 1,
+            lsb: 33,
+        });
+    }
+    w.receive(ReceivedPacket {
+        device_id: "unit".into(),
+        hid: false,
+        data: vec![0xb0, 1, 10],
+        received_at: Instant::now(),
+    });
+    let queued_lsb = ReceivedPacket {
+        device_id: "unit".into(),
+        hid: false,
+        data: vec![0xb0, 33, 5],
+        received_at: Instant::now(),
+    };
+    w.release_for_learning("unit");
+    w.receive(queued_lsb);
+    assert_eq!(
+        w.shared
+            .input
+            .lock()
+            .unwrap()
+            .learned
+            .as_ref()
+            .unwrap()
+            .value,
+        1285
+    );
+}
+
+#[test]
+fn learn_does_not_pair_cc_halves_across_disconnect_or_reuse_a_retired_result() {
+    let (_temp, mut w, _rx, _events) = worker();
+    {
+        let mut input = w.shared.input.lock().unwrap();
+        input.start_learning(Some(MidiTarget::CueMix));
+        input.learn_device = Some("unit".into());
+        input.learn_address = Some(MidiAddress::Cc14 {
+            channel: 0,
+            msb: 1,
+            lsb: 33,
+        });
+    }
+    let report = |number, value| ReceivedPacket {
+        device_id: "unit".into(),
+        hid: false,
+        data: vec![0xb0, number, value],
+        received_at: Instant::now(),
+    };
+    w.receive(report(1, 20));
+    w.release("unit");
+    w.receive(report(33, 7));
+    assert!(w.shared.input.lock().unwrap().learned.is_none());
+    w.receive(report(1, 100));
+    assert_eq!(
+        w.shared
+            .input
+            .lock()
+            .unwrap()
+            .learned
+            .as_ref()
+            .unwrap()
+            .value,
+        12807
+    );
+    w.release("unit");
+    assert!(w.shared.input.lock().unwrap().learned.is_none());
+    w.receive(report(1, 10));
+    assert!(w.shared.input.lock().unwrap().learned.is_none());
 }
 
 #[test]
@@ -225,6 +365,11 @@ fn editing_legacy_wildcard_releases_its_hold_without_releasing_device_bindings()
     let a = assignment("unit", &p);
     w.profiles.push((a.clone(), p.clone()));
     let old = MidiBinding {
+        address: None,
+        inverted: false,
+        sensitivity: 1.,
+        ticks_per_revolution: None,
+        pickup: false,
         device_id: None,
         kind: MidiSourceKind::Note,
         channel: 0,

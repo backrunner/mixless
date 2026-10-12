@@ -206,6 +206,8 @@ pub struct EngineSnapshot {
     /// Stereo peak hold after master gain, limiting and output level.
     #[serde(default)]
     pub master_level: [f32; 2],
+    #[serde(default)]
+    pub cue_mix: f32,
     pub cue_gain: f32,
     pub cue_device: Option<String>,
     pub pfl_available: bool,
@@ -232,6 +234,7 @@ impl Default for EngineSnapshot {
             master: 0.8,
             master_gain_db: 0.0,
             master_level: [0.; 2],
+            cue_mix: 0.,
             cue_gain: 0.8,
             cue_device: None,
             pfl_available: false,

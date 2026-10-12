@@ -93,6 +93,13 @@ impl Worker {
         }
     }
     pub(super) fn release(&mut self, id: &str) {
+        self.release_session(id, true);
+    }
+    pub(super) fn release_for_learning(&mut self, id: &str) {
+        // Release performance state without retiring packets captured after arm.
+        self.release_session(id, false);
+    }
+    fn release_session(&mut self, id: &str, retire_input: bool) {
         if let Some(primary) = self
             .profiles
             .iter()
@@ -120,7 +127,10 @@ impl Worker {
             .unwrap_or_else(|| vec![id.into()]);
         let since = Instant::now();
         for port in ids {
-            self.input_since.insert(port.clone(), since);
+            if retire_input {
+                self.input_since.insert(port.clone(), since);
+                self.shared.input.lock().unwrap().forget_device(&port);
+            }
             self.feedback_cache.retain(|(d, _), _| d != &port);
             for a in self.router.release_device(&port) {
                 self.deliver(port.clone(), Instant::now(), a);

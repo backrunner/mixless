@@ -84,20 +84,7 @@ impl Worker {
         self.poll_hid_inventory();
         {
             for info in self.hid_inventory.clone() {
-                let identity = info
-                    .serial_number()
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| info.path().to_string_lossy().into_owned());
-                let id = format!(
-                    "hid:{:04x}:{:04x}:{}:{}:{}:{}",
-                    info.vendor_id(),
-                    info.product_id(),
-                    identity,
-                    info.interface_number(),
-                    info.usage_page(),
-                    info.usage()
-                );
+                let id = crate::hid_backend::identity(&info);
                 seen.push(id.clone());
                 let mut d = ControllerDevice {
                     id: id.clone(),

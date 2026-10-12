@@ -440,28 +440,25 @@ impl ControllerPreset {
 impl Binding {
     pub fn from_legacy(b: &MidiBinding) -> Self {
         let mut result = Self {
-            id: format!("{:?}-{}-{}", b.kind, b.channel, b.number),
+            id: format!(
+                "midi-{}",
+                blake3::hash(
+                    &serde_json::to_vec(&b.midi_address()).expect("MIDI address serialization")
+                )
+                .to_hex()
+            ),
             endpoint: "main".into(),
             source: InputSource::Midi {
-                address: match b.kind {
-                    MidiSourceKind::Cc => MidiAddress::Cc {
-                        channel: b.channel,
-                        number: b.number,
-                    },
-                    MidiSourceKind::Note => MidiAddress::Note {
-                        channel: b.channel,
-                        number: b.number,
-                    },
-                },
+                address: b.midi_address(),
             },
             target: b.target.clone(),
             mode: ValueMode::Auto,
-            inverted: b.mode == MidiControlMode::AbsoluteInverted,
-            pickup: false,
-            sensitivity: 1.,
+            inverted: b.inverted || b.mode == MidiControlMode::AbsoluteInverted,
+            pickup: b.pickup,
+            sensitivity: b.sensitivity,
             minimum: None,
             maximum: None,
-            ticks_per_revolution: None,
+            ticks_per_revolution: b.ticks_per_revolution,
             layer: None,
             sets_layer: None,
         };
@@ -475,7 +472,11 @@ impl Binding {
         result
     }
     pub fn legacy(&self, device_id: Option<String>) -> Option<MidiBinding> {
-        if self.layer.is_some() || self.sets_layer.is_some() {
+        if self.layer.is_some()
+            || self.sets_layer.is_some()
+            || self.minimum.is_some()
+            || self.maximum.is_some()
+        {
             return None;
         }
         let (kind, channel, number) = match self.source {
@@ -485,25 +486,39 @@ impl Binding {
             InputSource::Midi {
                 address: MidiAddress::Note { channel, number },
             } => (MidiSourceKind::Note, channel, number),
+            InputSource::Midi {
+                address: MidiAddress::PitchBend { channel },
+            } => (MidiSourceKind::Cc, channel, 0),
+            InputSource::Midi {
+                address: MidiAddress::Cc14 { channel, msb, .. },
+            } => (MidiSourceKind::Cc, channel, msb),
             _ => return None,
         };
         let mode = match self.mode {
             ValueMode::Auto => MidiControlMode::Auto,
-            ValueMode::Absolute if self.inverted => MidiControlMode::AbsoluteInverted,
             ValueMode::Absolute => MidiControlMode::Absolute,
             ValueMode::TwosComplement => MidiControlMode::RelativeTwosComplement,
             ValueMode::BinaryOffset => MidiControlMode::RelativeBinaryOffset,
             ValueMode::SignedBit => MidiControlMode::RelativeSignedBit,
             _ => return None,
         };
-        Some(MidiBinding {
+        let mut result = MidiBinding {
+            address: None,
+            inverted: self.inverted,
+            sensitivity: self.sensitivity,
+            ticks_per_revolution: self.ticks_per_revolution,
+            pickup: self.pickup,
             device_id,
             kind,
             channel,
             number,
             target: self.target.clone(),
             mode,
-        })
+        };
+        if let InputSource::Midi { address } = &self.source {
+            result.set_address(address.clone());
+        }
+        Some(result)
     }
 }
 
@@ -661,4 +676,31 @@ pub fn builtin_presets() -> Vec<ControllerPreset> {
 fn builtin_catalogue() -> &'static [ControllerPreset] {
     static PRESETS: std::sync::OnceLock<Vec<ControllerPreset>> = std::sync::OnceLock::new();
     PRESETS.get_or_init(crate::catalogue::catalogue)
+}
+
+/// Internal-mixer output routing from Traktor Pro 4.4.1's embedded configuration.
+/// Exact source device names only; see research/ni/traktor-4.4.1-audit.json.
+/// This proposes audio channels and does not establish controller compatibility.
+pub fn ni_audio_recommendation(model: &str) -> Option<AudioRecommendation> {
+    matches!(
+        model,
+        "Traktor MX2"
+            | "Traktor Z1 MK2"
+            | "Traktor Kontrol Z1"
+            | "Traktor Kontrol Z2"
+            | "Traktor Kontrol S2"
+            | "Traktor Kontrol S2 MK2"
+            | "Traktor Kontrol S2 MK3"
+            | "Traktor Kontrol S3"
+            | "Traktor Kontrol S4"
+            | "Traktor Kontrol S4 MK2"
+            | "Traktor Kontrol S4 MK3"
+            | "Traktor Kontrol S5"
+            | "Traktor Kontrol S8"
+    )
+    .then(|| AudioRecommendation {
+        device_name: model.into(),
+        master: [0, 1],
+        cue: [2, 3],
+    })
 }

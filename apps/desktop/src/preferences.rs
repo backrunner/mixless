@@ -7,7 +7,7 @@ use gpui::{
     WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use mixless_controllers::{
-    MidiBinding, MidiConfig, MidiControlMode, MidiGroup, MidiMessage, MidiPort, MidiSourceKind,
+    LearnedInput, MidiBinding, MidiConfig, MidiControlMode, MidiGroup, MidiPort, MidiSourceKind,
     MidiTarget,
 };
 use mixless_engine::{AudioConfig, AudioDevice};
@@ -60,6 +60,10 @@ enum Selector {
     MidiPreset,
     ControllerDevice,
     PresetActions,
+    MidiType,
+    MidiLsb,
+    MidiSensitivity,
+    MidiTicks,
 }
 
 enum JobResult {
@@ -96,7 +100,7 @@ pub struct Preferences {
     learning: bool,
     quick_learning: bool,
     midi_feedback: Option<(String, bool)>,
-    last: Option<MidiMessage>,
+    last: Option<LearnedInput>,
     job: Option<mpsc::Receiver<JobResult>>,
     status: String,
     error: bool,
@@ -104,6 +108,7 @@ pub struct Preferences {
     confirm_clear: Option<ClearKind>,
     confirm_reset: bool,
     controller_advanced: bool,
+    mapping_calibration_open: bool,
     controller_notes: bool,
     controller_monitor: bool,
     audio_details_open: bool,
@@ -131,6 +136,11 @@ impl Preferences {
             ports: Vec::new(),
             bindings: Vec::new(),
             binding: MidiBinding {
+                address: None,
+                inverted: false,
+                sensitivity: 1.,
+                ticks_per_revolution: None,
+                pickup: false,
                 device_id: None,
                 kind: MidiSourceKind::Cc,
                 channel: 0,
@@ -153,6 +163,7 @@ impl Preferences {
             confirm_clear: None,
             confirm_reset: false,
             controller_advanced: false,
+            mapping_calibration_open: false,
             controller_notes: false,
             controller_monitor: false,
             audio_details_open: false,
@@ -296,7 +307,7 @@ impl Preferences {
             .lock()
             .expect("MIDI")
             .as_ref()
-            .map(|hub| (hub.bindings(), hub.last_message(), hub.learned()));
+            .map(|hub| (hub.bindings(), hub.last_input(), hub.learned()));
         if let Some((bindings, last, learned)) = midi {
             if self.bindings != bindings {
                 self.bindings = bindings;
@@ -310,9 +321,7 @@ impl Preferences {
                         return;
                     }
                     self.binding.device_id = Some(message.device_id);
-                    self.binding.kind = message.kind;
-                    self.binding.channel = message.channel;
-                    self.binding.number = message.number;
+                    self.binding.set_address(message.address);
                 }
             }
         }
@@ -354,6 +363,11 @@ impl Preferences {
             if before.xf_reverse != after.xf_reverse {
                 let _ = engine.dispatch(Command::SetXfReverse {
                     on: after.xf_reverse,
+                });
+            }
+            if before.cue_mix != after.cue_mix {
+                let _ = engine.dispatch(Command::SetCueMix {
+                    value: after.cue_mix,
                 });
             }
             if before.cue_gain != after.cue_gain {
@@ -443,81 +457,6 @@ impl Preferences {
                 Ok(())
             })())
         });
-    }
-
-    fn cancel_learn(&mut self) {
-        self.learning = false;
-        self.quick_learning = false;
-        if let Some(hub) = self.core.midi.lock().expect("MIDI").as_ref() {
-            hub.set_learn(false);
-        }
-    }
-
-    fn toggle_learn(&mut self) {
-        if self.learning {
-            self.cancel_learn();
-            return;
-        }
-        self.midi_feedback = None;
-        if self.controller_device.is_none() {
-            self.result(Err("Select a connected device before learning".into()), "");
-            return;
-        }
-        if let Some(hub) = self.core.midi.lock().expect("MIDI").as_ref() {
-            match hub.learn_target_for(self.binding.target.clone(), self.controller_device.clone())
-            {
-                Ok(()) => self.learning = true,
-                Err(e) => {
-                    self.learning = false;
-                    self.midi_feedback = Some((e.to_string(), true));
-                }
-            }
-        }
-    }
-
-    fn save_binding(&mut self) {
-        if self.controller_device.is_none() && self.editing.is_none() {
-            self.result(
-                Err(
-                    "Select a device before assigning; use Advanced mapping for offline presets"
-                        .into(),
-                ),
-                "",
-            );
-            return;
-        }
-        let result = {
-            let midi = self.core.midi.lock().expect("MIDI");
-            midi.as_ref()
-                .ok_or_else(|| "MIDI is unavailable".to_string())
-                .and_then(|hub| {
-                    if self.learning {
-                        let message = hub
-                            .learned()
-                            .ok_or_else(|| "Waiting for a MIDI signal".to_string())?;
-                        self.binding.device_id = Some(message.device_id);
-                        self.binding.kind = message.kind;
-                        self.binding.channel = message.channel;
-                        self.binding.number = message.number;
-                    }
-                    if let Some(index) = self.editing {
-                        hub.replace(index, self.binding.clone())
-                            .map_err(|e| e.to_string())
-                    } else {
-                        hub.upsert(self.binding.clone()).map_err(|e| e.to_string())
-                    }
-                })
-        };
-        let saved = result.is_ok().then(|| self.binding.clone());
-        if saved.is_some() {
-            self.cancel_learn();
-        }
-        self.result(result, "MIDI mapping saved");
-        self.poll();
-        if let Some(saved) = saved {
-            self.editing = self.bindings.iter().position(|binding| *binding == saved);
-            self.binding = saved;
-        }
     }
 
     fn file_dialog(&mut self, export: bool, cx: &mut Context<Self>) {
@@ -1070,6 +1009,20 @@ impl Preferences {
                     .map(|n| (n.to_string(), format!("{} / {}", n + 1, n + 2)))
                     .collect()
             }
+            Selector::MidiType => ["cc", "note", "cc14", "pitch_bend"]
+                .into_iter()
+                .zip(["CC", "Note", "14-bit CC", "Pitch bend"])
+                .map(|(a, b)| (a.into(), b.into()))
+                .collect(),
+            Selector::MidiLsb => (0..=127).map(|n| (n.to_string(), n.to_string())).collect(),
+            Selector::MidiSensitivity => [0.25, 0.5, 1., 2., 4., 8.]
+                .into_iter()
+                .map(|n| (n.to_string(), format!("{n}×")))
+                .collect(),
+            Selector::MidiTicks => [90, 180, 360, 720, 1024, 2048, 4096]
+                .into_iter()
+                .map(|n| (n.to_string(), n.to_string()))
+                .collect(),
             Selector::MidiChannel => (1..=16)
                 .map(|n| (n.to_string(), format!("Channel {n}")))
                 .collect(),
@@ -1077,6 +1030,7 @@ impl Preferences {
             Selector::MidiMode => MidiControlMode::ALL
                 .into_iter()
                 .enumerate()
+                .filter(|(_, mode)| *mode != MidiControlMode::AbsoluteInverted)
                 .map(|(i, mode)| (i.to_string(), mode.label().into()))
                 .collect(),
             Selector::MidiPreset => self
@@ -1133,6 +1087,16 @@ impl Preferences {
     }
 
     fn choose(&mut self, selector: Selector, value: &str, cx: &mut Context<Self>) {
+        if matches!(
+            selector,
+            Selector::MidiType
+                | Selector::MidiLsb
+                | Selector::MidiChannel
+                | Selector::MidiNumber
+                | Selector::MidiPreset
+        ) {
+            self.cancel_learn();
+        }
         let optional = (!value.is_empty()).then(|| value.to_string());
         match selector {
             Selector::Master => {
@@ -1178,14 +1142,56 @@ impl Preferences {
             Selector::Rate => self.audio.sample_rate = value.parse().ok(),
             Selector::Depth => self.audio.bit_depth = value.parse().ok(),
             Selector::Buffer => self.audio.buffer_frames = value.parse().ok(),
+            Selector::MidiType => {
+                use mixless_controllers::MidiAddress;
+                let channel = self.binding.channel;
+                let number = self.binding.number;
+                let address = match value {
+                    "note" => MidiAddress::Note { channel, number },
+                    "cc14" => MidiAddress::Cc14 {
+                        channel,
+                        msb: number.min(31),
+                        lsb: number.min(31) + 32,
+                    },
+                    "pitch_bend" => MidiAddress::PitchBend { channel },
+                    _ => MidiAddress::Cc { channel, number },
+                };
+                self.binding.set_address(address);
+                self.binding.mode = MidiControlMode::Auto;
+            }
+            Selector::MidiLsb => {
+                if let Ok(lsb) = value.parse() {
+                    if let mixless_controllers::MidiAddress::Cc14 { channel, msb, .. } =
+                        self.binding.midi_address()
+                    {
+                        self.binding
+                            .set_address(mixless_controllers::MidiAddress::Cc14 {
+                                channel,
+                                msb,
+                                lsb,
+                            });
+                    }
+                }
+            }
+            Selector::MidiSensitivity => {
+                if let Ok(n) = value.parse::<f64>() {
+                    self.binding.sensitivity = n;
+                }
+            }
+            Selector::MidiTicks => {
+                if let Ok(n) = value.parse::<f64>() {
+                    self.binding.ticks_per_revolution = Some(n);
+                }
+            }
             Selector::MidiChannel => {
                 if let Ok(n @ 1..=16) = value.parse::<u8>() {
-                    self.binding.channel = n - 1;
+                    self.binding
+                        .update_channel_number(n - 1, self.binding.number);
                 }
             }
             Selector::MidiNumber => {
                 if let Ok(n @ 0..=127) = value.parse::<u8>() {
-                    self.binding.number = n;
+                    self.binding.update_channel_number(self.binding.channel, n);
                 }
             }
             Selector::MidiMode => {

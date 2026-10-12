@@ -38,6 +38,289 @@ fn click(cx: &mut VisualTestContext, id: &'static str) {
 }
 
 #[gpui::test]
+#[cfg(target_os = "macos")]
+#[ignore = "creates one explicitly selected CoreMIDI virtual source; no physical inputs"]
+fn quick_learn_preserves_an_existing_cc14_pair_through_virtual_input(cx: &mut TestAppContext) {
+    use mixless_midi::midir::{MidiOutput, os::unix::VirtualOutput};
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+    let (temp, view, cx) = fixture(cx);
+    let name = format!(
+        "mixless-review-{}",
+        temp.path().file_name().unwrap().to_string_lossy()
+    );
+    let mut source = MidiOutput::new("mixless-review")
+        .unwrap()
+        .create_virtual(&name)
+        .unwrap();
+    let hub = view.read_with(cx, |s, _| s.hub().unwrap());
+    let wait = |condition: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !condition() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(condition());
+    };
+    wait(&|| hub.devices().iter().any(|d| d.name == name && !d.hid));
+    let id = hub
+        .devices()
+        .into_iter()
+        .find(|d| d.name == name && !d.hid)
+        .unwrap()
+        .id;
+    hub.configure(MidiConfig {
+        enabled: true,
+        input_ids: Some(vec![id.clone()]),
+    })
+    .unwrap();
+    wait(&|| {
+        hub.devices()
+            .iter()
+            .any(|d| d.id == id && d.state == mixless_controllers::ConnectionState::Connected)
+    });
+    view.update(cx, |s, cx| {
+        s.controller_device = Some(id.clone());
+        s.binding.target = MidiTarget::CueMix;
+        s.binding.device_id = Some(id.clone());
+        s.binding
+            .set_address(mixless_controllers::MidiAddress::Cc14 {
+                channel: 0,
+                msb: 1,
+                lsb: 33,
+            });
+        s.binding.sensitivity = 0.5;
+        hub.upsert(s.binding.clone()).unwrap();
+        s.poll();
+        s.select_midi_target(MidiTarget::CueMix);
+        s.controller_devices = hub.devices();
+        s.midi = hub.config();
+        cx.notify();
+    });
+    cx.run_until_parked();
+    click(cx, "diagram-CueMix");
+    view.read_with(cx, |s, _| assert!(s.learning && s.quick_learning));
+    source.send(&[0xb0, 1, 100]).unwrap();
+    wait(&|| hub.last_input().is_some_and(|input| input.value == 100));
+    assert!(
+        hub.learned().is_none(),
+        "Shortcut Learn accepted only the MSB"
+    );
+    source.send(&[0xb0, 33, 7]).unwrap();
+    wait(&|| hub.learned().is_some());
+    assert_eq!(hub.learned().unwrap().value, 12807);
+    view.update(cx, |s, _| {
+        s.poll();
+        assert!(!s.learning && !s.quick_learning);
+    });
+    let binding = hub
+        .bindings()
+        .into_iter()
+        .find(|b| b.target == MidiTarget::CueMix)
+        .unwrap();
+    assert_eq!(
+        binding.midi_address(),
+        mixless_controllers::MidiAddress::Cc14 {
+            channel: 0,
+            msb: 1,
+            lsb: 33
+        }
+    );
+    assert_eq!(binding.sensitivity, 0.5);
+    hub.configure(MidiConfig {
+        enabled: false,
+        input_ids: Some(vec![]),
+    })
+    .unwrap();
+    drop(source);
+}
+
+#[gpui::test]
+fn editing_a_midi_address_disarms_pending_learning(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, cx| {
+        for (selector, value) in [
+            (Selector::MidiType, "cc14"),
+            (Selector::MidiChannel, "2"),
+            (Selector::MidiNumber, "4"),
+            (Selector::MidiLsb, "36"),
+        ] {
+            s.learning = true;
+            s.quick_learning = true;
+            s.choose(selector, value, cx);
+            assert!(!s.learning && !s.quick_learning);
+        }
+        assert_eq!(
+            s.binding.midi_address(),
+            mixless_controllers::MidiAddress::Cc14 {
+                channel: 1,
+                msb: 4,
+                lsb: 36
+            }
+        );
+        assert!(!s.hub().unwrap().config().enabled);
+    });
+}
+
+#[gpui::test]
+fn ni_audio_routing_is_a_reviewable_draft_without_a_control_preset(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, cx| {
+        s.controller_devices = vec![mixless_controllers::ControllerDevice {
+            id: "offline-ni-audio-fixture".into(),
+            name: "Traktor Kontrol S4 MK3".into(),
+            hid: false,
+            state: mixless_controllers::ConnectionState::Connected,
+            vendor_id: None,
+            product_id: None,
+            interface: None,
+            usage_page: None,
+            usage: None,
+        }];
+        s.controller_device = Some("offline-ni-audio-fixture".into());
+        s.selected_preset = None;
+        s.controller_advanced = true;
+        s.core
+            .settings
+            .update(|settings| {
+                settings.audio.master_device = Some("Stored output".into());
+                settings.audio.cue_device = None;
+            })
+            .unwrap();
+        assert!(s.selected_profile().is_none());
+        assert!(!s.hub().unwrap().config().enabled);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let button = cx.debug_bounds("controller-audio").unwrap();
+        assert!(button.left() >= px(0.) && button.right() <= px(width));
+    }
+    let button = cx.debug_bounds("controller-audio").unwrap();
+    if button.center().y > px(420.) {
+        let content = cx.debug_bounds("settings-content").unwrap();
+        scroll(cx, content.center(), 380. - f32::from(button.center().y));
+    }
+    click(cx, "controller-audio");
+    view.read_with(cx, |s, _| {
+        assert!(s.tab == Tab::Audio);
+        assert_eq!(
+            s.audio.master_device.as_deref(),
+            Some("Traktor Kontrol S4 MK3")
+        );
+        assert_eq!(s.audio.cue_device, s.audio.master_device);
+        assert_eq!(
+            (s.audio.master_channels, s.audio.cue_channels),
+            ([0, 1], [2, 3])
+        );
+        assert_eq!(
+            s.core.settings.get().audio.master_device.as_deref(),
+            Some("Stored output")
+        );
+        assert!(s.core.settings.get().audio.cue_device.is_none());
+        assert!(s.hub().unwrap().assignments().is_empty());
+        assert!(!s.hub().unwrap().config().enabled);
+    });
+}
+
+#[gpui::test]
+fn unknown_ni_generation_has_no_audio_routing_proposal(cx: &mut TestAppContext) {
+    // GPUI 0.2.2 retains old debug bounds across frames. Check absence in a
+    // fresh window that has never rendered the recommendation button.
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, cx| {
+        s.controller_devices = vec![mixless_controllers::ControllerDevice {
+            id: "offline-unknown-ni-fixture".into(),
+            name: "Traktor Kontrol S4 MK4".into(),
+            hid: false,
+            state: mixless_controllers::ConnectionState::Connected,
+            vendor_id: None,
+            product_id: None,
+            interface: None,
+            usage_page: None,
+            usage: None,
+        }];
+        s.controller_device = Some("offline-unknown-ni-fixture".into());
+        s.selected_preset = None;
+        s.controller_advanced = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("controller-audio").is_none());
+}
+
+#[gpui::test]
+fn compound_source_editor_and_live_headphone_mix_preserve_parameters(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, cx| {
+        // UI-only identity; the hub remains disabled and no input is opened.
+        s.controller_device = Some("offline-ui-fixture".into());
+        s.mapping_calibration_open = true;
+        s.select_midi_target(MidiTarget::CueMix);
+        s.choose(Selector::MidiType, "cc14", cx);
+        s.choose(Selector::MidiChannel, "4", cx);
+        s.choose(Selector::MidiNumber, "5", cx);
+        s.choose(Selector::MidiLsb, "37", cx);
+        s.choose(Selector::MidiSensitivity, "2", cx);
+        s.choose(Selector::MidiTicks, "1024", cx);
+        assert_eq!(
+            s.binding.midi_address(),
+            mixless_controllers::MidiAddress::Cc14 {
+                channel: 3,
+                msb: 5,
+                lsb: 37
+            }
+        );
+        assert_eq!(s.binding.sensitivity, 2.);
+        assert_eq!(s.binding.ticks_per_revolution, Some(1024.));
+        assert!(
+            s.selector_options(Selector::MidiType)
+                .iter()
+                .any(|(id, _)| id == "pitch_bend")
+        );
+        s.choose(Selector::MidiType, "pitch_bend", cx);
+        assert_eq!(
+            s.binding.midi_address(),
+            mixless_controllers::MidiAddress::PitchBend { channel: 3 }
+        );
+        s.core
+            .engine
+            .dispatch(Command::SetCueMix { value: 0.05 })
+            .unwrap();
+        // The stored default is already zero. Applying zero still changes a MIDI-updated engine.
+        s.save_headphone_mix(0.);
+        assert_eq!(s.core.engine.snapshot().cue_mix, 0.);
+        assert_eq!(s.core.settings.get().cue_mix, 0.);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("mapping-calibration").is_some());
+    assert!(cx.debug_bounds("select-14").is_some());
+    view.update(cx, |s, cx| {
+        s.choose(Selector::MidiType, "cc14", cx);
+        s.choose(Selector::MidiNumber, "5", cx);
+        s.choose(Selector::MidiLsb, "5", cx);
+        s.save_binding();
+        assert!(s.error && s.status.contains("MIDI address"));
+        cx.notify();
+    });
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        // Selector debug IDs are stable numeric tags, as in the other menu tests.
+        for id in ["select-14", "select-9", "select-15"] {
+            let bounds = cx.debug_bounds(id).unwrap();
+            assert!(bounds.left() >= px(0.) && bounds.right() <= px(width));
+        }
+        let done = cx.debug_bounds("close-preferences").unwrap();
+        assert!(done.bottom() <= px(height));
+    }
+}
+
+#[gpui::test]
 fn community_adapter_import_is_explicit_and_mapping_inspector_is_read_only(
     cx: &mut TestAppContext,
 ) {
@@ -141,7 +424,7 @@ fn preset_selection_is_offline_and_modal_blocks_background_clicks(cx: &mut TestA
     view.read_with(cx, |s, _| assert!(s.job.is_none() && !s.error));
     click(cx, "select-11");
     view.read_with(cx, |s, _| {
-        assert_eq!(s.selector_options(Selector::MidiPreset).len(), 12)
+        assert_eq!(s.selector_options(Selector::MidiPreset).len(), 14)
     });
     click(cx, "option-0");
     view.read_with(cx, |s, _| {
@@ -204,14 +487,14 @@ fn import_retry_clears_previous_error_and_cancel_keeps_library(cx: &mut TestAppC
     click(cx, "cancel-preset-import");
     view.read_with(cx, |s, _| {
         assert!(s.import_preview.is_none());
-        assert_eq!(s.hub().unwrap().presets().len(), 12);
+        assert_eq!(s.hub().unwrap().presets().len(), 14);
     });
     deliver(&view, cx, Ok(report));
     click(cx, "accept-preset-import");
     view.read_with(cx, |s, _| {
         assert!(!s.selected_profile().unwrap().is_builtin());
         assert!(s.hub().unwrap().assignments().is_empty());
-        assert_eq!(s.hub().unwrap().presets().len(), 13);
+        assert_eq!(s.hub().unwrap().presets().len(), 15);
     });
     preset_action(&view, cx, "edit");
     cx.simulate_keystrokes("cmd-a");
@@ -220,7 +503,7 @@ fn import_retry_clears_previous_error_and_cancel_keeps_library(cx: &mut TestAppC
     view.read_with(cx, |s, _| {
         assert!(s.error && s.preset_dialog.is_some());
         assert_eq!(s.selected_profile().unwrap().name, "DDJ-400");
-        assert_eq!(s.hub().unwrap().presets().len(), 13);
+        assert_eq!(s.hub().unwrap().presets().len(), 15);
     });
     cx.simulate_keystrokes("escape");
 }

@@ -5,12 +5,17 @@ implementations. No code, scripts, mappings, assets or tests from Mixxx may be
 added or converted into this catalogue. Historical derived presets and the XML
 import path have been removed. Native JSON import does not execute scripts.
 
+Independent authorship is not a verified strict clean-room process. The same
+implementation agent inspected vendor definitions before writing the NI changes;
+research and implementation were not separated.
+
 ## Manufacturer protocol sources
 
-Retrieved 2026-10-09 from the manufacturers' official download services. Documents
-are not bundled. Numeric protocol addresses are independently assigned to mixless
+The original twelve profiles were reviewed on 2026-10-09 through the manufacturers'
+official download services. Two NI template-specific profiles were reviewed from
+the local vendor installation on 2026-10-12. Documents are not bundled. Numeric protocol addresses are independently assigned to mixless
 commands in `src/catalogue/`; the implementation is not a translated mapping.
-The catalogue contains 12 profiles across three manufacturers, all labelled
+The catalogue contains 14 profiles across four manufacturers, all labelled
 `protocol`; hardware validation is deferred, not implied by inclusion.
 
 | Profile | Source | Revision / sections | Evidence |
@@ -69,7 +74,7 @@ The additional independently authored profiles are:
 
 ### Deferred evidence
 
-All 12 profiles have software schema/routing checks, not physical-device evidence.
+All 14 profiles have software schema/routing checks, not physical-device evidence.
 Physical control direction, jog calibration, pad-mode behavior, endpoint naming,
 LED appearance and audio routing remain to be checked on real units.
 
@@ -79,6 +84,30 @@ touch, and repeats the left fader MSB as its LSB. No Inpulse 500 profile is ship
 until independent capture or corrected manufacturer documentation resolves these
 conflicts. This is a protocol-evidence gap, not a requirement to physically verify
 otherwise unambiguous profiles before adding them.
+
+## Native Instruments templates and native-protocol review
+
+Traktor manuals and installed device definitions are the primary NI research
+sources. Traktor's CSI behavior definitions are not MIDI address tables; its
+factory `.tsi` files need format and protocol review before they can establish
+usable numeric addresses. The [Traktor source audit](NI_COMPATIBILITY.md#traktor-evidence-and-coverage-boundaries)
+records the installed-version inventory and separates these findings from the
+supplementary Controller Editor presets below.
+
+The [retained source audit](research/ni/traktor-4.4.1-audit.json) records all 23 NI
+factory TSI files and nine NI CSI directories, with source hashes. It decodes
+device/control descriptors only; command assignments and vendor mapping logic
+are not imported. Traktor's embedded per-device internal-mixer channel facts
+back the audio recommendations for 13 exact NI DJ-controller names. Neither
+descriptor inspection nor audio recommendations establish native compatibility.
+
+The two NI presets use numeric MIDI facts from named Controller Editor 2.8.2
+installation templates, not default addresses or another application's mapping
+logic. They require the unmodified FL Studio template (F1) or SSL 2.2 template
+(X1 MK1), Basic page. Original template files are not redistributed. The
+[NI compatibility matrix](NI_COMPATIBILITY.md) records per-model modes, coverage,
+source fingerprints, synthetic fixtures and the unresolved MX2/NHL packet layer.
+No NI native adapter is advertised as implemented. All hardware evidence is pending.
 
 ## Generic protocols and tests
 

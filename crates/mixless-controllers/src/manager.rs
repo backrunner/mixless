@@ -416,7 +416,10 @@ impl ControllerManager {
             i.learning = false;
             i.learn_target = None;
             i.learn_device = None;
+            i.learn_since = None;
             i.learned = None;
+            i.learn_address = None;
+            i.learn_decoders.clear();
             i.release_held();
         }
         drop(i);
@@ -430,6 +433,18 @@ impl ControllerManager {
         target: MidiTarget,
         device: Option<String>,
     ) -> Result<(), MidiError> {
+        self.learn_address_for(target, device, None)
+    }
+    /// Explicitly select a compound address. None learns one Note, CC or Pitch Bend.
+    pub fn learn_address_for(
+        &self,
+        target: MidiTarget,
+        device: Option<String>,
+        address: Option<MidiAddress>,
+    ) -> Result<(), MidiError> {
+        if address.as_ref().is_some_and(|a| !a.valid()) {
+            return Err(error("Invalid learn address"));
+        }
         if !self.devices().iter().any(|d| {
             d.state == ConnectionState::Connected
                 && !d.hid
@@ -441,12 +456,16 @@ impl ControllerManager {
             let mut input = self.input.lock().unwrap();
             input.start_learning(Some(target));
             input.learn_device = device;
+            input.learn_address = address;
         }
         self.runtime.wake();
         Ok(())
     }
-    pub fn learned(&self) -> Option<MidiMessage> {
+    pub fn learned(&self) -> Option<LearnedInput> {
         self.input.lock().unwrap().learned.clone()
+    }
+    pub fn last_input(&self) -> Option<LearnedInput> {
+        self.input.lock().unwrap().last_input.clone()
     }
     pub fn last_message(&self) -> Option<MidiMessage> {
         self.input.lock().unwrap().last.clone()
@@ -459,14 +478,21 @@ impl ControllerManager {
         let m = self
             .learned()
             .ok_or_else(|| error("Waiting for MIDI input"))?;
-        self.upsert(MidiBinding {
+        let mut b = MidiBinding {
             device_id: Some(m.device_id),
-            kind: m.kind,
-            channel: m.channel,
-            number: m.number,
+            address: None,
+            inverted: false,
+            kind: MidiSourceKind::Cc,
+            channel: 0,
+            number: 0,
             target,
             mode: MidiControlMode::Auto,
-        })?;
+            sensitivity: 1.,
+            ticks_per_revolution: None,
+            pickup: false,
+        };
+        b.set_address(m.address);
+        self.upsert(b)?;
         self.set_learn(false);
         Ok(())
     }
@@ -560,7 +586,11 @@ impl ControllerManager {
                                 .find(|v| v.legacy(Some(device.clone())).as_ref() == Some(b))
                         })
                         .cloned();
-                    let mut n = previous.unwrap_or_else(|| Binding::from_legacy(b));
+                    let mut n = previous.unwrap_or_else(|| {
+                        let mut n = Binding::from_legacy(b);
+                        n.id = new_id();
+                        n
+                    });
                     n.endpoint = endpoint.clone();
                     p.bindings.push(n);
                 }

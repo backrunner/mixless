@@ -123,6 +123,7 @@ impl Shared {
             master_level: std::array::from_fn(|i| {
                 f32::from_bits(self.master_level[i].load(Ordering::Relaxed))
             }),
+            cue_mix: self.cue_mix.load(Ordering::Relaxed) as f32 / 1000.0,
             cue_gain: self.cue_gain.load(Ordering::Relaxed) as f32 / 1000.0,
             cue_device,
             pfl_available,

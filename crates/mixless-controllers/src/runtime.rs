@@ -191,7 +191,7 @@ impl Runtime {
                     if learning != w.learning {
                         if let Some(scope) = &learning {
                             if let Some(id) = scope {
-                                w.release(id);
+                                w.release_for_learning(id);
                             } else {
                                 for (id, a) in w.router.release_all() {
                                     w.deliver(id, Instant::now(), a);
@@ -397,6 +397,17 @@ impl Worker {
         *self.shared.last.lock().unwrap() = Some(packet.clone());
         {
             let mut input = self.shared.input.lock().unwrap();
+            if input.learning
+                && input
+                    .learn_device
+                    .as_ref()
+                    .is_none_or(|id| id == &packet.device_id)
+                && input
+                    .learn_since
+                    .is_some_and(|since| packet.received_at < since)
+            {
+                return;
+            }
             if !packet.hid
                 && (!input.learning
                     || input
