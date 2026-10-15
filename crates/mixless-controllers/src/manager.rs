@@ -1,8 +1,10 @@
 use super::*;
-use crate::profile::{atomic_json, read_preset, PresetStore};
+use crate::profile::{PresetStore, atomic_json, read_preset};
 use crate::runtime::{Runtime, RuntimeShared};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+mod imports;
+pub use imports::{ImportBatch, ImportEntry, MAX_IMPORT_FILES};
 
 /// A timestamp is captured in the transport callback, before routing or application work.
 #[derive(Debug, Clone)]
@@ -264,46 +266,6 @@ impl ControllerManager {
         })?;
         self.changed();
         Ok(())
-    }
-    pub fn preview_import(&self, path: &Path) -> Result<ImportReport, MidiError> {
-        let preset = read_preset(path)?;
-        if preset.adapter.is_some() {
-            crate::adapter::AdapterInstance::new(&preset)?;
-        }
-        let all = self.presets();
-        let conflicts = all
-            .iter()
-            .filter(|p| p.id == preset.id || p.name == preset.name)
-            .map(|p| {
-                format!(
-                    "{} already exists; import will create a separate copy",
-                    p.name
-                )
-            })
-            .collect();
-        let requirements = preset
-            .endpoints
-            .iter()
-            .map(|e| match &e.matcher {
-                DeviceMatcher::Midi { names } => format!("{}: MIDI {}", e.id, names.join(", ")),
-                DeviceMatcher::Hid {
-                    vendor_id,
-                    product_id,
-                    ..
-                } => format!("{}: HID {:04X}:{:04X}", e.id, vendor_id, product_id),
-            })
-            .collect();
-        Ok(ImportReport {
-            preset,
-            conflicts,
-            requirements,
-        })
-    }
-    pub fn accept_import(&self, report: ImportReport) -> Result<String, MidiError> {
-        let mut p = report.preset;
-        p.id = new_id();
-        p.verification = Verification::Protocol;
-        self.save_preset(p)
     }
     pub fn export_preset(&self, id: &str, path: &Path) -> Result<(), MidiError> {
         let p = self

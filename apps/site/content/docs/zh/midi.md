@@ -15,7 +15,7 @@ imageType: image/png
 
 在 **Manage** 菜单中使用 **New preset…**、**Duplicate…**、**Rename…** 和 **Delete…** 管理用户预设。内置预设只读，修改时建立用户副本。针对一台设备编辑共享预设会产生独立副本，再显式应用；已分配的预设须先解除分配才能删除。
 
-**Manage → Import…** 预览设备要求、绑定数量和名称冲突。确认只保存独立副本，不改变设备分配。**Manage → Export…** 仅导出当前选中的原生 JSON 预设，不携带本机设备 ID。不支持的版本、无效规则和写入失败均不改变当前配置。不导入原始脚本或 XML 映射。社区 HID 预设可以包含具有明确报告权限的 Wasm 沙箱适配器。
+**Manage → Import…** 支持同时选择多个预设 JSON 文件。列表显示逐个文件的结果，点击 **Details** 查看设备要求、名称冲突和适配器权限。无效文件会列出原因并跳过。确认后将有效预设一起保存为独立副本，不改变设备分配；写入失败时整批均不保存。**Manage → Export…** 仅导出当前选中的原生 JSON 预设，不携带本机设备 ID。不支持的版本、无效规则和写入失败均不改变当前配置。不导入原始脚本或 XML 映射。社区 HID 预设可以包含具有明确报告权限的 Wasm 沙箱适配器。
 
 旧 `midi.json` 首次运行时备份为 `midi.pre-controllers.backup.json`，再迁移到 `midi.controllers.json`，原文件保留。旧配置中显式设置的通配绑定继续生效。
 
@@ -39,18 +39,34 @@ HID 预设指定 VID/PID、接口和 Usage，以及 Report ID、位偏移、宽�
 
 ## 内置预设与验证状态
 
-预设库提供 **14 个独立编写的预设**，其中 12 个依据厂商官方 MIDI 消息表，另两个使用指定的 NI Controller Editor 模板：
+预设库提供 **39 个独立编写的预设**，其中 37 个依据厂商官方 MIDI 消息表，另两个使用指定的 NI Controller Editor 模板：
 
 | 厂商 | 型号 |
 | --- | --- |
-| Pioneer DJ / AlphaTheta | DDJ-200、DDJ-400、DDJ-FLX4、DDJ-SB、DDJ-SB2、DDJ-SB3、DDJ-RB、DDJ-REV1、DDJ-WeGO3 |
+| Pioneer DJ / AlphaTheta | DDJ-200、DDJ-400、DDJ-800、DDJ-1000、DDJ-1000SRT、DDJ-FLX2、DDJ-FLX4、DDJ-FLX6、DDJ-FLX6-GT、DDJ-FLX10、DDJ-GRV6、DDJ-RB、DDJ-REV1、DDJ-REV5、DDJ-REV7、DDJ-RR、DDJ-RX、DDJ-RZ、DDJ-SB、DDJ-SB2、DDJ-SB3、DDJ-SP1、DDJ-SR、DDJ-SR2、DDJ-SX、DDJ-SX2、DDJ-SX3、DDJ-SZ、DDJ-SZ2、DDJ-WeGO2、DDJ-WeGO3、DDJ-WeGO4、DDJ-XP1、DDJ-XP2 |
 | Hercules | DJControl Inpulse 200、DJControl Inpulse 300（初代） |
 | Numark | DJ2GO（初代） |
 | Native Instruments | F1（FL Studio 模板）、X1 MK1（SSL 2.2 模板） |
 
-按型号覆盖有协议依据的传输控制、混音、Jog、浏览加载、Hot Cue 和反馈。选中预设后展开 **Details** 可查看验证状态；**Preset notes** 提供使用说明和功能限制。SB2/SB3/REV1 使用 Deck 1/2；SB/SB2、WeGO3 和 Inpulse 200 每个 Deck 提供四个 Hot Cue。不默认覆盖其他 Pad 模式、效果和后续硬件代际。
+按型号覆盖有协议依据的传输控制、混音、Jog、浏览加载、Hot Cue 和反馈。选中预设后展开 **Details** 可查看验证状态；**Preset notes** 提供使用说明和功能限制。有四个 Deck 的 DDJ 控制器使用 Deck 1/2；SB/SB2、WeGO3 和 Inpulse 200 每个 Deck 提供四个 Hot Cue。不默认覆盖其他 Pad 模式、效果和后续硬件代际。
 
 全部内置预设均标为“**协议实现，实机验证待完成**”。Jog 灵敏度为待实机校准值；可以先使用预设，后续补充设备验证，但不能视为硬件已认证。声卡和通道对请在音频设置中选择，应用预设不会自动切换输出。
+
+设备和预设按型号自然排序，名称只保留设备名；**None** 始终排在预设第一项。独立混音台和独立播放器不在本轮扩展范围内。
+
+新增的 24 个 DDJ 预设按各自官方表实现。REV5/REV7 需关闭设置工具中的 LOOP options；REV5 的 Jog Touch 因官方表项冲突未绑定，REV7 不包含马达、显示屏或耳机 Cue 推子。XP2 选择 PAD MODE 1，实体 Pad 1–8 对应 mixless Cue 1–8。SP1、XP1/2 是 Pad 控制器预设，没有完整混音或音频接口映射。WeGO2/3/4 各提供四个 Hot Cue。详情见[官方来源与覆盖范围](https://github.com/backrunner/mixless/tree/main/crates/mixless-controllers/examples/alphatheta-ddj)。
+
+## DDJ-FLX2
+
+通过 USB 连接，选择 **DDJ-FLX2** 预设并应用。按住 Shift 按 BEAT SYNC，
+再按 Pad 1 选择 HOT CUE 模式；Shift + Pad 清除对应 Cue。双唱盘支持
+播放/Cue、Sync、触摸/Jog、速度、EQ、滤波、推子、耳机 PFL、八个 Hot Cue
+和灯光反馈，主输出和耳机旋钮控制软件音量。在工作台浏览和加载曲目。
+
+Smart Fader、Master CUE、其他 Pad 模式、Shift 传输控制和推子启动暂不映射。
+请手动选择声卡和通道对，不套用 FLX4 的输出顺序。USB 协议回放已验证；
+蓝牙、物理操作、Jog 校准、灯光和音频路由仍待设备测试。
+详见[预设与验证说明](https://github.com/backrunner/mixless/tree/main/crates/mixless-controllers/examples/ddj-flx2)。
 
 ## 控制器声卡
 

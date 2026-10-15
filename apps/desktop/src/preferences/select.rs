@@ -263,7 +263,10 @@ impl Preferences {
                 let preset = hub.preset(value)?;
                 (hub.presets()
                     .iter()
-                    .filter(|p| p.name == preset.name)
+                    .filter(|p| {
+                        controllers::preset_label(&p.name)
+                            == controllers::preset_label(&preset.name)
+                    })
                     .count()
                     > 1)
                 .then(|| {
@@ -289,7 +292,7 @@ impl Preferences {
             if let Some(p) = self.hub().ok().and_then(|h| h.preset(value)) {
                 return format!(
                     "{}\n{}\n{}",
-                    p.name,
+                    controllers::preset_label(&p.name),
                     if p.is_builtin() {
                         "Built-in"
                     } else {

@@ -13,15 +13,17 @@ research and implementation were not separated.
 
 The original twelve profiles were reviewed on 2026-10-09 through the manufacturers'
 official download services. Two NI template-specific profiles were reviewed from
-the local vendor installation on 2026-10-12. Documents are not bundled. Numeric protocol addresses are independently assigned to mixless
+the local vendor installation on 2026-10-12. DDJ-FLX2 was reviewed from the official
+E1 MIDI list and DRI1917A manual on 2026-10-13. Documents are not bundled. Numeric protocol addresses are independently assigned to mixless
 commands in `src/catalogue/`; the implementation is not a translated mapping.
-The catalogue contains 14 profiles across four manufacturers, all labelled
+The catalogue contains 39 profiles across four manufacturers, all labelled
 `protocol`; hardware validation is deferred, not implied by inclusion.
 
 | Profile | Source | Revision / sections | Evidence |
 | --- | --- | --- | --- |
 | DDJ-400 | [Official MIDI message list](https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-400/DDJ-400_MIDI_Message_List_E1.pdf) | 1.00; p. 1 deck/browser and jog encoding; p. 2 mixer, meters and pads 1–4; p. 3 pads 5–8 and vinyl output | Protocol implemented; synthetic routing validation; no physical unit |
 | DDJ-FLX4 | [Official MIDI message list](https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX4/DDJ-FLX4_MIDI_message_List_E1.pdf) | 1.0; p. 1 deck/jog; p. 2 mixer/browser; pp. 3–5 hot cue pads; p. 5 vinyl output | Protocol implemented; synthetic routing validation; no physical unit |
+| DDJ-FLX2 | [Official MIDI message list](https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX2/DDJ-FLX2_MIDI_Message_List_E1.pdf), [DRI1917A manual](https://downloads.support.alphatheta.com/manuals/dj-controllers/DDJ-FLX2/DDJ-FLX2_DRI1917A_manual.pdf) | MIDI E1, copyright 2024; pp. 1–2. Manual pp. 77, 82, 143. | USB MIDI; two-deck transport/touch/jog/tempo, three-band EQ, CFX mapped to filter, faders, PFL, eight hot cues per deck, shifted cue clearing, software master/headphone levels and documented LEDs/vinyl output. Smart Fader, master CUE, other pad banks, shifted transport, fader start and track-load illumination omitted. Browse/load in the workspace. No inferred audio channel order. |
 
 The additional independently authored profiles are:
 
@@ -37,6 +39,15 @@ The additional independently authored profiles are:
 | DJControl Inpulse 200 | [MIDI commands](https://ts.hercules.com/download/sound/manuals/DJC_Inpulse200/DJControlInpulse200_MIDI_Commands_V_1_0.pdf) | 1.0; PDF pp. 4–19 inputs, 20–23 LEDs, 29 status request | Transport, touch/jog, tempo, two-band EQ/filter/faders, master/headphone volume, PFL, browse/load, four cues and LEDs. Original generation only; no MK2/MK3 claim. |
 | DJControl Inpulse 300 | [MIDI commands](https://ts.hercules.com/download/sound/manuals/DJC_Inpulse300/DJControlInpulse300_MIDI_Commands_V_1_2.pdf) | 1.2; PDF pp. 4–39 inputs, 40–54 LEDs | Transport, touch/jog, tempo, trim/three-band EQ/filter/faders, master/headphone volume, PFL, browse/load, eight cues and LEDs. Original generation only; no MK2 claim. |
 | Numark DJ2GO | [UI and Communications Specification](https://www.numark.com/images/product_downloads/dj2go___software_definition_and_midi_spec_v1.0.pdf) | Rev B; pp. 5–7 | Transport, tempo, jog, volume/crossfader, master/headphones, browse/load and eight LEDs. No touch sensor, pads or built-in audio route. Pitch-bend buttons and BACK are omitted. DJ2GO2/Touch are different protocols. |
+
+### DJ controller expansion
+
+The 2026-10-13 batch adds 24 DDJ profiles from separately reviewed official
+message lists. See the [model/source/coverage table](examples/alphatheta-ddj/README.md),
+[PDF fingerprints](examples/alphatheta-ddj/protocol-review.json) and
+[24 pinned synthetic replays](examples/alphatheta-ddj/replays.json).
+Standalone DJM mixers and CDJ decks are outside this batch. Original WeGO and
+ERGO/T1/S1 remain deferred for the evidence gaps recorded there.
 
 ### Protocol distinctions and application decisions
 
@@ -74,7 +85,7 @@ The additional independently authored profiles are:
 
 ### Deferred evidence
 
-All 14 profiles have software schema/routing checks, not physical-device evidence.
+All 39 profiles have software schema/routing checks, not physical-device evidence.
 Physical control direction, jog calibration, pad-mode behavior, endpoint naming,
 LED appearance and audio routing remain to be checked on real units.
 

@@ -126,6 +126,21 @@ impl Preferences {
                 div()
                     .flex()
                     .flex_col()
+                    .items_start()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .child(div().text_size(px(12.)).child("On playlist change"))
+                    .child(self.segmented(
+                        "automix-playlist",
+                        &[(true, "Follow selected"), (false, "Keep current")],
+                        settings.automix_follow_playlist,
+                        |s, value| s.save_general(|p| p.automix_follow_playlist = value),
+                        cx,
+                    )),
+                div()
+                    .flex()
+                    .flex_col()
                     .gap_2()
                     .px_3()
                     .py_2()
@@ -186,6 +201,45 @@ impl Preferences {
                         cx,
                     ),
                 ),
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .child(div().text_size(px(12.)).child("Stem storage"))
+                    .child(self.segmented(
+                        "stem-storage",
+                        &[
+                            (mixless_stems::StorageFormat::Wav, "No compression"),
+                            (mixless_stems::StorageFormat::Flac, "Lossless"),
+                            (mixless_stems::StorageFormat::Mp3, "Lossy"),
+                        ],
+                        settings.stem_storage,
+                        |s, value| s.save_general(|p| p.stem_storage = value),
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .line_height(px(16.))
+                            .text_color(theme::MUTED)
+                            .child(match settings.stem_storage {
+                                mixless_stems::StorageFormat::Wav => "32-bit float WAV",
+                                mixless_stems::StorageFormat::Flac => {
+                                    "24-bit FLAC. Slight precision loss."
+                                }
+                                mixless_stems::StorageFormat::Mp3 => "320 kbps MP3",
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .line_height(px(16.))
+                            .text_color(theme::MUTED)
+                            .child("New stems only."),
+                    ),
                 row(
                     "Library & preferences",
                     self.button(

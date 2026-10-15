@@ -69,10 +69,12 @@ fn ni_template_fixtures_match_catalogue_and_do_not_claim_factory_or_hardware_sup
         let current = builtin_presets().into_iter().find(|p| p.id == id).unwrap();
         assert_eq!(current, packaged);
         assert!(!current.bindings.is_empty());
-        assert!(current
-            .bindings
-            .iter()
-            .all(|b| b.legacy(Some("offline-fixture".into())).is_some()));
+        assert!(
+            current
+                .bindings
+                .iter()
+                .all(|b| b.legacy(Some("offline-fixture".into())).is_some())
+        );
         assert!(
             current.notes.contains("template") && current.notes.contains("Hardware unverified")
         );
@@ -81,9 +83,11 @@ fn ni_template_fixtures_match_catalogue_and_do_not_claim_factory_or_hardware_sup
         assert!(result.assertions >= 10);
         assert_eq!(current.verification, Verification::Protocol);
     }
-    assert!(!builtin_presets()
-        .iter()
-        .any(|p| p.name.contains("MX2") || p.name.contains("MK3") || p.name.contains("Z1")));
+    assert!(
+        !builtin_presets()
+            .iter()
+            .any(|p| p.name.contains("MX2") || p.name.contains("MK3") || p.name.contains("Z1"))
+    );
     let audio = ni_audio_recommendation("Traktor MX2").unwrap();
     assert_eq!((audio.master, audio.cue), ([0, 1], [2, 3]));
     assert!(ni_audio_recommendation("Traktor MX4").is_none());
@@ -188,9 +192,10 @@ fn full_midi_addresses_and_calibration_survive_editing_and_restart() {
     let p = reopened.preset(&id).unwrap();
     let mut r = Router::default();
     let s = EngineSnapshot::default();
-    assert!(r
-        .route("offline-fixture", "main", &p, false, &[0xb3, 1, 127], &s)
-        .is_empty());
+    assert!(
+        r.route("offline-fixture", "main", &p, false, &[0xb3, 1, 127], &s)
+            .is_empty()
+    );
     let actions = r.route("offline-fixture", "main", &p, false, &[0xb3, 33, 127], &s);
     assert_eq!(
         actions,
@@ -203,7 +208,7 @@ fn full_midi_addresses_and_calibration_survive_editing_and_restart() {
 #[test]
 fn catalogue_has_independent_sources_and_valid_complete_packets() {
     let p = builtin_presets();
-    assert_eq!(p.len(), 14);
+    assert_eq!(p.len(), 39);
     let mut ids = std::collections::BTreeSet::new();
     for p in p {
         p.validate().unwrap_or_else(|e| panic!("{}: {e}", p.name));
@@ -217,10 +222,11 @@ fn catalogue_has_independent_sources_and_valid_complete_packets() {
             other => panic!("Unreviewed manufacturer source: {other}"),
         };
         assert!(!p.provenance.is_empty());
-        assert!(p
-            .provenance
-            .iter()
-            .all(|s| s.url.starts_with(domain) && !s.revision.is_empty() && !s.section.is_empty()));
+        assert!(p.provenance.iter().all(|s| (s.url.starts_with(domain)
+            || (p.name == "DDJ-FLX6-GT"
+                && s.url == "https://support.alphatheta.com/en-us/articles/4404631697945"))
+            && !s.revision.is_empty()
+            && !s.section.is_empty()));
         assert!(!p.notes.is_empty());
         assert!(p.bindings.len() > 20, "{}", p.name);
         if p.manufacturer != "Native Instruments" {
@@ -237,6 +243,20 @@ fn catalogue_has_independent_sources_and_valid_complete_packets() {
             serde_json::from_slice::<ControllerPreset>(&bytes).unwrap(),
             p
         );
+    }
+}
+
+#[test]
+fn canonical_model_names_require_an_exact_unique_endpoint_match() {
+    assert_eq!(builtin_model_name("ddj-flx6-gt"), Some("DDJ-FLX6-GT"));
+    assert_eq!(builtin_model_name("DDJ-1000SRT"), Some("DDJ-1000SRT"));
+    for name in [
+        "DDJ-1000SRT MIDI 2",
+        "DDJ-1000 MK2",
+        "Pioneer DJ",
+        "Custom DJ 2",
+    ] {
+        assert_eq!(builtin_model_name(name), None);
     }
 }
 
@@ -262,7 +282,14 @@ fn catalogue_routes_both_decks_and_temporary_cue_edges() {
                     Some(MidiValue::Release),
                 ),
             ] {
-                let b = p.bindings.iter().find(|b| b.target == target).unwrap();
+                let b = p.bindings.iter().find(|b| b.target == target);
+                let accessory = matches!(p.name.as_str(), "DDJ-SP1" | "DDJ-XP1" | "DDJ-XP2");
+                let absent = accessory
+                    || (p.name == "DDJ-REV7" && matches!(target, MidiTarget::TemporaryCue { .. }));
+                assert_eq!(b.is_none(), absent, "{} {target:?}", p.name);
+                let Some(b) = b else {
+                    continue;
+                };
                 let InputSource::Midi {
                     address: MidiAddress::Note { channel, number },
                 } = b.source
@@ -315,9 +342,10 @@ fn catalogue_keeps_brand_and_generation_specific_messages() {
             index: 0
         }
     );
-    assert!(r
-        .route("400", "main", &ddj400, false, &[0x98, 0, 127], &s)
-        .is_empty());
+    assert!(
+        r.route("400", "main", &ddj400, false, &[0x98, 0, 127], &s)
+            .is_empty()
+    );
     assert_eq!(
         r.route("400", "main", &ddj400, false, &[0x99, 0, 127], &s)[0].target,
         MidiTarget::Cue {
@@ -330,9 +358,10 @@ fn catalogue_keeps_brand_and_generation_specific_messages() {
     r.route("wego", "main", &wego, false, &[0xb6, 0x15, 64], &s);
     let a = r.route("wego", "main", &wego, false, &[0xb6, 0x35, 1], &s);
     assert_eq!(a[0].target, MidiTarget::Fader { deck: DeckId::B });
-    assert!(r
-        .route("wego", "main", &wego, false, &[0xb1, 0x13, 64], &s)
-        .is_empty());
+    assert!(
+        r.route("wego", "main", &wego, false, &[0xb1, 0x13, 64], &s)
+            .is_empty()
+    );
     let mut s = s;
     s.decks[0].src_sample_rate = 48000;
     for (name, message) in [
@@ -350,10 +379,11 @@ fn catalogue_keeps_brand_and_generation_specific_messages() {
     // No bank-wide wildcard, MK2 reuse or invented hardware master-volume messages.
     for name in ["DDJ-SB", "DDJ-SB2"] {
         let p = builtin(name);
-        assert!(!p
-            .bindings
-            .iter()
-            .any(|b| b.target == MidiTarget::Master && b.sets_layer.is_none()));
+        assert!(
+            !p.bindings
+                .iter()
+                .any(|b| b.target == MidiTarget::Master && b.sets_layer.is_none())
+        );
         assert_eq!(p.initialize[0].data, [0x9b, 9, 0]);
     }
     assert!(!builtin("DJ2GO").matches_midi("DJ2GO2 Touch"));
@@ -369,10 +399,12 @@ fn shift_changes_release_holds_and_reset_button_edges_on_only_that_unit() {
     r.route("unit-b", "main", &p, false, &[0x90, 0x0b, 127], &s);
     r.route("unit-a", "main", &p, false, &[0x90, 0x36, 127], &s);
     let releases = r.route("unit-a", "main", &p, false, &[0x90, 0x3f, 127], &s);
-    assert!(releases
-        .iter()
-        .any(|a| a.target == MidiTarget::JogTouch { deck: DeckId::A }
-            && a.value == MidiValue::Release));
+    assert!(
+        releases
+            .iter()
+            .any(|a| a.target == MidiTarget::JogTouch { deck: DeckId::A }
+                && a.value == MidiValue::Release)
+    );
     // Firmware sends release on a shifted address that has no normal Play binding.
     r.route("unit-a", "main", &p, false, &[0x90, 0x47, 0], &s);
     r.route("unit-a", "main", &p, false, &[0x90, 0x3f, 0], &s);
@@ -381,9 +413,10 @@ fn shift_changes_release_holds_and_reset_button_edges_on_only_that_unit() {
             .len(),
         1
     );
-    assert!(r
-        .route("unit-b", "main", &p, false, &[0x90, 0x0b, 127], &s)
-        .is_empty());
+    assert!(
+        r.route("unit-b", "main", &p, false, &[0x90, 0x0b, 127], &s)
+            .is_empty()
+    );
     assert!(r.release_device("unit-a").is_empty());
 }
 #[test]
@@ -559,8 +592,8 @@ fn hid_reports_signed_counters_layers_pickup_and_disconnect() {
         &[0xb2, 17, 127],
         &snap,
     );
-    assert!(r
-        .route_for_controller(
+    assert!(
+        r.route_for_controller(
             "controller",
             "jog",
             "main",
@@ -569,23 +602,26 @@ fn hid_reports_signed_counters_layers_pickup_and_disconnect() {
             &[0x90, 5, 127],
             &snap
         )
-        .is_empty());
+        .is_empty()
+    );
     let mut p = ControllerPreset::blank("Pickup");
     let mut b = binding(MidiTarget::Master);
     b.pickup = true;
     p.bindings.push(b);
     snap.master = 0.5;
-    assert!(r
-        .route("a", "main", &p, false, &[0xb2, 17, 10], &snap)
-        .is_empty());
+    assert!(
+        r.route("a", "main", &p, false, &[0xb2, 17, 10], &snap)
+            .is_empty()
+    );
     assert_eq!(
         r.route("a", "main", &p, false, &[0xb2, 17, 70], &snap)
             .len(),
         1
     );
-    assert!(r
-        .route("b", "main", &p, false, &[0xb2, 17, 10], &snap)
-        .is_empty());
+    assert!(
+        r.route("b", "main", &p, false, &[0xb2, 17, 10], &snap)
+            .is_empty()
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -593,8 +629,8 @@ fn hid_reports_signed_counters_layers_pickup_and_disconnect() {
 #[ignore = "creates real CoreMIDI virtual ports; no physical controller needed"]
 fn virtual_hotplug_feedback_and_headless_dispatch_latency() {
     use mixless_midi::midir::{
-        os::unix::{VirtualInput, VirtualOutput},
         MidiInput, MidiOutput,
+        os::unix::{VirtualInput, VirtualOutput},
     };
     use std::{
         sync::{Arc, Mutex},
@@ -694,7 +730,7 @@ fn virtual_hotplug_feedback_and_headless_dispatch_latency() {
     let count = feedback.lock().unwrap().len();
     thread::sleep(Duration::from_millis(120));
     assert_eq!(feedback.lock().unwrap().len(), count); // deduplicated feedback
-                                                       // Never call drain or any UI tick while sending input for two seconds.
+    // Never call drain or any UI tick while sending input for two seconds.
     for n in 0..500 {
         source.send(&[0xb2, 17, (n % 128) as u8]).unwrap();
         thread::sleep(Duration::from_millis(4));

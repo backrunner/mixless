@@ -134,6 +134,7 @@ fn main() {
             .update(cx, |state, window, cx| {
                 cx.observe_window_activation(window, |state, window, cx| {
                     if !window.is_window_active() {
+                        state.brand_menu.open = false;
                         state.end_drag();
                         state.end_momentary_fx();
                         state.cancel_transport_press();

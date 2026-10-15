@@ -1,6 +1,8 @@
 //! Pure next-pair planning. No decoding, devices or I/O; optional bounded one-track lookahead.
 pub mod cue_policy;
 mod handoff;
+#[macro_use]
+pub mod trace;
 mod instant;
 mod progression;
 #[cfg(test)]
@@ -22,6 +24,7 @@ mod filtered;
 mod grid;
 mod lookahead;
 mod musical;
+pub mod order;
 pub mod performance;
 mod phrasing;
 mod policy;
@@ -154,7 +157,7 @@ impl Planner {
 
     pub fn plan_next(&self, ctx: &PlanContext<'_>) -> MixPlan {
         let mut plan = self.plan_next_base(ctx);
-        stem_mix::arrange(ctx, &mut plan);
+        stem_mix::arrange(ctx, &mut plan, self.options.stem_playback);
         eq::arrange(ctx, &mut plan);
         plan
     }
@@ -394,12 +397,20 @@ impl Planner {
                 ctx.offset_b.rate * correction.sqrt(),
             ),
         };
-        if !(0.5..=2.0).contains(&rate_a) || !(0.5..=2.0).contains(&rate_b) {
+        // Expanded tempo tolerance: 0.67-1.5x (was 0.5-2.0). This allows blending up to 1.3x BPM jumps
+        // with time-stretching, reducing dry cuts for medium tempo differences like 120→150 BPM.
+        // TODO: for 1.5-2.0x jumps, implement tempo ramping (gradual BPM transition over 4-8 bars).
+        if !(0.67..=1.5).contains(&rate_a) || !(0.67..=1.5).contains(&rate_b) {
             return None;
         }
         let out_sec = ga.sec(out_beat);
         let in_sec = gb.sec(in_beat);
-        if user_range(ctx.cues_out, a.sample_rate).is_none() && !phrasing::exit_boundary(a, out_sec)
+        // Require phrase boundary for exits WITHOUT user cues, but relax when tempo is close:
+        // compatible BPM (ratio ~1.0) should blend even without measured phrase evidence.
+        let tempo_allows = correction >= 0.85 && correction <= 1.18;
+        if user_range(ctx.cues_out, a.sample_rate).is_none()
+            && !phrasing::exit_boundary(a, out_sec)
+            && !tempo_allows
         {
             return None;
         }

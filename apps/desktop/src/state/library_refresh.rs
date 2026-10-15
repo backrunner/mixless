@@ -3,11 +3,17 @@ use super::*;
 
 struct LibraryRows {
     selection: Option<i64>,
+    mix_selection: Option<i64>,
+    mix_tracks: Vec<TrackId>,
     order_revision: u64,
     tracks: Vec<Track>,
     playlists: Vec<mixless_library::PlaylistSummary>,
     imports: Vec<mixless_library::ImportItem>,
 }
+
+#[cfg(test)]
+#[path = "library_refresh/tests.rs"]
+mod tests;
 
 pub(super) struct LibraryRefresh {
     rx: Option<Receiver<Result<LibraryRows, String>>>,
@@ -36,6 +42,7 @@ impl UiState {
             return;
         }
         let selection = self.playlist_sel;
+        let mix_selection = self.mix_playlist();
         let order_revision = self.library_order.revision;
         let core = self.core.clone();
         let (tx, rx) = channel();
@@ -51,8 +58,22 @@ impl UiState {
                         .map(|tracks| (tracks, Vec::new())),
                 }
                 .map_err(|e| e.to_string())?;
+                let mix_tracks = if mix_selection == selection {
+                    tracks.iter().map(|track| track.id).collect()
+                } else {
+                    match mix_selection {
+                        Some(id) => core.library.playlist_tracks(PlaylistId(id)),
+                        None => core.library.list_tracks(),
+                    }
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|track| track.id)
+                    .collect()
+                };
                 Ok(LibraryRows {
                     selection,
+                    mix_selection,
+                    mix_tracks,
                     order_revision,
                     tracks,
                     playlists,
@@ -84,6 +105,14 @@ impl UiState {
                         self.select_playlist(None);
                     }
                 }
+                if rows.mix_selection == self.mix_playlist()
+                    && rows.order_revision == self.library_order.revision
+                    && !self.library_order.is_pending()
+                {
+                    self.prepare_mix_playlist(rows.mix_tracks);
+                } else {
+                    self.library_refresh.again = true;
+                }
                 if rows.selection == self.playlist_sel
                     && rows.order_revision == self.library_order.revision
                     && !self.library_order.is_pending()
@@ -102,10 +131,6 @@ impl UiState {
                         }
                     }
                     crate::analysis::schedule(&self.core, &rows.tracks);
-                    crate::automix::prepare_playlist(
-                        &self.core,
-                        rows.tracks.iter().map(|t| t.id).collect(),
-                    );
                     self.tracks = Arc::new(rows.tracks);
                     self.playlist_imports = rows.imports;
                 } else {

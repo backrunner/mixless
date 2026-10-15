@@ -15,6 +15,22 @@ Your library database stores track metadata, analysis, cue points, and playlist 
 
 mixless does not upload audio for inference. The standard installer downloads verified HTDemucs and Basic Pitch ONNX models on first use. The [installer with models](https://mixless.alkinum.com/download?variant=bundled) includes those same models and loads them directly from the app, without a model download or a second cached copy. Stem and note inference runs locally on Apple Silicon without Python or a cloud model API; Intel Macs do not support this inference.
 
+## Stem storage format
+
+In **Preferences → General → Library → Stem storage**, choose how newly generated stems are stored:
+
+| Choice | Format | Precision |
+| --- | --- | --- |
+| No compression (default) | 32-bit float WAV | Preserves the separator output. |
+| Lossless | 24-bit FLAC, compression level 8 | Lossless encoding of 24-bit PCM. Converting the 32-bit float output to 24-bit PCM introduces a small rounding error. |
+| Lossy | 320 kbps MP3 | Smaller files with lossy audio. |
+
+All three retain stereo at 44.1 kHz. Peaks above full scale are scaled before compression and restored when loading to avoid clipping. MP3 delay and padding are removed on decode so every stem keeps the same sample positions and length.
+
+Files are decoded to aligned float audio before they reach the playback engine. Cue points, loops, tempo, pitch and FX use that shared audio path. At unity stem gains, playback uses the original track. Lossy stems can leave audible artifacts when isolated or subtracted; WAV is the default for preserving the separated audio. Note and musical-structure analysis uses the original separated floats before compression.
+
+Changing the setting keeps existing caches and does not interrupt playback. To regenerate them in the new format, clear the relevant stem cache in **Preferences → Storage** and run analysis again. Library packages preserve each cache's format; compressed stems require a version of mixless with compressed-cache support on the receiving Mac. Imported stems can also play on Intel Macs without running separation.
+
 ## Clear derived data
 
 Open **Preferences → Storage** to inspect stem, analysis, waveform, artwork, and model caches, along with database and downloaded audio usage. Clear caches by category or scope supported cleanup to a playlist.

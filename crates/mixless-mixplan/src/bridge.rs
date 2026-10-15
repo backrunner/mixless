@@ -3,7 +3,7 @@
 use crate::{
     constraints::covers_user_range,
     grid::Grid,
-    musical::{feature, percussion_only},
+    musical::{beatless, feature, percussion_only},
     policy::Technique,
     smooth::grid_reliable,
     PlanContext,
@@ -27,13 +27,14 @@ pub(super) fn expand(
     ctx: &PlanContext<'_>,
     technique: Technique,
     harmonic: bool,
+    stem_pair: bool,
 ) -> Option<()> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
     let (ga, gb) = (Grid(a), Grid(b));
     let n = plan.summary.as_ref()?.length_bars as f32;
     let seconds = plan.clock.sample(n);
     if seconds < 0.5 {
-        return None;
+        return miss!();
     }
     let a_start = ga.beat(plan.t_in_a);
     let b_start = gb.beat(plan.t_in_b);
@@ -54,20 +55,28 @@ pub(super) fn expand(
             gb.sec(b_start + n * ga.meter() * factor)
                 .min(b.duration_sec),
         );
-    // Without trustworthy beat alignment use a restrained phrase overlap;
-    // never let two unsynchronized drum patterns run together for half a minute.
-    if !locked && n > 1. {
-        return None;
-    }
     let b_end = if locked {
         gb.sec(b_start + n * ga.meter() * factor)
     } else {
         plan.t_in_b + seconds * ctx.offset_b.rate
     };
+    // Never let two unsynchronized drum patterns run together. Without a
+    // shared grid a longer overlap needs one side with no drums at all: an
+    // incoming intro of pads under the outgoing beat, or an outgoing outro
+    // wash under the incoming beat.
+    let native = !locked && n > 1.;
+    let drumless = beatless(a, plan.t_in_a, plan.t_out_a) || beatless(b, plan.t_in_b, b_end);
+    // With stems on both decks the outgoing drums and bass can leave on the
+    // phrase line itself while the incoming beat starts: the rhythm changes
+    // hands at one instant and only the outgoing foreground washes out.
+    let strip = native && !drumless && stem_pair && n <= 4.;
+    if native && (n > 16. || !(drumless || strip)) {
+        return miss!();
+    }
     if b_end > b.duration_sec - 0.1
         || !covers_user_range(plan.t_in_b, b_end, ctx.cues_in, b.sample_rate)
     {
-        return None;
+        return miss!();
     }
     if b.mix_regions.iter().any(|r| {
         r.kind == mixless_protocol::MixRegionKind::In && (r.anchor_sec - plan.t_in_b).abs() < 0.15
@@ -76,14 +85,14 @@ pub(super) fn expand(
             && (r.anchor_sec - plan.t_in_b).abs() < 0.15
             && b_end <= r.end_sec + 0.05
     }) {
-        return None;
+        return miss!();
     }
     if !harmonic
         && n > 2.
         && !percussion_only(a, plan.t_in_a, plan.t_out_a)
         && !percussion_only(b, plan.t_in_b, b_end)
     {
-        return None;
+        return miss!();
     }
     plan.bar_map = if locked && factor != 1. {
         BarMap::TwoToOne {
@@ -118,7 +127,7 @@ pub(super) fn expand(
         voice[0] = voice[0].max(va);
         voice[1] = voice[1].max(vb);
         if va > 0.5 && vb > 0.5 {
-            return None;
+            return miss!();
         }
     }
     let lanes = &mut plan.lanes;
@@ -222,7 +231,7 @@ pub(super) fn expand(
             ctx.offset_b.rate
         };
         if !(0.5..=2.).contains(&rate) || !(0.88..=1.12).contains(&(rate / ctx.offset_b.rate)) {
-            return None;
+            return miss!();
         }
         lanes.rate_b.nodes.push((u, rate));
         plan.incoming_source.nodes.push((
@@ -233,6 +242,10 @@ pub(super) fn expand(
                 plan.t_in_b + plan.clock.sample(u) * ctx.offset_b.rate
             },
         ));
+    }
+    if strip {
+        strip_out(plan, n, harmonic, trim);
+        return Some(());
     }
     plan.incoming_offset_end.rate = lanes.rate_b.sample(n);
     plan.summary.as_mut()?.strategy = if echo {
@@ -276,4 +289,93 @@ pub(super) fn expand(
         },
     ];
     Some(())
+}
+
+/// Native-rate stem exit. The incoming track plays complete from its phrase
+/// start; the outgoing drums and bass leave on that same line, and what is
+/// left of the outgoing track closes through a low-pass and echo tail.
+/// `trim` is B's loudness trim from before the staged envelope was written.
+fn strip_out(plan: &mut MixPlan, n: f32, harmonic: bool, trim: f32) {
+    let rate = plan.lanes.rate_b.sample(0.);
+    let lanes = &mut plan.lanes;
+    for lane in [
+        &mut lanes.xfader,
+        &mut lanes.gain_a,
+        &mut lanes.gain_b,
+        &mut lanes.eq_a.low,
+        &mut lanes.eq_b.low,
+        &mut lanes.eq_a.mid,
+        &mut lanes.eq_b.mid,
+        &mut lanes.eq_a.high,
+        &mut lanes.eq_b.high,
+        &mut lanes.filter_a.lp_hz,
+        &mut lanes.filter_b.hp_hz,
+        &mut lanes.fx_send_a,
+    ] {
+        lane.nodes.clear();
+    }
+    let edge = 0.0625f32.min(n);
+    for i in 0..=n as usize * 64 {
+        let u = i as f32 / 64.;
+        let t = u / n;
+        let close = ease((t - 0.35) / 0.65);
+        lanes.xfader.nodes.push((u, ease(t)));
+        lanes.gain_a.nodes.push((u, db(1. - close)));
+        lanes.gain_b.nodes.push((u, trim));
+        lanes
+            .eq_a
+            .low
+            .nodes
+            .push((u, if u < edge { 0. } else { -96. }));
+        lanes.eq_b.low.nodes.push((u, 0.));
+        lanes.eq_a.mid.nodes.push((u, -4. * ease(t / 0.6)));
+        lanes.eq_b.mid.nodes.push((u, 0.));
+        lanes.eq_a.high.nodes.push((u, -6. * ease(t / 0.6)));
+        lanes.eq_b.high.nodes.push((u, 0.));
+        lanes.filter_a.lp_hz.nodes.push((
+            u,
+            (20000f32.ln() + ease(t / 0.8) * (1200f32 / 20000.).ln()).exp(),
+        ));
+        lanes.filter_b.hp_hz.nodes.push((u, 20.));
+        lanes
+            .fx_send_a
+            .nodes
+            .push((u, 0.3 * ease(u / edge) * (1. - ease((t - 0.7) / 0.3))));
+    }
+    lanes.rate_b = Polyline::constant(rate);
+    let line = |nodes: &[(f32, f32)]| Polyline {
+        nodes: nodes.to_vec(),
+    };
+    let mut mix = mixless_protocol::StemMix {
+        outgoing: std::array::from_fn(|_| Polyline::constant(1.)),
+        incoming: std::array::from_fn(|_| Polyline::constant(1.)),
+    };
+    use mixless_protocol::StemKind;
+    for stem in [StemKind::Drums, StemKind::Bass] {
+        mix.outgoing[stem.index()] = line(&[(0., 1.), (edge, 0.), (n, 0.)]);
+    }
+    // Clashing keys: only the outgoing voice may ring on, and it has already
+    // released by the exit (checked by the caller).
+    if !harmonic {
+        mix.outgoing[StemKind::Instruments.index()] = line(&[(0., 1.), (1f32.min(n), 0.), (n, 0.)]);
+    }
+    plan.stem_mix = Some(mix);
+    plan.requires_stems = true;
+    plan.incoming_offset_end.rate = rate;
+    plan.handoff_bar = Some(0.);
+    if let Some(summary) = plan.summary.as_mut() {
+        summary.strategy = StrategyId::EchoOut;
+    }
+    plan.stages = vec![
+        MixStage {
+            start_bar: 0.,
+            end_bar: edge,
+            label: "Incoming beat takes over".into(),
+        },
+        MixStage {
+            start_bar: edge,
+            end_bar: n,
+            label: "Outgoing echo tail".into(),
+        },
+    ];
 }

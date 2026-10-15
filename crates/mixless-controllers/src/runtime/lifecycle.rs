@@ -22,7 +22,7 @@ impl Worker {
         if revision == self.revision {
             return;
         }
-        let (profiles, wildcard) = {
+        let (profiles, wildcard, hid_matchers) = {
             let s = self.shared.store.lock().unwrap();
             (
                 s.state
@@ -31,6 +31,13 @@ impl Worker {
                     .filter_map(|a| s.preset(&a.preset_id).map(|p| (a.clone(), p)))
                     .collect::<Vec<_>>(),
                 s.state.wildcard.iter().map(Binding::from_legacy).collect(),
+                s.all()
+                    .into_iter()
+                    .flat_map(|p| p.endpoints)
+                    .filter_map(|e| {
+                        matches!(e.matcher, DeviceMatcher::Hid { .. }).then_some(e.matcher)
+                    })
+                    .collect(),
             )
         };
         let changed: Vec<_> = self
@@ -55,6 +62,7 @@ impl Worker {
             .cloned()
             .collect();
         self.profiles = profiles;
+        self.hid_matchers = hid_matchers;
         if self.wildcard.bindings != wildcard {
             self.wildcard_since = Instant::now();
             for (id, action) in self.router.release_preset(&self.wildcard.id) {

@@ -85,7 +85,6 @@ impl Worker {
         {
             for info in self.hid_inventory.clone() {
                 let id = crate::hid_backend::identity(&info);
-                seen.push(id.clone());
                 let mut d = ControllerDevice {
                     id: id.clone(),
                     name: info.product_string().unwrap_or("HID device").into(),
@@ -97,6 +96,13 @@ impl Worker {
                     usage_page: Some(info.usage_page()),
                     usage: Some(info.usage()),
                 };
+                // HID is also used by keyboards, pointers, headsets and security keys.
+                // Only exact endpoints declared by installed DJ presets enter discovery;
+                // a vendor-defined usage or a familiar product name is not sufficient.
+                if !self.recognized_hid(&d) {
+                    continue;
+                }
+                seen.push(id.clone());
                 let assigned = self.profiles.iter().any(|(a, p)| {
                     p.endpoints
                         .iter()
@@ -174,6 +180,7 @@ impl Worker {
         let old = self.shared.devices.lock().unwrap().clone();
         for d in old {
             if !seen.contains(&d.id)
+                && (!d.hid || self.recognized_hid(&d))
                 && self
                     .profiles
                     .iter()
@@ -233,6 +240,13 @@ impl Worker {
         });
         *self.shared.devices.lock().unwrap() = devices;
         self.next_scan = Instant::now() + Duration::from_millis(500);
+    }
+    pub(super) fn recognized_hid(&self, device: &ControllerDevice) -> bool {
+        device.hid
+            && self
+                .hid_matchers
+                .iter()
+                .any(|matcher| device.compatible(matcher))
     }
     pub(super) fn poll_hid_inventory(&mut self) {
         if let Some(pending) = &self.hid_scan {

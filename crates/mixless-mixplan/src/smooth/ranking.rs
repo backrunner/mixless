@@ -188,6 +188,14 @@ impl Evidence {
                 + 0.08 * (1. - vocal_a.min(vocal_b))
                 + if drop_cut { 0.08 } else { 0. }
                 + if spinback { 0.06 } else { 0. }
+                // A handoff that has passed every safety gate as a real
+                // overlap is smoother than a dry boundary cut at the same
+                // place. Performance cuts carry their own accent reward.
+                + if n >= 2. && !drop_cut && !spinback && !scratch_cut {
+                    0.05 * (1. - (-n / 4.).exp())
+                } else {
+                    0.
+                }
         };
         let phrase = if blend {
             (out_phrase + in_phrase + start_phrase + end_phrase) / 4.

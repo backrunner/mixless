@@ -20,6 +20,9 @@ hound = "3"
 rustfft = "6"
 fs2 = "0.4"
 tempfile = "3"
+symphonia.workspace = true
+libflac-sys = { version = "0.3.4", default-features = false, features = ["build-flac"] }
+mp3lame-encoder = "0.2.5"
 
 # ONNX Runtime ships no x86_64-apple-darwin prebuilt (dropped by upstream and
 # pyke ort after 1.23). Inference is gated off there; cached stems still play.

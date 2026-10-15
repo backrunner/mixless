@@ -1,6 +1,9 @@
 //! Interaction/layout regressions using the actual Preferences render tree.
 use super::*;
 use gpui::{TestAppContext, VisualTestContext};
+mod controller_audio;
+mod general;
+mod import_batch;
 
 fn fixture(
     cx: &mut TestAppContext,
@@ -9,7 +12,12 @@ fn fixture(
     gpui::Entity<Preferences>,
     &mut VisualTestContext,
 ) {
-    let (temp, core, _) = crate::automix::tests::fixture();
+    let (temp, mut core, _) = crate::automix::tests::fixture();
+    Arc::get_mut(&mut core).expect("isolated fixture").stems = Some(mixless_stems::Processor::new(
+        temp.path().join("models"),
+        temp.path().join("stem-cache"),
+        false,
+    ));
     let hub = mixless_controllers::ControllerManager::start_with_config(
         temp.path().join("midi.json"),
         MidiConfig {
@@ -339,8 +347,54 @@ fn community_adapter_import_is_explicit_and_mapping_inspector_is_read_only(
     let path = temp.path().join("community.json");
     std::fs::write(&path, serde_json::to_vec(&preset).unwrap()).unwrap();
     let report = view.read_with(cx, |s, _| s.hub().unwrap().preview_import(&path).unwrap());
+    // A large permission manifest must scroll independently of confirmation,
+    // including when the save fails. Long metadata stays in its own columns.
+    let mut large = report.clone();
+    large.preset.name = "Long community controller preset name ".repeat(5);
+    large.preset.community.as_mut().unwrap().author = "Community controller author ".repeat(7);
+    let permission = large.preset.adapter.as_ref().unwrap().reports[0].clone();
+    large.preset.adapter.as_mut().unwrap().reports = (0..128)
+        .map(
+            |report_id| mixless_controllers::community::ReportPermission {
+                report_id,
+                ..permission.clone()
+            },
+        )
+        .collect();
+    large.conflicts = vec!["A preset with this name already exists".into()];
+    view.update(cx, |s, cx| {
+        s.import_preview = Some(large);
+        s.error = true;
+        s.status = "Unable to save the preset. Check folder permissions. ".repeat(8);
+        cx.notify();
+    });
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let panel = cx.debug_bounds("controller-dialog-panel").unwrap();
+        let footer = cx.debug_bounds("preset-import-footer").unwrap();
+        let accept = cx.debug_bounds("accept-preset-import").unwrap();
+        assert!(panel.left() >= px(24.) && panel.right() <= px(width - 24.));
+        assert!(accept.bottom() <= panel.bottom() && panel.bottom() <= px(height - 24.));
+        let body = cx.debug_bounds("preset-import-scroll").unwrap();
+        assert!(body.bottom() <= footer.top());
+        scroll(
+            cx,
+            gpui::point(body.right() - px(3.), body.center().y),
+            -10000.,
+        );
+        let last = cx.debug_bounds("import-report-127").unwrap();
+        assert!(
+            last.top() >= body.top() && last.bottom() <= body.bottom(),
+            "{last:?} in {body:?}"
+        );
+        assert_eq!(cx.debug_bounds("preset-import-footer").unwrap(), footer);
+        assert_eq!(cx.debug_bounds("accept-preset-import").unwrap(), accept);
+    }
     view.update(cx, |s, cx| {
         s.import_preview = Some(report.clone());
+        s.error = false;
+        s.status.clear();
         cx.notify();
     });
     cx.simulate_resize(size(px(720.), px(540.)));
@@ -417,6 +471,7 @@ fn controller_diagram_preserves_deck_geometry_when_resized(cx: &mut TestAppConte
 #[gpui::test]
 fn preset_selection_is_offline_and_modal_blocks_background_clicks(cx: &mut TestAppContext) {
     let (_temp, view, cx) = fixture(cx);
+    let builtin_count = mixless_controllers::builtin_presets().len();
     // Export is unavailable until a preset is chosen.
     view.read_with(cx, |s, _| {
         assert!(!s.preset_actions().iter().any(|(v, _)| v == "export"))
@@ -424,9 +479,23 @@ fn preset_selection_is_offline_and_modal_blocks_background_clicks(cx: &mut TestA
     view.read_with(cx, |s, _| assert!(s.job.is_none() && !s.error));
     click(cx, "select-11");
     view.read_with(cx, |s, _| {
-        assert_eq!(s.selector_options(Selector::MidiPreset).len(), 14)
+        assert_eq!(
+            s.selector_options(Selector::MidiPreset).len(),
+            builtin_count + 1
+        )
     });
-    click(cx, "option-0");
+    let index = view.read_with(cx, |s, _| {
+        s.selector_options(Selector::MidiPreset)
+            .iter()
+            .position(|(id, _)| id == "builtin-ddj-400-v1")
+            .unwrap()
+    });
+    cx.simulate_keystrokes("home");
+    for _ in 0..index {
+        cx.simulate_keystrokes("down");
+    }
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
     view.read_with(cx, |s, _| {
         assert_eq!(s.selected_profile().unwrap().name, "DDJ-400");
         assert!(s.hub().unwrap().assignments().is_empty());
@@ -461,8 +530,111 @@ fn preset_selection_is_offline_and_modal_blocks_background_clicks(cx: &mut TestA
 }
 
 #[gpui::test]
+fn none_preset_clears_preview_and_applies_only_to_the_selected_device(cx: &mut TestAppContext) {
+    let (temp, view, cx) = fixture(cx);
+    let profile = view.read_with(cx, |s, _| {
+        let options = s.selector_options(Selector::MidiPreset);
+        assert_eq!(options[0], (String::new(), "None".into()));
+        assert!(options.iter().all(|(_, name)| !name.contains('(')));
+        let profile = s
+            .hub()
+            .unwrap()
+            .presets()
+            .into_iter()
+            .find(|p| p.name.starts_with("Traktor Kontrol F1"))
+            .unwrap();
+        assert_eq!(
+            options.iter().find(|(id, _)| id == &profile.id).unwrap().1,
+            "Traktor Kontrol F1"
+        );
+        assert!(profile.notes.contains("FL Studio"));
+        profile
+    });
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        view.update(cx, |s, cx| {
+            s.controller_device = None;
+            s.selected_preset = Some(profile.id.clone());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        // Keyboard None clears an offline preview without creating assignments.
+        click(cx, "select-11");
+        cx.simulate_keystrokes("home enter");
+        cx.run_until_parked();
+        view.read_with(cx, |s, _| {
+            assert!(s.selected_profile().is_none());
+            assert!(s.hub().unwrap().assignments().is_empty());
+        });
+        view.update(cx, |s, cx| {
+            for device in ["none-preview-device", "other-preview-device"] {
+                s.hub()
+                    .unwrap()
+                    .assign(mixless_controllers::DeviceAssignment {
+                        device_id: device.into(),
+                        preset_id: profile.id.clone(),
+                        ports: [("main".into(), device.into())].into(),
+                        outputs: Default::default(),
+                    })
+                    .unwrap();
+            }
+            s.controller_devices = vec![mixless_controllers::ControllerDevice {
+                id: "none-preview-device".into(),
+                name: "Offline UI fixture".into(),
+                hid: false,
+                state: mixless_controllers::ConnectionState::Offline,
+                vendor_id: None,
+                product_id: None,
+                interface: None,
+                usage_page: None,
+                usage: None,
+            }];
+            s.controller_device = Some("none-preview-device".into());
+            s.selected_preset = Some(profile.id.clone());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "select-11");
+        cx.simulate_keystrokes("home");
+        cx.run_until_parked();
+        click(cx, "option-0");
+        view.read_with(cx, |s, _| {
+            assert!(s.selected_profile().is_none());
+            assert_eq!(
+                s.hub().unwrap().assignments().len(),
+                2,
+                "None must wait for Apply"
+            );
+        });
+        click(cx, "controller-apply");
+        view.read_with(cx, |s, _| {
+            assert!(!s.error);
+            assert_eq!(
+                s.hub().unwrap().assignments()[0].device_id,
+                "other-preview-device"
+            );
+        });
+        // Reopening the stored assignments must preserve the removal.
+        let reload = mixless_controllers::ControllerManager::start_with_config(
+            temp.path().join("midi.json"),
+            MidiConfig {
+                enabled: false,
+                input_ids: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(reload.assignments().len(), 1);
+        assert_eq!(reload.assignments()[0].device_id, "other-preview-device");
+        view.update(cx, |s, _| {
+            s.hub().unwrap().unassign("other-preview-device").unwrap();
+        });
+    }
+}
+
+#[gpui::test]
 fn import_retry_clears_previous_error_and_cancel_keeps_library(cx: &mut TestAppContext) {
     let (temp, view, cx) = fixture(cx);
+    let builtin_count = mixless_controllers::builtin_presets().len();
     let path = temp.path().join("portable.json");
     let report = view.read_with(cx, |s, _| {
         let hub = s.hub().unwrap();
@@ -487,14 +659,14 @@ fn import_retry_clears_previous_error_and_cancel_keeps_library(cx: &mut TestAppC
     click(cx, "cancel-preset-import");
     view.read_with(cx, |s, _| {
         assert!(s.import_preview.is_none());
-        assert_eq!(s.hub().unwrap().presets().len(), 14);
+        assert_eq!(s.hub().unwrap().presets().len(), builtin_count);
     });
     deliver(&view, cx, Ok(report));
     click(cx, "accept-preset-import");
     view.read_with(cx, |s, _| {
         assert!(!s.selected_profile().unwrap().is_builtin());
         assert!(s.hub().unwrap().assignments().is_empty());
-        assert_eq!(s.hub().unwrap().presets().len(), 15);
+        assert_eq!(s.hub().unwrap().presets().len(), builtin_count + 1);
     });
     preset_action(&view, cx, "edit");
     cx.simulate_keystrokes("cmd-a");
@@ -503,7 +675,7 @@ fn import_retry_clears_previous_error_and_cancel_keeps_library(cx: &mut TestAppC
     view.read_with(cx, |s, _| {
         assert!(s.error && s.preset_dialog.is_some());
         assert_eq!(s.selected_profile().unwrap().name, "DDJ-400");
-        assert_eq!(s.hub().unwrap().presets().len(), 15);
+        assert_eq!(s.hub().unwrap().presets().len(), builtin_count + 1);
     });
     cx.simulate_keystrokes("escape");
 }
@@ -559,6 +731,69 @@ fn device_menu_prioritizes_midi_and_does_not_scroll_page_beneath(cx: &mut TestAp
     assert!(cx.debug_bounds("option-0").unwrap().top() < menu.top());
 }
 
+#[gpui::test]
+fn controller_choices_use_canonical_names_natural_order_and_stable_ids(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, _| {
+        let presets = s.selector_options(Selector::MidiPreset);
+        assert_eq!(presets[0], (String::new(), "None".into()));
+        let ddj: Vec<_> = presets
+            .iter()
+            .filter(|(_, name)| name.starts_with("DDJ-"))
+            .map(|(_, name)| name.as_str())
+            .collect();
+        assert_eq!(
+            &ddj[..6],
+            &[
+                "DDJ-200",
+                "DDJ-400",
+                "DDJ-800",
+                "DDJ-1000",
+                "DDJ-1000SRT",
+                "DDJ-FLX2"
+            ]
+        );
+        assert!(
+            presets[1..]
+                .windows(2)
+                .all(|pair| controllers::natural_cmp(&pair[0].1, &pair[1].1)
+                    != std::cmp::Ordering::Greater)
+        );
+        let device = |id: &str, name: &str, hid| mixless_controllers::ControllerDevice {
+            id: id.into(),
+            name: name.into(),
+            hid,
+            state: mixless_controllers::ConnectionState::Discovered,
+            vendor_id: None,
+            product_id: None,
+            interface: None,
+            usage_page: None,
+            usage: None,
+        };
+        s.controller_devices = vec![
+            device("large", "ddj-1000", false),
+            device("h", "DDJ-200", true),
+            device("small", "  DDJ-800  ", false),
+            device("unknown", "Custom   DJ 2", false),
+            device("duplicate", "DDJ-800", false),
+        ];
+        let options = s.selector_options(Selector::ControllerDevice);
+        assert_eq!(
+            options
+                .iter()
+                .skip(1)
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["unknown", "duplicate", "small", "large", "h"]
+        );
+        assert_eq!(s.controller_name("  ddj-flx6-gt  "), "DDJ-FLX6-GT");
+        assert_eq!(s.controller_name("Custom   DJ 2"), "Custom DJ 2");
+        assert!(options[2].1.starts_with("DDJ-800"));
+        assert_ne!(options[2].1, options[3].1);
+        assert_eq!(options[4].1, "DDJ-1000");
+    });
+}
+
 fn scroll(cx: &mut VisualTestContext, position: gpui::Point<gpui::Pixels>, delta: f32) {
     cx.simulate_mouse_move(position, None, Default::default());
     cx.simulate_event(gpui::ScrollWheelEvent {
@@ -568,6 +803,46 @@ fn scroll(cx: &mut VisualTestContext, position: gpui::Point<gpui::Pixels>, delta
         touch_phase: gpui::TouchPhase::Moved,
     });
     cx.run_until_parked();
+}
+
+#[gpui::test]
+fn mapping_list_scroll_is_isolated_at_middle_and_both_edges(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let content = cx.debug_bounds("settings-content").unwrap();
+        let list = cx.debug_bounds("mapping-list").unwrap();
+        let outside = gpui::point(content.left() + px(2.), content.top() + px(20.));
+        scroll(cx, outside, f32::from(content.top() + px(12.) - list.top()));
+        let list = cx.debug_bounds("mapping-list").unwrap();
+        let inside = list.intersect(&content).center();
+        let before = view.read_with(cx, |s, _| s.midi_scroll.0.borrow().base_handle.offset());
+        scroll(cx, inside, -90.);
+        let after = view.read_with(cx, |s, _| s.midi_scroll.0.borrow().base_handle.offset());
+        assert!(after.y < before.y, "inner list did not scroll");
+        assert_eq!(
+            cx.debug_bounds("mapping-list").unwrap(),
+            list,
+            "outer page scrolled with the list"
+        );
+        // Scroll to the end and keep scrolling: no hand-off to the page.
+        for delta in [-10000., -90., 10000., 90.] {
+            scroll(cx, inside, delta);
+            assert_eq!(
+                cx.debug_bounds("mapping-list").unwrap(),
+                list,
+                "edge leaked scroll into the page"
+            );
+        }
+        // The page still responds when the pointer leaves the list.
+        scroll(cx, outside, 90.);
+        assert_ne!(
+            cx.debug_bounds("mapping-list").unwrap(),
+            list,
+            "outer page stopped scrolling"
+        );
+    }
 }
 
 #[gpui::test]
@@ -716,6 +991,98 @@ fn preset_text_supports_mouse_caret_and_reset_requires_confirmation(cx: &mut Tes
 }
 
 #[gpui::test]
+fn storage_loading_waits_for_the_initial_device_scan_then_finishes(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    let (tx, rx) = mpsc::channel();
+    view.update(cx, |s, cx| {
+        s.job = Some(rx);
+        cx.notify();
+    });
+    click(cx, "tab-Storage");
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let loading = cx.debug_bounds("storage-loading").unwrap();
+        let content = cx.debug_bounds("settings-content").unwrap();
+        assert!(loading.left() >= content.left() && loading.right() <= content.right());
+        assert!(loading.top() >= content.top() && loading.bottom() <= content.bottom());
+        assert!(cx.debug_bounds("clear-stems").is_none());
+        assert!(cx.debug_bounds("storage-scan").is_none());
+        view.read_with(cx, |s, _| {
+            assert!(s.storage.is_none() && s.storage_scan == storage_page::ScanState::Queued);
+        });
+    }
+    click(cx, "tab-General");
+    click(cx, "tab-Storage");
+    tx.send(JobResult::Devices(Ok(vec![]), Ok(vec![]))).unwrap();
+    view.update(cx, |s, _| s.poll());
+    view.read_with(cx, |s, _| {
+        assert!(s.storage_scan == storage_page::ScanState::Running && s.job.is_some());
+    });
+    finish_storage_scan(&view, cx);
+    assert!(cx.debug_bounds("clear-stems").is_some());
+    assert!(cx.debug_bounds("storage-refresh").is_some());
+}
+
+fn finish_storage_scan(view: &gpui::Entity<Preferences>, cx: &mut VisualTestContext) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while view.read_with(cx, |s, _| s.storage_scan != storage_page::ScanState::Idle)
+        && std::time::Instant::now() < deadline
+    {
+        view.update(cx, |s, cx| {
+            s.poll();
+            cx.notify();
+        });
+        std::thread::yield_now();
+    }
+    cx.run_until_parked();
+    view.read_with(cx, |s, _| {
+        assert!(s.storage.is_some() && s.storage_scan == storage_page::ScanState::Idle);
+        assert!(!s.error);
+    });
+}
+
+#[gpui::test]
+fn failed_storage_scan_leaves_loading_and_can_retry(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    let (tx, rx) = mpsc::channel();
+    view.update(cx, |s, cx| {
+        s.tab = Tab::Storage;
+        s.job = Some(rx);
+        s.storage_scan = storage_page::ScanState::Running;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("storage-loading").is_some());
+    tx.send(JobResult::Storage(Err(
+        "Unable to read storage usage".into()
+    )))
+    .unwrap();
+    view.update(cx, |s, cx| {
+        s.poll();
+        cx.notify();
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |s, _| {
+        assert!(s.storage_scan == storage_page::ScanState::Idle && s.job.is_none());
+        assert!(s.storage.is_none() && s.error && s.status == "Unable to read storage usage");
+    });
+    click(cx, "storage-scan");
+    finish_storage_scan(&view, cx);
+    // A stopped worker also exits loading instead of leaving a permanent spinner.
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+    view.update(cx, |s, _| {
+        s.storage = None;
+        s.storage_scan = storage_page::ScanState::Running;
+        s.job = Some(rx);
+        s.poll();
+        assert!(s.storage_scan == storage_page::ScanState::Idle && s.error);
+        assert!(s.job.is_none());
+    });
+}
+
+#[gpui::test]
 fn every_settings_page_keeps_footer_and_controls_inside_small_and_large_windows(
     cx: &mut TestAppContext,
 ) {
@@ -804,7 +1171,7 @@ fn mapping_workspace_and_options_keep_detail_out_of_the_primary_flow(cx: &mut Te
                     && !label.contains("Built-in"))
         );
     });
-    click(cx, "option-0");
+    click(cx, "option-1");
     view.read_with(cx, |s, _| {
         assert!(
             !s.preset_actions()
@@ -940,7 +1307,7 @@ fn device_selection_keeps_notes_and_packet_monitor_opt_in(cx: &mut TestAppContex
     click(cx, "controller-monitor");
     assert!(cx.debug_bounds("controller-monitor-content").is_some());
     click(cx, "select-11");
-    click(cx, "option-1");
+    click(cx, "option-2");
     view.read_with(cx, |s, _| {
         assert!(!s.controller_advanced && !s.controller_notes && !s.controller_monitor)
     });

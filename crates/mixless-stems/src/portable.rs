@@ -1,5 +1,5 @@
 //! Cache transfer is available on every platform and never loads a model.
-use crate::{cache, Error, Processor, Result};
+use crate::{Error, Processor, Result, cache};
 use std::{fs, path::Path};
 
 pub const FILES: [&str; 5] = [
@@ -11,6 +11,21 @@ pub const FILES: [&str; 5] = [
 ];
 
 impl Processor {
+    /// Canonical names derived only from the validated format enum. The manifest
+    /// never supplies paths; legacy caches use the original float WAV names.
+    pub fn portable_files(path: &Path) -> Result<[String; 5]> {
+        let manifest = cache::manifest(path)?;
+        if !crate::is_current(&manifest.analysis)
+            || manifest
+                .storage
+                .as_ref()
+                .is_some_and(|s| !s.valid(manifest.analysis.duration_sec))
+        {
+            return Err(Error::Model("Invalid stem storage metadata".into()));
+        }
+        Ok(manifest.files())
+    }
+
     pub fn with_portable_cache<T>(
         &self,
         hash: &str,
@@ -39,23 +54,14 @@ impl Processor {
                 "Package contains incompatible or incomplete stems".into(),
             ));
         }
-        // Playback must never receive non-finite samples from an imported file.
-        for name in &FILES[1..] {
-            let mut wav = hound::WavReader::open(path.join(name))?;
-            if (wav.duration() as f64 - duration as f64 * 44100.).abs() > 4. {
+        let manifest = cache::manifest(path)?;
+        for index in 0..4 {
+            // Use the same strict decoder and integrity checks as playback.
+            let pcm = cache::audio(path, &manifest, index, active)?;
+            if (pcm.len() as f64 / 2. - duration as f64 * 44100.).abs() > 4. {
                 return Err(Error::Model(
                     "Package stem duration is not aligned with its track".into(),
                 ));
-            }
-            for (index, sample) in wav.samples::<f32>().enumerate() {
-                if index % 16384 == 0 {
-                    crate::check(active)?;
-                }
-                if !sample?.is_finite() {
-                    return Err(Error::Model(
-                        "Package contains non-finite stem audio".into(),
-                    ));
-                }
             }
         }
         Ok(())
@@ -82,9 +88,9 @@ impl Processor {
         let staging = tempfile::Builder::new()
             .prefix(".import-")
             .tempdir_in(&self.cache)?;
-        for name in FILES {
+        for name in Self::portable_files(source)? {
             crate::check(active)?;
-            fs::copy(source.join(name), staging.path().join(name))?;
+            fs::copy(source.join(&name), staging.path().join(&name))?;
             fs::File::open(staging.path().join(name))?.sync_all()?;
         }
         if target.exists() {

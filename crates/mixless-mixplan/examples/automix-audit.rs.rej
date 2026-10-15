@@ -1,0 +1,39 @@
+@@ -23,6 +24,7 @@
+     }
+ 
+     let mut results = Vec::new();
++    let mut pair_data = Vec::new();
+     let pair = std::env::var("PAIR")
+         .ok()
+         .and_then(|s| s.parse::<usize>().ok());
+@@ -74,6 +76,16 @@
+             }
+         };
+ 
++        pair_data.push(serde_json::json!({
++            "pair": [a.track_id, b.track_id],
++            "strategy": format!("{:?}", summary.strategy).to_lowercase(),
++            "score": summary.score,
++            "used_fallback": summary.used_fallback,
++            "length_bars": summary.length_bars,
++            "tempo_a": a.tempo.as_ref().map(|t| t.global_bpm),
++            "tempo_b": b.tempo.as_ref().map(|t| t.global_bpm),
++        }));
++
+         if quiet {
+             continue;
+         }
+@@ -88,6 +100,13 @@
+         }
+     }
+ 
++    if json_out {
++        let output = serde_json::json!({
++            "pairs": pair_data,
++        });
++        println!("{}", serde_json::to_string_pretty(&output)?);
++        return Ok(());
++    }
+     if quiet {
+         let mut sites: HashMap<&str, usize> = HashMap::new();
+         for result in &results {

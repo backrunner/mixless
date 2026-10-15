@@ -3,7 +3,7 @@
 use super::*;
 use mixless_protocol::{Polyline, StemKind, StemMix};
 
-pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
+pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan, stem_playback: bool) {
     // A stem-layered candidate already carries deliberate envelopes.
     if plan.stem_mix.is_some() {
         return;
@@ -148,7 +148,42 @@ pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
             line.nodes.push((last, line.nodes.last().unwrap().1));
         }
     }
+    // This relies on stem playback, which the plan then requires.
+    if stem_playback && enabled[0] && release_mid(plan, &result.outgoing[StemKind::Vocals.index()])
+    {
+        plan.requires_stems = true;
+    }
     plan.stem_mix = Some(result);
+}
+
+/// Whole-track vocal protection keeps the incoming mids down until the
+/// outgoing voice has faded. Once the outgoing vocal stem is out that cut only
+/// leaves an energy hole, so release it as the stem leaves. Returns whether
+/// there was a cut to release; the caller must require stem playback.
+fn release_mid(plan: &mut MixPlan, outgoing_vocal: &Polyline) -> bool {
+    let mid = &mut plan.lanes.eq_b.mid;
+    if !mid.nodes.iter().any(|(_, db)| *db < -0.5) {
+        return false;
+    }
+    let floor = 0.18;
+    // Sample on both grids so the release follows the stem, not the spacing
+    // of the original EQ nodes.
+    let mut points: Vec<f32> = mid
+        .nodes
+        .iter()
+        .chain(&outgoing_vocal.nodes)
+        .map(|(u, _)| *u)
+        .collect();
+    points.sort_by(f32::total_cmp);
+    points.dedup_by(|a, b| (*a - *b).abs() < 0.0001);
+    mid.nodes = points
+        .into_iter()
+        .map(|u| {
+            let present = ((outgoing_vocal.sample(u) - floor) / (1. - floor)).clamp(0., 1.);
+            (u, mid.sample(u) * present)
+        })
+        .collect();
+    true
 }
 
 /// Drum-layered blend: the incoming deck plays drums alone until the handoff,
@@ -227,6 +262,7 @@ pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
                 .push((last, gain(last, stem, false)));
         }
     }
+    release_mid(plan, &result.outgoing[StemKind::Vocals.index()]);
     plan.requires_stems = true;
     plan.stem_mix = Some(result);
 }

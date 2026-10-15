@@ -1,4 +1,7 @@
 use crate::Result;
+use crate::storage::{Manifest, NAMES};
+#[cfg(stems_ort)]
+use crate::storage::{RATE, Storage, StorageFormat};
 #[cfg(stems_ort)]
 use crate::{Error, Stems};
 use mixless_protocol::StemAnalysis;
@@ -32,10 +35,11 @@ fn read_version(dir: &Path, duration: f32, version: u32) -> Result<Option<StemAn
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    let analysis: StemAnalysis = match serde_json::from_slice(&data) {
+    let manifest: Manifest = match serde_json::from_slice(&data) {
         Ok(a) => a,
         Err(_) => return Ok(None),
     };
+    let analysis = &manifest.analysis;
     if analysis.version != version
         || analysis.separator_sha256 != crate::models::SEPARATOR_HASH
         || analysis.notes_sha256 != crate::models::NOTES_HASH
@@ -43,75 +47,157 @@ fn read_version(dir: &Path, duration: f32, version: u32) -> Result<Option<StemAn
     {
         return Ok(None);
     }
-    // A manifest alone cannot make an incomplete audio cache usable.
-    for name in ["vocals", "drums", "instruments", "bass"] {
-        if version == 1 && name == "bass" {
-            continue;
+    if let Some(storage) = &manifest.storage {
+        if version != crate::VERSION || !storage.valid(duration) {
+            return Ok(None);
         }
-        let path = dir.join(format!("{name}.wav"));
-        let Ok(wav) = hound::WavReader::open(&path) else {
-            return Ok(None);
-        };
-        if wav.spec().channels != 2
-            || wav.spec().sample_rate != 44100
-            || wav.spec().bits_per_sample != 32
-            || wav.spec().sample_format != hound::SampleFormat::Float
-            || (wav.duration() as f32 / 44100. - duration).abs() > 0.05
-            || fs::metadata(path)?.len() < wav.duration() as u64 * 8
-        {
-            return Ok(None);
+        for (i, name) in manifest.files()[1..].iter().enumerate() {
+            let path = dir.join(name);
+            if fs::metadata(&path).map(|m| m.len()).ok() != Some(storage.bytes[i])
+                || crate::codec::probe(&path, storage.format).ok() != Some(storage.frames)
+            {
+                return Ok(None);
+            }
+        }
+    } else {
+        // Legacy float WAV caches remain readable without being rewritten.
+        for name in NAMES {
+            if version == 1 && name == "bass" {
+                continue;
+            }
+            let path = dir.join(format!("{name}.wav"));
+            let Ok(wav) = hound::WavReader::open(&path) else {
+                return Ok(None);
+            };
+            if wav.spec().channels != 2
+                || wav.spec().sample_rate != 44100
+                || wav.spec().bits_per_sample != 32
+                || wav.spec().sample_format != hound::SampleFormat::Float
+                || (wav.duration() as f32 / 44100. - duration).abs() > 0.05
+                || fs::metadata(path)?.len() < wav.duration() as u64 * 8
+            {
+                return Ok(None);
+            }
         }
     }
     let _ = fs::File::open(dir.join("analysis.json"))
         .and_then(|f| f.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now())));
-    Ok(Some(analysis))
+    Ok(Some(manifest.analysis))
+}
+
+pub(crate) fn manifest(dir: &Path) -> Result<Manifest> {
+    let data = fs::read(dir.join("analysis.json"))?;
+    Ok(serde_json::from_slice(&data)?)
+}
+
+pub(crate) fn audio(
+    dir: &Path,
+    manifest: &Manifest,
+    index: usize,
+    active: &impl Fn() -> bool,
+) -> Result<Vec<f32>> {
+    let path = dir.join(&manifest.files()[index + 1]);
+    let (frames, gain) = if let Some(storage) = &manifest.storage {
+        if !storage.valid(manifest.analysis.duration_sec)
+            || fs::metadata(&path)?.len() != storage.bytes[index]
+            || digest(&path, active)? != storage.blake3[index]
+        {
+            return Err(crate::Error::Model("Corrupt stem cache".into()));
+        }
+        (storage.frames, storage.gain[index])
+    } else {
+        (hound::WavReader::open(&path)?.duration() as u64, 1.)
+    };
+    crate::codec::read(&path, manifest.format(), frames, gain, active)
+}
+
+fn digest(path: &Path, active: &impl Fn() -> bool) -> Result<String> {
+    use std::io::Read;
+    let mut file = fs::File::open(path)?;
+    let mut hash = blake3::Hasher::new();
+    let mut block = [0; 65536];
+    loop {
+        crate::check(active)?;
+        let count = file.read(&mut block)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&block[..count]);
+    }
+    Ok(hash.finalize().to_hex().to_string())
+}
+
+#[cfg(all(test, stems_ort))]
+pub fn save(dir: &Path, stems: &Stems, analysis: &StemAnalysis) -> Result<()> {
+    save_as(dir, stems, analysis, StorageFormat::Wav, &|| true)
 }
 
 #[cfg(stems_ort)]
-pub fn save(dir: &Path, stems: &Stems, analysis: &StemAnalysis) -> Result<()> {
+pub(crate) fn save_as(
+    dir: &Path,
+    stems: &Stems,
+    analysis: &StemAnalysis,
+    format: StorageFormat,
+    active: &impl Fn() -> bool,
+) -> Result<()> {
+    let frames = stems.audio[0].len() as u64 / 2;
+    if !crate::is_current(analysis)
+        || frames == 0
+        || (frames as f64 / RATE as f64 - analysis.duration_sec as f64).abs() > 0.05
+        || stems.audio.iter().any(|s| s.len() != frames as usize * 2)
+        || stems.bass.len() != frames as usize * 2
+    {
+        return Err(Error::Model("Invalid stem cache input".into()));
+    }
     let root = dir
         .parent()
         .ok_or_else(|| Error::Model("Cache path has no parent".into()))?;
     fs::create_dir_all(root)?;
-    let temp = dir.with_extension(format!("{}.partial", std::process::id()));
-    if temp.exists() {
-        fs::remove_dir_all(&temp)?;
+    let temp = tempfile::Builder::new()
+        .prefix(".stems-")
+        .suffix(".partial")
+        .tempdir_in(root)?;
+    let mut storage = Storage {
+        version: 1,
+        format,
+        frames,
+        gain: [1.; 4],
+        bytes: [0; 4],
+        blake3: Default::default(),
+    };
+    for (i, name) in NAMES.iter().enumerate() {
+        let path = temp.path().join(format!("{name}.{}", format.extension()));
+        let samples = if i == 3 { &stems.bass } else { &stems.audio[i] };
+        storage.gain[i] = crate::codec::write(&path, samples, format, active)?;
+        storage.bytes[i] = fs::metadata(&path)?.len();
+        storage.blake3[i] = digest(&path, active)?;
+        // Refuse to publish an encoder output that cannot be decoded with the
+        // exact production timing/PCM contract, including the final samples.
+        crate::codec::read(&path, format, frames, storage.gain[i], active).map_err(
+            |e| match e {
+                Error::Cancelled => Error::Cancelled,
+                _ => Error::Model(format!("{name}: {e}")),
+            },
+        )?;
+        fs::File::open(path)?.sync_all()?;
     }
-    fs::create_dir(&temp)?;
-    let result = (|| {
-        for (i, name) in ["vocals", "drums", "instruments", "bass"]
-            .iter()
-            .enumerate()
-        {
-            let path = temp.join(format!("{name}.wav"));
-            let mut wav = hound::WavWriter::create(
-                &path,
-                hound::WavSpec {
-                    channels: 2,
-                    sample_rate: 44100,
-                    bits_per_sample: 32,
-                    sample_format: hound::SampleFormat::Float,
-                },
-            )?;
-            let samples = if i == 3 { &stems.bass } else { &stems.audio[i] };
-            for &sample in samples {
-                wav.write_sample(sample)?;
-            }
-            wav.finalize()?;
-            fs::File::open(path)?.sync_all()?;
-        }
-        fs::write(temp.join("analysis.json"), serde_json::to_vec(analysis)?)?;
-        fs::File::open(temp.join("analysis.json"))?.sync_all()?;
-        if dir.exists() {
-            fs::remove_dir_all(dir)?;
-        }
-        fs::rename(&temp, dir)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_dir_all(&temp);
+    let manifest = Manifest {
+        analysis: analysis.clone(),
+        storage: Some(storage),
+    };
+    fs::write(
+        temp.path().join("analysis.json"),
+        serde_json::to_vec(&manifest)?,
+    )?;
+    fs::File::open(temp.path().join("analysis.json"))?.sync_all()?;
+    crate::check(active)?;
+    if dir.exists() {
+        fs::remove_dir_all(dir)?;
     }
-    result
+    fs::rename(temp.path(), dir)?;
+    #[cfg(unix)]
+    fs::File::open(root)?.sync_all()?;
+    Ok(())
 }
 
 /// Published entries are content-keyed 64-hex directories; `.partial`

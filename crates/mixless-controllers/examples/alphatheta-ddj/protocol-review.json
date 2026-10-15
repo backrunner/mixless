@@ -1,0 +1,391 @@
+[
+  {
+    "model": "DDJ-1000",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-1000/DDJ-1000_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–2, 4–7: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "28d68d514774daa81e603d9a8709105283f38fbc944650671971ecf57cb95d11",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Use the first HOT CUE page. Loop IN/OUT and display commands are unmapped."
+  },
+  {
+    "model": "DDJ-1000SRT",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/firmwares/dj-controllers/DDJ-1000SRT/DDJ-1000SRT_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–2, 4–6: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "677eae60319d9fa3237b93694b603677aba210e08c11cc4a6a565379ce6a58ee",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Browser encoder press loads the selected track into its deck. Grid-edit messages are unmapped."
+  },
+  {
+    "model": "DDJ-800",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-800/DDJ-800_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–2, 4–7: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "1a9ff6d4cb4db440e572cc2736c5c7b20eca054ca2a5ace58065744507a97a3a",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Use the first HOT CUE page. RELOOP/EXIT toggles the current mixless loop."
+  },
+  {
+    "model": "DDJ-FLX10",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX10/DDJ-FLX10_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–2, 4–5: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "c6fbe89c909bdabed911d315a35fc6c00c5af45ec4dd66ef20f49e86e90ac26c",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Use the first HOT CUE page. Part separation, Part FX, jog displays and manual loop controls are unmapped."
+  },
+  {
+    "model": "DDJ-FLX6-GT",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX6/DDJ-FLX6_MIDI_message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "Shared FLX6 list, pp. 1–2, 4–7: deck, mixer, browser, hot cue pads"
+      },
+      {
+        "url": "https://support.alphatheta.com/en-us/articles/4404631697945",
+        "revision": "FLX6/FLX6-GT compatibility article",
+        "section": "Shared MIDI message list; utility setting for other DJ software"
+      }
+    ],
+    "pdf_sha256": "a12861c81f1550c35ae446a311951ade2a51cecfc2fd07081f5c405a4f3cfbc2",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Select the utility mode for other DJ software. Merge FX, Jog Cutter and Sample Scratch are unmapped. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-FLX6",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX6/DDJ-FLX6_MIDI_message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–2, 4–7: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "a12861c81f1550c35ae446a311951ade2a51cecfc2fd07081f5c405a4f3cfbc2",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Select the utility mode for other DJ software. Merge FX, Jog Cutter and Sample Scratch are unmapped. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-GRV6",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-GRV6/DDJ-GRV6_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: browser, deck, mixer, filter, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "211c4221a8a0cc0c4615ed397b73c0b89242a43c1c4ca4ba0f00e57b708ddb3e",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Groove Circuit, drum replacement and other pad banks are unmapped. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-REV5",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-REV5/DDJ-REV5_MIDI_message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–6: browser, deck, mixer, Shift, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "577af3726e3e97fcaee25dc104a4e4ef42d418f6808f46bfb3eb284a17b67791",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Disable LOOP options in the setting utility. Jog Touch is unmapped because the official table's CC type and Note status conflict. STEMS, BPM Transition and AUX are unmapped."
+  },
+  {
+    "model": "DDJ-REV7",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-REV7/DDJ-REV7_MIDI_message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–6: browser, deck, mixer, Shift, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "22b9306a15704ef0938edd6f4278be4d1823ca492e5aa10d7f6ab0e82ab0b50a",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 103,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Disable LOOP options in the setting utility. START/STOP controls playback. Motor control, displays, Instant Scratch and the headphone cue fader are unmapped. Use cue monitoring in the workspace."
+  },
+  {
+    "model": "DDJ-RR",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-RR/DDJ-RR_MIDI_Message_List_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "aae9c77364e453907c4bc30cd35b1dd49a321a05e472cf62005a212113f612e9",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Other pad modes and manual loop controls are unmapped. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-RX",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-RX/DDJ-RX_List_of_MIDI_Message_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "f3228c2dbf2335ed8be00fb9ba9f3050db350a91d024ece244b0a3abc3bf07b4",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Master and headphone knobs are hardware controls. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-RZ",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-RZ/DDJ-RZ_MIDI_Message_List_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–3, 5: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "d6860c824e9bf825f7609276e332632bf6602a087c6c2afe70325479784e9859",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SP1",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SP1/DDJ-SP1_List_of_MIDI_Messages_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: Sync, browser, hot cue pads, Shift"
+      }
+    ],
+    "pdf_sha256": "97e2eae5bc98467bfaf19a131fd99df3086f770c84c6ff841145ad08e2d9b3fe",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 79,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Pad accessory. Use deck selection 1/2 and HOT CUE mode. There are no playback, jog, mixer or audio-interface mappings."
+  },
+  {
+    "model": "DDJ-SR",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SR/DDJ-SR_List_of_MIDI_Messages_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–3: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "d25e32be6e436c9def8891b216082b40e63052a2900f7b7fc9ee0dbb8c9d3138",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Master and headphone knobs are hardware controls. Pad Plus and other pad banks are unmapped. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SR2",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SR2/DDJ-SR2_MIDI_Message_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "d7a665835c7278838ba64b1dc4ee7d01a785045e3fe028597c87e104a084356f",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Pitch Play and other pad banks are unmapped. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SX",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SX/DDJ-SX_List_of_MIDI_Messages_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "f76c9b061000812be7a54616e021468b6fddca8e0022401b67b8e03da1c7a44a",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Master and headphone knobs are hardware controls. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SX2",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SX2/DDJ-SX2_List_of_MIDI_Message_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "9f7fe1a7295570071c6bd523d215aa410181aa70cb72ffacf659e1a27ca602d9",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Master and headphone knobs are hardware controls. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SX3",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SX3/DDJ-SX3_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "1cc35dc29a1df56ebb22cc4d19a87913de5d2b95b770d7d93d196a8e755bb41f",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Master and headphone knobs are hardware controls. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SZ",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SZ/DDJ-SZ_MIDI_Message_List_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–3: deck, mixer, browser, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "a2f2bd9024416c7d573ea38a0983f77cf3e7cfe5aab62a46b1ac36ca1a229b5e",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 105,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Master LEVEL is unmapped because the official channel and status columns disagree. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-SZ2",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-SZ2/DDJ-SZ2_MIDI_Message_v100_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: browser, deck, mixer, hot cue pads"
+      }
+    ],
+    "pdf_sha256": "0463cc87deb73e96c88433ee43d5b00108101da9e3b0fbcba5f3e26e0445de81",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 109,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. The per-channel MASTER LEVEL messages are unmapped; use the workspace master control. Select the computer input for channels 1/2. Browser push is unmapped; use the deck LOAD buttons."
+  },
+  {
+    "model": "DDJ-WeGO2",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-WeGO2/DDJWeGO2ListofMIDIMessagealgoriddimE.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 2–3: deck, mixer, browser, Shift and outputs"
+      }
+    ],
+    "pdf_sha256": "377e08f754b3ac9e5f8f8c829f61998b1165f5b160633a0bcd2b16e32a25f87b",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 73,
+    "exclusions": "Two decks, four hot cues per deck. Select HOT CUE mode; Shift + cue clears it. Hardware controls master/headphone volume. Other pad modes, effects and fader start are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. The loop-size encoder is unmapped."
+  },
+  {
+    "model": "DDJ-WeGO4",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-WeGO4/DDJ-WeGO4_List_of_MIDI_Message_E.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–2: deck, mixer, browser, Shift and outputs"
+      }
+    ],
+    "pdf_sha256": "9902e9e310a880dd7b356a724e0d80f0f2ab3c06a12341f516af1991b816f106",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 73,
+    "exclusions": "Two decks, four hot cues per deck. Select HOT CUE mode; Shift + cue clears it. Hardware controls master/headphone volume. Other pad modes, effects and fader start are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending."
+  },
+  {
+    "model": "DDJ-XP1",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-XP1/DDJ-XP1_List_of_MIDI_Message_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–3, 5: Sync, loop, browser, pads, Shift"
+      }
+    ],
+    "pdf_sha256": "ff0e7c6f5a28a729036f959336bbb583739fb5fad7a92def07ffb0b29a136dfa",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 87,
+    "exclusions": "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, effects, fader start, displays and hardware audio routing are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending. Pad accessory. Use the first eight HOT CUE pads. Remaining pads, Slide FX and other banks are unmapped. Use a separate audio device."
+  },
+  {
+    "model": "DDJ-XP2",
+    "sources": [
+      {
+        "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-XP2/DDJ-XP2_MIDI_Message_List_E1.pdf",
+        "revision": "Manufacturer MIDI list",
+        "section": "pp. 1–4: Sync, loop, browser, PAD MODE 1, Shift"
+      }
+    ],
+    "pdf_sha256": "d637c3f5206a475988e6fb98dadbf7bec4abb7ee59b2654671ea3a6aebeb8be6",
+    "review_date": "2026-10-13",
+    "protocol_verified": true,
+    "hardware_verified": false,
+    "asserted_frames": 83,
+    "exclusions": "Decks 1/2 only. Select PAD MODE 1; Shift + pad clears a cue. Pad accessory. Select PAD MODE 1. Physical pads 1–8 map to mixless cues 1–8. Remaining pads, Slide FX and other banks are unmapped. Use a separate audio device. Hardware testing pending."
+  }
+]

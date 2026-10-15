@@ -68,6 +68,17 @@ ship Traktor scripts, translate its mapping logic, load proprietary NI libraries
 or depend on a running Traktor process. Each implemented device retains its own
 source and replay evidence.
 
+## Official documentation refresh
+
+On 2026-10-13, the official MIDI-mode and Controller Editor articles were
+rechecked for the DJ-controller expansion. [MIDI mode](https://support.native-instruments.com/support/solutions/articles/69000880031-native-instruments-switching-your-controller-to-midi-mode)
+and [custom template support](https://support.native-instruments.com/support/solutions/articles/69000879868-native-instruments-what-is-controller-editor-)
+establish interfaces and user assignments, not a fixed per-control numeric table.
+The reviewed MX2, X1 MK3 and S4 MK3 documentation did not supply a complete numeric
+message map for a new preset. Existing F1 and original X1 template profiles are
+retained; no new NI generation is inferred from them. Standalone mixers are
+excluded from this expansion; the older Z1/Z2 findings below remain research.
+
 ## Current coverage
 
 | Model | MIDI mode | Included mapping | Native protocol |

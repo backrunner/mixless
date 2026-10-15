@@ -157,15 +157,24 @@ impl Shared {
                 let s = &self.decks[deck.index()];
                 let maximum = s.frames.load(Ordering::Relaxed).saturating_sub(1) as f64;
                 if s.jog_touch.load(Ordering::Acquire) {
-                    let _ =
-                        s.jog_target
-                            .fetch_update(Ordering::Release, Ordering::Relaxed, |target| {
-                                Some(
-                                    ((target as f64 / 65536.0 + delta_frames as f64)
-                                        .clamp(0.0, maximum)
-                                        * 65536.0) as u64,
-                                )
-                            });
+                    // Retain the atomic read/modify/write and memory ordering.
+                    // compare_exchange_weak also supports our Rust 1.88 minimum;
+                    // try_update was still unstable in that release.
+                    let mut target = s.jog_target.load(Ordering::Relaxed);
+                    loop {
+                        let next = ((target as f64 / 65536.0 + delta_frames as f64)
+                            .clamp(0.0, maximum)
+                            * 65536.0) as u64;
+                        match s.jog_target.compare_exchange_weak(
+                            target,
+                            next,
+                            Ordering::Release,
+                            Ordering::Relaxed,
+                        ) {
+                            Ok(_) => break,
+                            Err(current) => target = current,
+                        }
+                    }
                 } else {
                     s.seek_to.store(
                         ((s.playhead_frames() + delta_frames as f64).clamp(0.0, maximum) * 65536.0)

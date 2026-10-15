@@ -1,5 +1,5 @@
 //! Loading/resampling only, off the UI and audio callback; never starts inference.
-use crate::{cache, Error, Processor, Result};
+use crate::{Error, Processor, Result, cache};
 use std::sync::Arc;
 
 impl Processor {
@@ -38,19 +38,9 @@ impl Processor {
         {
             return Ok(None);
         }
-        let read = |name: &str| -> Result<Vec<f32>> {
-            let mut wav = hound::WavReader::open(root.join(format!("{name}.wav")))?;
-            let spec = wav.spec();
-            if spec.channels != 2
-                || spec.sample_rate != 44100
-                || spec.bits_per_sample != 32
-                || spec.sample_format != hound::SampleFormat::Float
-            {
-                return Err(Error::Model("Unsupported stem cache format".into()));
-            }
-            let samples: Vec<f32> = wav
-                .samples::<f32>()
-                .collect::<std::result::Result<_, _>>()?;
+        let manifest = cache::manifest(&root)?;
+        let read = |index: usize| -> Result<Vec<f32>> {
+            let samples = cache::audio(&root, &manifest, index, &|| true)?;
             let mut aligned = crate::resample::convert(&samples, 2, 44100, sample_rate);
             if aligned.len().abs_diff(frames as usize * 2) > 4 {
                 return Err(Error::Model("Stem duration alignment mismatch".into()));
@@ -59,14 +49,9 @@ impl Processor {
             Ok(aligned)
         };
         let audio = if legacy {
-            mixless_engine::StemBuffer::new(sample_rate, read("vocals")?, read("drums")?)
+            mixless_engine::StemBuffer::new(sample_rate, read(0)?, read(1)?)
         } else {
-            mixless_engine::StemBuffer::with_bass(
-                sample_rate,
-                read("vocals")?,
-                read("drums")?,
-                read("bass")?,
-            )
+            mixless_engine::StemBuffer::with_bass(sample_rate, read(0)?, read(1)?, read(3)?)
         }
         .map_err(|e| Error::Model(e.into()))?;
         Ok(Some(Arc::new(audio)))

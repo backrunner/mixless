@@ -74,7 +74,7 @@ fn stem_envelopes_follow_evidence_restore_incoming_and_leave_cuts_untouched() {
     plan.lanes.gain_b = Polyline {
         nodes: vec![(0., -36.), (16., 0.)],
     };
-    crate::stem_mix::arrange(&ctx, &mut plan);
+    crate::stem_mix::arrange(&ctx, &mut plan, false);
     let lanes = plan.stem_mix.as_ref().unwrap();
     assert!(lanes.incoming[0].sample(4.) < 0.5);
     assert!(lanes.outgoing[0].sample(12.) < 0.5);
@@ -86,7 +86,7 @@ fn stem_envelopes_follow_evidence_restore_incoming_and_leave_cuts_untouched() {
     let mut cut = plan.clone();
     cut.summary.as_mut().unwrap().length_bars = 0;
     cut.stem_mix = None;
-    crate::stem_mix::arrange(&ctx, &mut cut);
+    crate::stem_mix::arrange(&ctx, &mut cut, false);
     assert!(cut.stem_mix.is_none());
     let mut missing = b.clone();
     missing.stems = None;
@@ -95,7 +95,7 @@ fn stem_envelopes_follow_evidence_restore_incoming_and_leave_cuts_untouched() {
         ..ctx
     };
     plan.stem_mix = None;
-    crate::stem_mix::arrange(&ctx, &mut plan);
+    crate::stem_mix::arrange(&ctx, &mut plan, false);
     assert!(plan.stem_mix.is_none());
 }
 #[test]
@@ -478,4 +478,137 @@ fn transcribed_progression_changes_matching_with_pitch_offset_and_rejects_corrup
         .failure_reason
         .as_deref()
         .is_some_and(|e| e.contains("stem")));
+}
+
+#[test]
+fn unmatched_tempi_hand_the_beat_over_on_one_line_with_stems() {
+    let mut a = with_stems(crate::tests::track(
+        1,
+        175.,
+        "8A",
+        SectionLabel::Drop,
+        96,
+        0.9,
+        0.3,
+    ));
+    let edge = 80. * 240. / 175.;
+    a.sections = vec![
+        mixless_protocol::Section {
+            start_sec: 0.,
+            end_sec: edge,
+            label: SectionLabel::Drop,
+        },
+        mixless_protocol::Section {
+            start_sec: edge,
+            end_sec: a.duration_sec,
+            label: SectionLabel::Outro,
+        },
+    ];
+    let mut b = with_stems(crate::tests::track(
+        2,
+        120.,
+        "8A",
+        SectionLabel::Intro,
+        64,
+        0.9,
+        0.3,
+    ));
+    for track in [&mut a, &mut b] {
+        for frame in &mut track.stems.as_mut().unwrap().frames {
+            frame.vocal_activity = 0.;
+        }
+        for bar in &mut track.bars {
+            bar.vocal_presence = 0.;
+            bar.vocal_confidence = Some(0.);
+        }
+    }
+    let planner = Planner::with_options(PlannerOptions {
+        stem_playback: true,
+        ..Default::default()
+    });
+    let p = planner.plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(p.failure_reason.is_none(), "{:?}", p.failure_reason);
+    let n = p.summary.as_ref().unwrap().length_bars as f32;
+    if p.requires_stems && p.transition_mode == Some(mixless_protocol::TransitionMode::PhraseBridge)
+    {
+        let stems = p.stem_mix.as_ref().unwrap();
+        // One instant: A's drums are gone within a sixteenth of a bar while
+        // B is already audible at full trim on the same downbeat.
+        assert!(stems.outgoing[StemKind::Drums.index()].sample(0.1) < 0.01);
+        assert!(
+            p.lanes.gain_b.sample(0.) > -6.,
+            "{:?}",
+            p.lanes.gain_b.nodes.first()
+        );
+        assert!(p.lanes.xfader.sample(0.) >= 0.);
+        assert!(p.lanes.gain_a.sample(n) <= -90.);
+        assert!((p.lanes.rate_b.sample(0.) - 1.).abs() < 1e-6, "native rate");
+    } else {
+        panic!(
+            "expected a stem strip-out, got {:?} {:?}",
+            p.transition_mode, p.summary
+        );
+    }
+}
+
+#[test]
+fn a_vocal_stem_exchange_releases_the_incoming_mid_cut_only_with_stem_playback() {
+    let a = with_stems(crate::tests::track(
+        1,
+        120.,
+        "8A",
+        SectionLabel::Outro,
+        32,
+        0.8,
+        0.2,
+    ));
+    let mut b = a.clone();
+    b.track_id = TrackId(2);
+    let ctx = PlanContext {
+        outgoing: &a,
+        incoming: &b,
+        cues_out: &[],
+        cues_in: &[],
+        offset_a: Default::default(),
+        offset_b: Default::default(),
+    };
+    let line = |nodes: &[(f32, f32)]| Polyline {
+        nodes: nodes.to_vec(),
+    };
+    let mut plan = MixPlan {
+        summary: Some(mixless_protocol::MixPlanSummary {
+            pair: (a.track_id, b.track_id),
+            strategy: mixless_protocol::StrategyId::PhraseBlend,
+            score: 1.,
+            used_fallback: false,
+            length_bars: 16,
+        }),
+        clock: line(&[(0., 0.), (16., 32.)]),
+        outgoing_source: line(&[(0., 0.), (16., 32.)]),
+        incoming_source: line(&[(0., 0.), (16., 32.)]),
+        ..Default::default()
+    };
+    plan.lanes.gain_a = line(&[(0., 0.), (16., -36.)]);
+    plan.lanes.gain_b = line(&[(0., -36.), (16., 0.)]);
+    // Whole-track vocal protection, as vocals::protect leaves it.
+    plan.lanes.eq_b.mid = line(&[(0., -18.), (14., -18.), (16., 0.)]);
+    let mut without = plan.clone();
+    crate::stem_mix::arrange(&ctx, &mut without, false);
+    assert_eq!(without.lanes.eq_b.mid.sample(13.), -18.);
+    assert!(!without.requires_stems);
+    crate::stem_mix::arrange(&ctx, &mut plan, true);
+    let vocal = &plan.stem_mix.as_ref().unwrap().outgoing[StemKind::Vocals.index()];
+    assert!(vocal.sample(13.) < 0.2);
+    assert!(
+        plan.lanes.eq_b.mid.sample(13.) > -3.,
+        "{:?}",
+        plan.lanes.eq_b.mid.sample(13.)
+    );
+    assert!(
+        plan.lanes.eq_b.mid.sample(1.) < -17.,
+        "still protected while A sings: {} vocal {}",
+        plan.lanes.eq_b.mid.sample(1.),
+        vocal.sample(1.)
+    );
+    assert!(plan.requires_stems);
 }

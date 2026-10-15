@@ -100,7 +100,9 @@ pub fn import(
                 }
                 let cache = dir.join("stems");
                 fs::create_dir(&cache)?;
-                for (blob, name) in cached.iter().zip(mixless_stems::PORTABLE_FILES) {
+                extract_file(&mut pack, &cached[0], &cache.join("analysis.json"), &active)?;
+                let names = Processor::portable_files(&cache)?;
+                for (blob, name) in cached[1..].iter().zip(&names[1..]) {
                     extract_file(&mut pack, blob, &cache.join(name), &active)?;
                 }
                 Processor::validate_portable_cache(&cache, duration, &active)?;

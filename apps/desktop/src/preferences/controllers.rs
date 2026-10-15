@@ -1,7 +1,13 @@
 use super::*;
 use crate::state::url_input::UrlSelection;
+mod audio_routing;
+mod import;
+mod import_batch;
+pub(super) use audio_routing::{ControllerAudioDraft, PendingAudioRestore};
 mod input;
+mod names;
 mod panel;
+pub(super) use names::{natural_cmp, preset_label};
 
 use mixless_controllers::{ControllerPreset, DeviceAssignment, DeviceMatcher, Endpoint};
 
@@ -359,27 +365,6 @@ impl Preferences {
             d.selection.move_to(d.text.len(), false);
         }
     }
-    fn recommended_audio(&self) -> Option<mixless_controllers::AudioRecommendation> {
-        self.selected_profile().and_then(|p| p.audio).or_else(|| {
-            let device = self
-                .controller_devices
-                .iter()
-                .find(|d| Some(&d.id) == self.controller_device.as_ref())?;
-            mixless_controllers::ni_audio_recommendation(&device.name)
-        })
-    }
-    fn apply_recommended_audio(&mut self) {
-        if let Some(audio) = self.recommended_audio() {
-            self.audio.master_uid = None;
-            self.audio.cue_uid = None;
-            self.audio.master_device = Some(audio.device_name.clone());
-            self.audio.cue_device = Some(audio.device_name);
-            self.audio.master_channels = audio.master;
-            self.audio.cue_channels = audio.cue;
-            self.tab = Tab::Audio;
-            self.result(Ok(()), "Review the suggested channels, then choose Apply");
-        }
-    }
     pub(super) fn preset_actions(&self) -> Vec<(String, String)> {
         let preset = self.selected_profile();
         let mut actions = vec![("new", "New preset…"), ("import", "Import…")];
@@ -420,12 +405,42 @@ impl Preferences {
         }
     }
 
+    fn accept_preset_import(&mut self) {
+        if self.import_batch.is_some() {
+            self.accept_preset_batch();
+            return;
+        }
+        if let Some(report) = self.import_preview.clone() {
+            match self
+                .hub()
+                .and_then(|h| h.accept_import(report).map_err(|e| e.to_string()))
+            {
+                Ok(id) => {
+                    self.selected_preset = Some(id);
+                    self.import_preview = None;
+                    self.result(Ok(()), "Preset imported; select a device to apply it");
+                }
+                Err(e) => self.result(Err(e), ""),
+            }
+        }
+    }
+
     pub(super) fn controller_dialog(
         &self,
         height: f32,
         window: &Window,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
+        if let Some(report) = &self.import_preview {
+            return Self::controller_dialog_overlay(
+                self.preset_import_panel(report, height, window, cx),
+            );
+        }
+        if let Some(batch) = &self.import_batch {
+            return Self::controller_dialog_overlay(
+                self.preset_batch_panel(batch, height, window, cx),
+            );
+        }
         let mut panel = div()
             .id("controller-dialog-panel")
             .debug_selector(|| "controller-dialog-panel".into())
@@ -442,71 +457,7 @@ impl Preferences {
             .rounded(px(6.))
             .shadow_lg()
             .max_h(px((height - 100.).min(650.)));
-        if let Some(report) = &self.import_preview {
-            panel = panel
-                .child(format!("Import {}", report.preset.name))
-                .when_some(report.preset.community.as_ref(), |el, c| {
-                    el.child(div().debug_selector(|| "import-community".into()).flex().flex_col().gap_1()
-                        .text_size(px(12.))
-                        .child(format!("Author: {}", c.author))
-                        .child(format!("Version: {}", c.package_version))
-                        .child(format!("License: {}", c.license)))
-                })
-                .child(report.preset.adapter.as_ref().map_or_else(|| format!(
-                    "{} inputs, {} feedback rules", report.preset.bindings.len(), report.preset.feedback.len()),
-                    |a| format!("Device adapter: {} controls", a.controls.len())))
-                .when_some(report.preset.adapter.as_ref(), |el,a| {
-                    el.child(div().debug_selector(|| "import-adapter-access".into()).flex().flex_col().gap_1()
-                        .text_size(px(11.))
-                        .child("HID access only. No files or network.")
-                        .children(a.reports.iter().map(|r| div().child(format!("{}: {} report {}, {} bytes", r.endpoint,
-                            match r.access { mixless_controllers::community::ReportAccess::Output => "Output", mixless_controllers::community::ReportAccess::FeatureWrite => "Write feature", mixless_controllers::community::ReportAccess::FeatureRead => "Read feature" }, r.report_id, r.length)))))
-                })
-                .children(
-                    report
-                        .requirements
-                        .iter()
-                        .chain(&report.conflicts)
-                        .map(|s| div().text_size(px(11.)).child(s.clone())),
-                )
-                .child("Import adds a separate preset. Apply it to a device afterwards.")
-                .child(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_2()
-                        .child(self.button(
-                            "cancel-preset-import",
-                            "Cancel",
-                            true,
-                            |s, _, _| s.import_preview = None,
-                            cx,
-                        ))
-                        .child(self.button(
-                            "accept-preset-import",
-                            "Import preset",
-                            true,
-                            |s, _, _| {
-                                if let Some(report) = s.import_preview.clone() {
-                                    match s.hub().and_then(|h| {
-                                        h.accept_import(report).map_err(|e| e.to_string())
-                                    }) {
-                                        Ok(id) => {
-                                            s.selected_preset = Some(id);
-                                            s.import_preview = None;
-                                            s.result(
-                                                Ok(()),
-                                                "Preset imported; select a device to apply it",
-                                            );
-                                        }
-                                        Err(e) => s.result(Err(e), ""),
-                                    }
-                                }
-                            },
-                            cx,
-                        )),
-                );
-        } else if let Some(d) = &self.preset_dialog {
+        if let Some(d) = &self.preset_dialog {
             let title = match d.operation {
                 PresetOperation::New => "New preset",
                 PresetOperation::Rename => "Rename preset",
@@ -572,6 +523,10 @@ impl Preferences {
         if self.error {
             panel = panel.child(div().text_color(theme::DANGER).child(self.status.clone()));
         }
+        Self::controller_dialog_overlay(panel.into_any_element())
+    }
+
+    fn controller_dialog_overlay(panel: gpui::AnyElement) -> gpui::AnyElement {
         div()
             .id("controller-dialog-backdrop")
             .absolute()

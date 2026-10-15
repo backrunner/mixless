@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "reviewed": "2026-10-12",
+  "implementation_status": "independent_implementation",
+  "strict_clean_room_verified": false,
+  "legal_clearance": "not_assessed",
+  "exposure": {
+    "research_and_implementation_separated": false,
+    "description": "The same implementation agent inspected vendor templates, Traktor QML, executable symbols and embedded configuration before implementing this change. No separated implementation team or independently approved specification existed."
+  },
+  "source_groups": [
+    {
+      "id": "ni-template-midi",
+      "source_type": "installed_vendor_template",
+      "sources": ["Controller Editor 2.8.2 / FL Studio.nckf1", "Controller Editor 2.8.2 / Serato Scratch Live 2.2.nckx1"],
+      "facts_used": ["MIDI message types and addresses", "gate button values 0 and 127", "relative encoder encoding"],
+      "implementation": "src/catalogue/native_instruments.rs",
+      "assignments": "Mixless commands were chosen independently; the original application assignments and original template files are not imported.",
+      "evidence": "NI_COMPATIBILITY.md#source-fingerprints"
+    },
+    {
+      "id": "ni-output-pairs",
+      "source_type": "installed_vendor_embedded_configuration",
+      "sources": ["Traktor Pro 4.4.1 build 22 executable"],
+      "facts_used": ["13 exact controller names", "internal-mixer Master and Monitor output channel pairs"],
+      "implementation": "src/profile.rs / ni_audio_recommendation",
+      "evidence": "research/ni/traktor-4.4.1-audit.json"
+    },
+    {
+      "id": "ni-native-research",
+      "source_type": "installed_vendor_definitions_and_symbols",
+      "sources": ["Traktor CSI QML", "Traktor factory TSI descriptor containers", "Traktor executable symbol names"],
+      "facts_used": ["symbolic control identifiers and counts", "mode and behavior observations", "presence of an NHL device abstraction"],
+      "implementation": "research only; no NI native adapter or vendor-library bridge is implemented",
+      "evidence": "NI_COMPATIBILITY.md"
+    },
+    {
+      "id": "generic-controller-and-cue-mix",
+      "source_type": "public_standard_and_project_requirements",
+      "sources": ["MIDI Association MIDI 1.0", "USB HID 1.11", "approved mixless feature requirements"],
+      "facts_used": ["channel message framing", "HID descriptor framing", "linear Cue/Master interpolation requirement"],
+      "implementation": "Independent decoding, calibration, Learn, capture, routing and engine commands",
+      "evidence": "SOURCES.md#generic-protocols-and-tests"
+    }
+  ],
+  "review_scope": {
+    "original_vendor_files_in_delivery": false,
+    "vendor_library_loading_in_ni_runtime": false,
+    "ni_mapping_algorithms_imported": false,
+    "new_mixxx_content_used": false,
+    "historical_derived_presets": "Previously removed from the working tree; Git history is not rewritten or certified clean by this audit."
+  },
+  "limitations": [
+    "Source hashes, tests and artifact checks do not certify absence of all copyright, contract or patent issues.",
+    "The artifact guard detects specific file/import regressions; it cannot detect all disguised copying or establish researcher independence.",
+    "Strict separation would require a reviewed factual specification and an implementation author who has not accessed the vendor implementation, with a separate review of affected code.",
+    "No physical NI hardware acceptance or native wire-protocol completeness is implied."
+  ],
+  "legal_references": [
+    "https://www.native-instruments.com/pages/end-user-license-agreement",
+    "https://www.copyright.gov/title17/92chap12.html",
+    "https://eur-lex.europa.eu/eli/dir/2009/24/oj"
+  ]
+}

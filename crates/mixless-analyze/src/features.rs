@@ -12,7 +12,7 @@ const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 18;
+pub const ANALYSIS_VERSION: u32 = 19;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -143,6 +143,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     // retained as a fallback, while the beat timestamps follow the local
     // periods so accelerando/section changes do not accumulate phase error.
     let phrase_beats = 16usize;
+    let low_mean = frames.iter().map(|f| f.low_onset).sum::<f32>() / frames.len().max(1) as f32;
     let mut local_bpms = Vec::new();
     let mut local_confs = Vec::new();
     let mut probe = phase;
@@ -151,7 +152,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         let start = frames.partition_point(|f| f.time < probe);
         let stop = frames.partition_point(|f| f.time < end);
         let local = &frames[start..stop];
-        let (estimate, _, local_confidence) = if local.len() >= 32 {
+        let (estimate, local_phase, local_confidence) = if local.len() >= 32 {
             tempo(local, (end - probe).max(1.0))
         } else {
             (bpm, phase, 0.)
@@ -170,7 +171,19 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             } else {
                 estimate
             };
-            if norm_conf < 0.55 || (corrected / bpm - 1.).abs() < 0.015 {
+            // Arpeggios and pads in a kick-less intro can fold onto a nearby
+            // false period; without low-band attacks there is no evidence
+            // that the drums will follow any tempo but the global one.
+            let drumless = local.iter().map(|f| f.low_onset).sum::<f32>()
+                < local.len() as f32 * low_mean * 0.35;
+            // A local period must explain this window's onsets better than
+            // simply continuing the global grid through it.
+            let global_fits = || {
+                tempo::alignment_confidence(local, bpm, phase)
+                    >= tempo::alignment_confidence(local, corrected, local_phase) - 0.05
+            };
+            if norm_conf < 0.55 || drumless || (corrected / bpm - 1.).abs() < 0.015 || global_fits()
+            {
                 bpm
             } else {
                 corrected.clamp(70., 180.)

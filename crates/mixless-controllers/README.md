@@ -3,8 +3,12 @@
 Use a declarative preset for fixed MIDI messages or HID report fields. Use a Wasm
 adapter when a HID protocol needs a handshake, checksum, sequence tracking,
 feature requests or timers. Both are portable JSON files imported through
-**Controllers → Manage → Import**. The user previews the device and
-permissions, saves a separate copy, then explicitly applies it to a device.
+**Controllers → Manage → Import**. Select one or multiple files. The user
+reviews each file and its device/adapter details, imports separate copies, then
+explicitly applies a preset to a device. Invalid files remain visible and are
+skipped; valid files are saved in one transaction, with no partial save on failure.
+Batch review accepts up to 128 files and 64 MiB of selected data. Duplicate names
+and IDs create separate copies; active assignments are preserved.
 
 The host does not fetch or execute Mixxx code, scripts, mappings or converted
 presets. Write adapters from manufacturer protocols or independently collected
@@ -44,6 +48,13 @@ target/debug/mixless-controller replay \
 
 Both examples use a fictional VID/PID and invented reports. They are development
 fixtures, not compatibility claims for any physical product.
+
+The controller list shows HID interfaces only when their VID/PID and any
+declared interface, usage page and usage match an installed controller preset.
+Unknown HID devices are hidden. Keyboards, pointers, headsets and security keys
+do not become controller candidates just because the OS exposes them through
+HID. Import the corresponding HID preset before selecting its device; applying
+it remains explicit. MIDI input discovery is unchanged.
 
 ## Build an adapter
 
@@ -105,6 +116,8 @@ metadata and checksums are not publisher authentication or a license clearance.
 
 ```sh
 target/debug/mixless-controller devices
+# For a HID controller, supply its preset to identify its interfaces:
+target/debug/mixless-controller devices preset.json
 ```
 
 Create a local `ports.json` mapping every logical endpoint to one exact device ID
@@ -116,7 +129,9 @@ target/debug/mixless-controller record preset.json ports.json capture.json 30 "f
 target/debug/mixless-controller replay preset.json capture.json
 ```
 
-`devices` only enumerates. **`record` opens the selected inputs, applies the
+`devices [PRESET]` only enumerates; the optional preset is installed in an
+isolated temporary store for this invocation. It opens no HID interfaces and
+sends no reports. **`record` opens the selected inputs, applies the
 preset and sends its initialization/feedback reports.** It uses a temporary
 configuration and starts no audio playback. Close the device in another app if
 necessary. A capture starts at connection, records input and feature replies,
@@ -168,3 +183,11 @@ and Enter for an operation marker. It records observations rather than reviewed
 replay fixtures. Do not use the existing `record` command when you need passive
 input capture: `record` applies a preset and can send initialization/feedback.
 No physical captures were performed for the NI offline release.
+
+## Built-in DJ controllers
+
+The catalogue contains 39 presets, including 34 Pioneer DJ / AlphaTheta
+controllers. [Expansion sources and coverage](examples/alphatheta-ddj/README.md)
+record per-model setup, omissions and 24 pinned replays. Built-ins remain
+protocol-verified; physical firmware, calibration, lights and routing are pending.
+The menu uses device-only names and natural model ordering; None stays first.

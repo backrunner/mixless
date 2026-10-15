@@ -1,7 +1,8 @@
 # Contributing
 
 mixless currently targets macOS. Install current stable Rust and full Xcode
-with the Metal compiler, then run `./dev.sh --check` and `./dev.sh`.
+with the Metal compiler and CMake (for the bundled FLAC encoder), then run
+`./dev.sh --check` and `./dev.sh`.
 
 `dev.sh` builds and refreshes `target/app/Mixless.app` with the workspace
 version and the `dev` channel, then launches that bundle. `--build` refreshes

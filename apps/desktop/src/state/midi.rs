@@ -39,9 +39,7 @@ impl UiState {
                 Command::PauseAutomix
             }),
             AutomixSkip if self.automix_active => self.dispatch(Command::SkipAutomix),
-            AutomixShuffle => {
-                self.automix_shuffle.fetch_xor(true, Ordering::AcqRel);
-            }
+            AutomixShuffle => self.cycle_automix_order(),
             BrowseTracks => self.midi_browse_tracks(action.value.steps()),
             TrackPrevious => self.midi_browse_tracks(-1),
             TrackNext => self.midi_browse_tracks(1),

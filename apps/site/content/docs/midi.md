@@ -15,7 +15,7 @@ Open **Preferences → Controllers**. Select a device and a named preset, then c
 
 Use **Manage → New preset…**, **Duplicate…**, **Rename…**, and **Delete…** to manage user presets. Built-ins are read-only; editing creates a user copy. Editing a shared preset for one device creates a separate copy. Applying that copy is explicit. An assigned preset must be unassigned before deletion.
 
-**Manage → Import…** previews the device requirements, number of bindings and naming conflicts. Confirmation saves a separate preset without changing device assignments. **Manage → Export…** writes only the selected native JSON preset, without local device IDs. Unsupported versions, invalid rules and failed saves leave the active configuration intact. Raw scripts and XML mappings are not imported. Community HID presets may include a sandboxed Wasm adapter with explicit report permissions.
+**Manage → Import…** accepts multiple preset JSON files. Review the result for each file and open **Details** to inspect device requirements, naming conflicts and adapter permissions. Invalid files are listed and skipped. Confirmation saves the valid presets together as separate copies without changing device assignments; a failed save leaves the whole batch unchanged. **Manage → Export…** writes only the selected native JSON preset, without local device IDs. Unsupported versions, invalid rules and failed saves leave the active configuration intact. Raw scripts and XML mappings are not imported. Community HID presets may include a sandboxed Wasm adapter with explicit report permissions.
 
 Existing `midi.json` is backed up as `midi.pre-controllers.backup.json` and migrated once into `midi.controllers.json`. The original is retained. Explicit legacy wildcard bindings remain supported.
 
@@ -39,18 +39,36 @@ Authors can use the [controller SDK and examples](https://github.com/backrunner/
 
 ## Included profiles and evidence
 
-The preset library includes **14 independently authored profiles**: twelve based on manufacturer MIDI tables and two requiring named NI Controller Editor templates:
+The preset library includes **39 independently authored profiles**: thirty-seven based on manufacturer MIDI tables and two requiring named NI Controller Editor templates:
 
 | Manufacturer | Models |
 | --- | --- |
-| Pioneer DJ / AlphaTheta | DDJ-200, DDJ-400, DDJ-FLX4, DDJ-SB, DDJ-SB2, DDJ-SB3, DDJ-RB, DDJ-REV1, DDJ-WeGO3 |
+| Pioneer DJ / AlphaTheta | DDJ-200, DDJ-400, DDJ-800, DDJ-1000, DDJ-1000SRT, DDJ-FLX2, DDJ-FLX4, DDJ-FLX6, DDJ-FLX6-GT, DDJ-FLX10, DDJ-GRV6, DDJ-RB, DDJ-REV1, DDJ-REV5, DDJ-REV7, DDJ-RR, DDJ-RX, DDJ-RZ, DDJ-SB, DDJ-SB2, DDJ-SB3, DDJ-SP1, DDJ-SR, DDJ-SR2, DDJ-SX, DDJ-SX2, DDJ-SX3, DDJ-SZ, DDJ-SZ2, DDJ-WeGO2, DDJ-WeGO3, DDJ-WeGO4, DDJ-XP1, DDJ-XP2 |
 | Hercules | DJControl Inpulse 200, DJControl Inpulse 300 (original generations) |
 | Numark | DJ2GO (original model) |
 | Native Instruments | F1 (FL Studio template), X1 MK1 (SSL 2.2 template) |
 
-Profiles cover documented transport, mixing, jog, browsing, hot cues and feedback as available on each model. Open **Details → Preset notes** for setup instructions and coverage limits. Use decks 1/2 on SB2/SB3/REV1; SB/SB2, WeGO3 and Inpulse 200 expose four hot cues per deck. Other pad modes and effects are not implied. Newer model generations need their own profiles.
+Profiles cover documented transport, mixing, jog, browsing, hot cues and feedback as available on each model. Open **Details → Preset notes** for setup instructions and coverage limits. Use deck selection 1/2 on DDJ controllers with more than two decks; SB/SB2, WeGO3 and Inpulse 200 expose four hot cues per deck. Other pad modes and effects are not implied. Newer model generations need their own profiles.
 
 All included profiles are labelled **protocol implemented**, with **hardware testing pending**. Jog sensitivity is provisional. Physical verification can follow later; inclusion does not mean the device is certified. Separate **simulation tested** and **hardware tested** evidence labels are available. Configure audio channels in Audio settings; selecting a profile does not switch outputs.
+
+Device and preset menus use natural model ordering and device-only names. **None** stays first. Standalone mixers and players are outside this expansion.
+
+The 24 added DDJ profiles follow their own official tables. Disable LOOP options in the utility for REV5/REV7. REV5 Jog Touch is omitted because the official columns conflict; REV7 has no motor, display or headphone cue-fader mapping. XP2 uses PAD MODE 1, with physical pads 1–8 assigned to mixless cues 1–8. SP1 and XP1/2 are pad accessories, with no complete mixer or audio-interface mapping. WeGO2/3/4 expose four hot cues per deck. See [official sources and coverage](https://github.com/backrunner/mixless/tree/main/crates/mixless-controllers/examples/alphatheta-ddj).
+
+## DDJ-FLX2
+
+Connect by USB and apply the **DDJ-FLX2** preset. Select HOT CUE mode with
+Shift + BEAT SYNC, then pad 1; Shift + pad clears a cue. Both decks support
+Play/Cue, Sync, touch/jog, tempo, EQ, filter, faders, headphone PFL, eight hot
+cues and LEDs. The master and headphone level knobs control software volume.
+Browse and load tracks in the workspace.
+
+Smart Fader, master CUE, other pad modes, shifted transport and fader start
+are unmapped. Configure the audio device and channel pairs manually; this
+preset does not assume FLX4's output order. USB protocol replay is tested;
+Bluetooth, physical controls, jog calibration, LEDs and audio routing await
+device testing. See the [preset and verification details](https://github.com/backrunner/mixless/tree/main/crates/mixless-controllers/examples/ddj-flx2).
 
 ## Controller audio
 

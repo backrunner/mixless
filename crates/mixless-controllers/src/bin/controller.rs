@@ -40,15 +40,21 @@ fn main() -> Result {
             let trace = read_trace(Path::new(&args[2]))?;
             print_json(&replay(&p, &trace, args.len() == 4)?)
         }
-        Some("devices") if args.len() == 1 => {
+        Some("devices") if args.len() == 1 || args.len() == 2 => {
             let temp = tempfile::tempdir()?;
             let manager = ControllerManager::start_with_config(temp.path().join("midi.json"), MidiConfig { enabled: false, input_ids: None })?;
-            for d in manager.devices() { println!("{}\t{}\t{}", if d.hid { "HID" } else { "MIDI" }, d.name, d.id); }
+            let devices = if let Some(path) = args.get(1) {
+                let preset = read_preset(Path::new(path))?;
+                validate_adapter(&preset)?;
+                manager.save_preset(preset.clone())?;
+                wait_for_devices(&manager, |devices| devices.iter().any(|d| preset.endpoints.iter().any(|e| d.compatible(&e.matcher))))
+            } else { manager.devices() };
+            for d in devices { println!("{}\t{}\t{}", if d.hid { "HID" } else { "MIDI" }, d.name, d.id); }
             Ok(())
         }
         Some("record") if args.len() == 7 => record(&args[1..]),
         Some("capture-input") if args.len() == 8 => capture_input(&args[1..]),
-        _ => Err("Usage: mixless-controller schema | targets | presets | devices\n  export-builtin ID OUTPUT\n  validate PRESET\n  fingerprint PRESET\n  pack TEMPLATE WASM_OR_WAT OUTPUT\n  pin-trace PRESET TRACE_TEMPLATE OUTPUT\n  replay PRESET TRACE [--check]\n  record PRESET PORTS_JSON OUTPUT SECONDS FIRMWARE OS\n  capture-input MIDI_OR_HID DEVICE_ID OUTPUT SECONDS MODEL FIRMWARE OS\nPORTS_JSON maps each logical endpoint to the exact ID printed by devices. Record applies the preset and sends its initialization and feedback reports.".into()),
+        _ => Err("Usage: mixless-controller schema | targets | presets | devices [PRESET]\n  export-builtin ID OUTPUT\n  validate PRESET\n  fingerprint PRESET\n  pack TEMPLATE WASM_OR_WAT OUTPUT\n  pin-trace PRESET TRACE_TEMPLATE OUTPUT\n  replay PRESET TRACE [--check]\n  record PRESET PORTS_JSON OUTPUT SECONDS FIRMWARE OS\n  capture-input MIDI_OR_HID DEVICE_ID OUTPUT SECONDS MODEL FIRMWARE OS\nPORTS_JSON maps each logical endpoint to the exact ID printed by devices. Record applies the preset and sends its initialization and feedback reports.".into()),
     }
 }
 fn validate_adapter(p: &ControllerPreset) -> Result {
@@ -56,6 +62,19 @@ fn validate_adapter(p: &ControllerPreset) -> Result {
         AdapterInstance::new(p)?;
     }
     Ok(())
+}
+fn wait_for_devices(
+    manager: &ControllerManager,
+    ready: impl Fn(&[ControllerDevice]) -> bool,
+) -> Vec<ControllerDevice> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let devices = manager.devices();
+        if ready(&devices) || std::time::Instant::now() >= deadline {
+            return devices;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 fn print_json(v: &impl serde::Serialize) -> Result {
     println!("{}", serde_json::to_string_pretty(v)?);
@@ -99,14 +118,18 @@ fn record(args: &[String]) -> Result {
             input_ids: None,
         },
     )?;
-    let devices = manager.devices();
+    // Install the identity rules before looking up HID endpoints. The discovery
+    // worker then publishes matching interfaces without opening any inputs.
+    let id = manager.save_preset(p)?;
+    let devices = wait_for_devices(&manager, |devices| {
+        ports.values().all(|id| devices.iter().any(|d| &d.id == id))
+    });
     if ports
         .values()
         .any(|id| !devices.iter().any(|d| &d.id == id))
     {
         return Err("A selected device is unavailable".into());
     }
-    let id = manager.save_preset(p)?;
     manager.start_recording(&primary, &id, &args[4], &args[5])?;
     manager.assign(DeviceAssignment {
         device_id: primary.clone(),
@@ -188,7 +211,9 @@ fn capture_input(args: &[String]) -> Result {
             stdin.consume(consumed);
         }
     });
-    eprintln!("Input observation only. No preset or output reports. Type control labels followed by Enter.");
+    eprintln!(
+        "Input observation only. No preset or output reports. Type control labels followed by Enter."
+    );
     let mut capture = mixless_controllers::capture::capture_input(
         &args[0], &args[1], seconds, &args[4], &args[5], &args[6], rx,
     )?;

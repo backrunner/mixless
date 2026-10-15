@@ -19,6 +19,7 @@ pub fn run() -> bool {
                 | "controllers"
                 | "preset-options"
                 | "preset-actions"
+                | "preset-import-batch"
                 | "controller-layout"
                 | "controller-details"
                 | "controller-calibration"
@@ -28,6 +29,7 @@ pub fn run() -> bool {
                 | "adapter-details"
                 | "adapter-mapping"
                 | "storage"
+                | "storage-loading"
         ),
         "Unknown settings scene"
     );
@@ -131,14 +133,17 @@ pub fn run() -> bool {
                 |_, cx| {
                     cx.new(|cx| {
                         let mut state = Preferences::new(core, cx);
-                        // Freeze a completed initial scan for reproducible rendering.
+                        // Freeze scan states for reproducible native rendering.
                         state.job = None;
                         state.devices = devices;
                         state.storage = storage;
+                        if scene == "storage-loading" {
+                            state.storage_scan = storage_page::ScanState::Running;
+                        }
                         state.tab = match scene.as_str() {
                             "general" => Tab::General,
                             "audio" | "audio-options" | "audio-details" => Tab::Audio,
-                            "storage" => Tab::Storage,
+                            "storage" | "storage-loading" => Tab::Storage,
                             _ => Tab::Midi,
                         };
                         if state.tab == Tab::Midi {
@@ -169,6 +174,20 @@ pub fn run() -> bool {
                                 );
                                 state.select_midi_target(MidiTarget::Play { deck: DeckId::A });
                             }
+                        }
+                        if scene == "preset-import-batch" {
+                            let paths: Vec<PathBuf> = serde_json::from_str(
+                                &std::env::var("MIXLESS_PREVIEW_PRESETS")
+                                    .expect("Set MIXLESS_PREVIEW_PRESETS for batch import review"),
+                            )
+                            .expect("JSON array of preset paths");
+                            state.import_batch = Some(
+                                state
+                                    .hub()
+                                    .expect("preview controllers")
+                                    .preview_imports(&paths)
+                                    .expect("preview batch"),
+                            );
                         }
                         if scene == "controller-calibration" {
                             let hub = state.hub().expect("offline preview controllers");

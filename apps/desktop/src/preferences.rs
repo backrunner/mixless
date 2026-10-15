@@ -27,6 +27,7 @@ mod midi;
 #[cfg(debug_assertions)]
 pub mod preview;
 mod select;
+mod storage_page;
 #[cfg(test)]
 mod tests;
 mod widgets;
@@ -72,9 +73,12 @@ enum JobResult {
         Result<Vec<MidiPort>, String>,
     ),
     Audio(Result<(), String>),
+    ControllerAudioRestored(Result<(), String>),
     Midi(Result<(), String>),
     File(Result<String, String>),
     PresetImport(Result<mixless_controllers::ImportReport, String>),
+    PresetImports(Result<mixless_controllers::ImportBatch, String>),
+    PresetsImported(Result<Vec<String>, String>, usize),
     Dir(Option<PathBuf>),
     Storage(Result<StorageReport, String>),
     StorageClear(Result<(u64, StorageReport), String>),
@@ -88,6 +92,8 @@ pub struct Preferences {
     select_ui: select::SelectState,
     window_observers: Vec<gpui::Subscription>,
     audio: AudioConfig,
+    controller_audio_draft: Option<controllers::ControllerAudioDraft>,
+    controller_audio_restore: Option<controllers::PendingAudioRestore>,
     midi: MidiConfig,
     devices: Vec<AudioDevice>,
     ports: Vec<MidiPort>,
@@ -105,6 +111,7 @@ pub struct Preferences {
     status: String,
     error: bool,
     storage: Option<StorageReport>,
+    storage_scan: storage_page::ScanState,
     confirm_clear: Option<ClearKind>,
     confirm_reset: bool,
     controller_advanced: bool,
@@ -117,6 +124,7 @@ pub struct Preferences {
     selected_preset: Option<String>,
     preset_dialog: Option<PresetDialog>,
     import_preview: Option<mixless_controllers::ImportReport>,
+    import_batch: Option<mixless_controllers::ImportBatch>,
 }
 
 impl Preferences {
@@ -131,6 +139,10 @@ impl Preferences {
             select_ui: Default::default(),
             window_observers: Vec::new(),
             audio: settings.audio,
+            controller_audio_draft: settings
+                .controller_audio_restore
+                .map(controllers::ControllerAudioDraft::from_saved),
+            controller_audio_restore: None,
             midi: settings.midi,
             devices: Vec::new(),
             ports: Vec::new(),
@@ -160,6 +172,7 @@ impl Preferences {
             error: !status.is_empty(),
             status,
             storage: None,
+            storage_scan: storage_page::ScanState::Idle,
             confirm_clear: None,
             confirm_reset: false,
             controller_advanced: false,
@@ -172,6 +185,7 @@ impl Preferences {
             selected_preset: None,
             preset_dialog: None,
             import_preview: None,
+            import_batch: None,
         };
         state.refresh();
         cx.on_release(|state, _| state.cancel_learn()).detach();
@@ -253,12 +267,38 @@ impl Preferences {
                         Err(e) => self.result(Err(e), ""),
                     }
                 }
-                Ok(JobResult::Audio(result)) => self.result(result, "Audio settings saved"),
+                Ok(JobResult::Audio(result)) => {
+                    if result.is_ok() {
+                        self.controller_audio_saved();
+                    }
+                    self.result(result, "Audio settings saved");
+                }
+                Ok(JobResult::ControllerAudioRestored(result)) => {
+                    self.finish_controller_audio_restore(result);
+                }
                 Ok(JobResult::Midi(result)) => self.result(result, "MIDI inputs saved"),
                 Ok(JobResult::PresetImport(result)) => match result {
                     Ok(report) => {
                         self.result(Ok(()), "");
+                        self.import_batch = None;
                         self.import_preview = Some(report);
+                    }
+                    Err(error) => self.result(Err(error), ""),
+                },
+                Ok(JobResult::PresetImports(result)) => match result {
+                    Ok(batch) => {
+                        self.result(Ok(()), "");
+                        self.import_preview = None;
+                        self.import_batch = Some(batch);
+                    }
+                    Err(error) => self.result(Err(error), ""),
+                },
+                Ok(JobResult::PresetsImported(result, skipped)) => match result {
+                    Ok(ids) => {
+                        self.selected_preset = ids.first().cloned();
+                        self.import_preview = None;
+                        self.import_batch = None;
+                        self.result(Ok(()), &format!("Imported {} {}; skipped {skipped} {}. Select a device to apply a preset.", ids.len(), if ids.len()==1 { "preset" } else { "presets" }, if skipped==1 { "file" } else { "files" }));
                     }
                     Err(error) => self.result(Err(error), ""),
                 },
@@ -273,10 +313,13 @@ impl Preferences {
                     ),
                     Err(error) => self.result(Err(error), ""),
                 },
-                Ok(JobResult::Storage(result)) => match result {
-                    Ok(report) => self.storage = Some(report),
-                    Err(error) => self.result(Err(error), ""),
-                },
+                Ok(JobResult::Storage(result)) => {
+                    self.storage_scan = storage_page::ScanState::Idle;
+                    match result {
+                        Ok(report) => self.storage = Some(report),
+                        Err(error) => self.result(Err(error), ""),
+                    }
+                }
                 Ok(JobResult::StorageClear(result)) => match result {
                     Ok((freed, report)) => {
                         self.storage = Some(report);
@@ -297,7 +340,16 @@ impl Preferences {
                 }
                 Err(mpsc::TryRecvError::Empty) => self.job = Some(rx),
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.result(Err("Settings operation stopped unexpectedly".into()), "")
+                    if self.storage_scan == storage_page::ScanState::Running {
+                        self.storage_scan = storage_page::ScanState::Idle;
+                    }
+                    if self.controller_audio_restore.is_some() {
+                        self.finish_controller_audio_restore(Err(
+                            "Settings operation stopped unexpectedly".into(),
+                        ));
+                    } else {
+                        self.result(Err("Settings operation stopped unexpectedly".into()), "")
+                    }
                 }
             }
         }
@@ -325,6 +377,7 @@ impl Preferences {
                 }
             }
         }
+        self.start_queued_storage_scan();
     }
 
     fn save_general(&mut self, change: impl FnOnce(&mut Settings)) {
@@ -332,6 +385,11 @@ impl Preferences {
         let result = self.core.settings.update(change);
         if result.is_ok() {
             let after = self.core.settings.get();
+            if before.stem_storage != after.stem_storage
+                && let Some(processor) = &self.core.stems
+            {
+                processor.set_storage_format(after.stem_storage);
+            }
             if before.deep_analysis != after.deep_analysis {
                 // Retry basic-only rows when enabled; disabling stops queued
                 // model work at the next chunk without interrupting playback.
@@ -403,23 +461,11 @@ impl Preferences {
     fn apply_audio(&mut self) {
         let core = self.core.clone();
         let config = self.audio.clone();
+        let restore = self.controller_audio_backup(&config);
         self.status = "Applying audio settings...".into();
         self.error = false;
         self.start_job(move || {
-            JobResult::Audio((|| {
-                let _apply = core.settings_apply.lock().expect("apply settings");
-                let previous = core.engine.audio_config();
-                core.engine
-                    .configure_audio(config.clone())
-                    .map_err(|e| e.to_string())?;
-                if let Err(error) = core.settings.update(|s| s.audio = config) {
-                    return match core.engine.configure_audio(previous) {
-                        Ok(()) => Err(error),
-                        Err(rollback) => Err(format!("{error}; audio restore failed: {rollback}")),
-                    };
-                }
-                Ok(())
-            })())
+            JobResult::Audio(audio::save_audio_settings(&core, config, restore))
         });
     }
 
@@ -473,34 +519,54 @@ impl Preferences {
         self.result(Ok(()), "");
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
-        cx.spawn(async move |_, _| {
+        cx.spawn(async move |_, cx| {
             let dialog =
                 rfd::AsyncFileDialog::new().add_filter("mixless controller preset", &["json"]);
-            let file = if export {
-                dialog
+            let result = if export {
+                let file = dialog
                     .set_file_name("controller.mixless.json")
                     .save_file()
-                    .await
-            } else {
-                dialog.pick_file().await
-            };
-            let result = if let Some(file) = file {
-                let hub = core.midi.lock().expect("controllers").clone();
-                if export {
-                    JobResult::File(
-                        hub.ok_or("Controllers unavailable".to_string())
-                            .and_then(|h| {
-                                h.export_preset(selected.as_deref().unwrap(), file.path())
-                                    .map_err(|e| e.to_string())
-                            })
-                            .map(|_| "Preset exported".into()),
-                    )
+                    .await;
+                if let Some(file) = file {
+                    cx.background_executor()
+                        .spawn(async move {
+                            let hub = core.midi.lock().expect("controllers").clone();
+                            JobResult::File(
+                                hub.ok_or("Controllers unavailable".to_string())
+                                    .and_then(|h| {
+                                        h.export_preset(selected.as_deref().unwrap(), file.path())
+                                            .map_err(|e| e.to_string())
+                                    })
+                                    .map(|_| "Preset exported".into()),
+                            )
+                        })
+                        .await
                 } else {
-                    JobResult::PresetImport(
-                        hub.ok_or("Controllers unavailable".to_string())
-                            .and_then(|h| h.preview_import(file.path()).map_err(|e| e.to_string())),
-                    )
+                    JobResult::File(Ok("Cancelled".into()))
                 }
+            } else if let Some(files) = dialog.pick_files().await {
+                let paths: Vec<_> = files.into_iter().map(|f| f.path().to_path_buf()).collect();
+                cx.background_executor()
+                    .spawn(async move {
+                        let hub = core
+                            .midi
+                            .lock()
+                            .expect("controllers")
+                            .clone()
+                            .ok_or("Controllers unavailable".to_string());
+                        if paths.len() == 1 {
+                            JobResult::PresetImport(hub.and_then(|h| {
+                                h.preview_import(&paths[0]).map_err(|e| e.to_string())
+                            }))
+                        } else {
+                            JobResult::PresetImports(
+                                hub.and_then(|h| {
+                                    h.preview_imports(&paths).map_err(|e| e.to_string())
+                                }),
+                            )
+                        }
+                    })
+                    .await
             } else {
                 JobResult::File(Ok("Cancelled".into()))
             };
@@ -524,269 +590,6 @@ impl Preferences {
             let _ = tx.send(JobResult::Dir(dir));
         })
         .detach();
-    }
-
-    fn refresh_storage(&mut self) {
-        if self.job.is_some() {
-            return;
-        }
-        let core = self.core.clone();
-        self.start_job(move || JobResult::Storage(storage::report(&core)));
-    }
-
-    fn clear_storage(&mut self, kind: ClearKind) {
-        let core = self.core.clone();
-        self.status = "Clearing...".into();
-        self.error = false;
-        self.start_job(move || {
-            JobResult::StorageClear(
-                storage::clear(&core, kind)
-                    .and_then(|freed| storage::report(&core).map(|report| (freed, report))),
-            )
-        });
-    }
-
-    /// A cache row: name and what it holds on the left, size plus an optional
-    /// two-step Clear on the right. The first click arms; the second clears.
-    fn storage_row(
-        &self,
-        id: impl Into<SharedString>,
-        label: &str,
-        detail: &str,
-        bytes: u64,
-        kind: Option<ClearKind>,
-        cx: &Context<Self>,
-    ) -> gpui::Div {
-        let busy = self.job.is_some();
-        let armed = kind.is_some() && self.confirm_clear == kind;
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .min_h(px(56.))
-            .px_4()
-            .py_3()
-            .border_b_1()
-            .border_color(theme::LINE_SOFT)
-            .text_size(px(12.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(div().child(label.to_string()))
-                    .when(!detail.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(theme::MUTED)
-                                .child(detail.to_string()),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .flex_none()
-                    .child(
-                        div()
-                            .text_color(theme::MUTED)
-                            .child(storage::format_bytes(bytes)),
-                    )
-                    .when_some(kind, |el, kind| {
-                        el.child(
-                            self.button(
-                                format!("clear-{}", id.into()),
-                                if armed { "Confirm clear" } else { "Clear" },
-                                !busy && (bytes > 0 || armed),
-                                move |s, _, _| {
-                                    if s.confirm_clear == Some(kind) {
-                                        s.confirm_clear = None;
-                                        s.clear_storage(kind);
-                                    } else {
-                                        s.confirm_clear = Some(kind);
-                                    }
-                                },
-                                cx,
-                            )
-                            .when(armed, |el| el.text_color(theme::DANGER)),
-                        )
-                    }),
-            )
-    }
-
-    fn storage_page(&self, cx: &Context<Self>) -> gpui::AnyElement {
-        let busy = self.job.is_some();
-        let mut page = setting_stack().w_full().max_w(px(760.)).mx_auto()
-            .child(div().text_size(px(11.)).line_height(px(16.)).text_color(theme::MUTED)
-                .child("Clear cached data to reclaim space. Source audio, playlists and saved cues are kept."));
-        let Some(report) = &self.storage else {
-            return page
-                .child(info(
-                    "Usage",
-                    if busy {
-                        "Computing...".into()
-                    } else {
-                        "Not computed".into()
-                    },
-                ))
-                .child(div().flex().justify_end().py_3().child(self.button(
-                    "storage-scan",
-                    "Compute usage",
-                    !busy,
-                    |s, _, _| s.refresh_storage(),
-                    cx,
-                )))
-                .into_any_element();
-        };
-        page = page
-            .child(setting_group(
-                "Cached data",
-                vec![
-                    self.storage_row(
-                        "stems",
-                        "Stem cache",
-                        "Separated vocals, drums and instruments",
-                        report.stems,
-                        Some(ClearKind::Stems),
-                        cx,
-                    ),
-                    self.storage_row(
-                        "analysis",
-                        "Track analysis",
-                        "Beat grids, keys and song structure",
-                        report.analysis,
-                        Some(ClearKind::Analysis),
-                        cx,
-                    ),
-                    self.storage_row(
-                        "waveforms",
-                        "Waveforms",
-                        "Rebuilt from audio when needed",
-                        report.waveforms,
-                        Some(ClearKind::Waveforms),
-                        cx,
-                    ),
-                    self.storage_row(
-                        "artwork",
-                        "Artwork",
-                        "Rebuilt on next launch",
-                        report.artwork,
-                        Some(ClearKind::Artwork),
-                        cx,
-                    ),
-                    self.storage_row(
-                        "models",
-                        "Analysis models",
-                        "Downloaded copies only; models included in the app are kept",
-                        report.models,
-                        Some(ClearKind::Models),
-                        cx,
-                    ),
-                ],
-            ))
-            .child(setting_group(
-                "Library",
-                vec![
-                    self.storage_row(
-                        "database",
-                        "Library database",
-                        "Tracks, cues, playlists and analysis",
-                        report.database,
-                        None,
-                        cx,
-                    ),
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .min_h(px(56.))
-                        .px_4()
-                        .py_3()
-                        .border_b_1()
-                        .border_color(theme::LINE_SOFT)
-                        .text_size(px(12.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .child(div().child("Downloaded audio"))
-                                .child(
-                                    div().text_size(px(11.)).text_color(theme::MUTED).child(
-                                        crate::state::display_dir(&self.core.download_dir()),
-                                    ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .flex_none()
-                                .child(
-                                    div()
-                                        .text_color(theme::MUTED)
-                                        .child(storage::format_bytes(report.acquired)),
-                                )
-                                .child(
-                                    self.button(
-                                        "storage-acquired",
-                                        "Show in Finder",
-                                        true,
-                                        |s, _, cx| {
-                                            let dir = s.core.download_dir();
-                                            std::fs::create_dir_all(&dir).ok();
-                                            cx.reveal_path(&dir);
-                                        },
-                                        cx,
-                                    )
-                                    .into_any_element(),
-                                ),
-                        ),
-                ],
-            ));
-        if !report.playlists.is_empty() {
-            page = page
-                .child(setting_group(
-                    "Per playlist",
-                    report
-                        .playlists
-                        .iter()
-                        .map(|playlist| {
-                            self.storage_row(
-                                format!("playlist-{}", playlist.id),
-                                &playlist.name,
-                                &format!("{} tracks", playlist.tracks),
-                                playlist.bytes,
-                                Some(ClearKind::Playlist(playlist.id)),
-                                cx,
-                            )
-                        })
-                        .collect(),
-                ))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .line_height(px(16.))
-                        .text_color(theme::MUTED)
-                        .child("Tracks shared with other playlists use the same caches."),
-                );
-        }
-        page.child(div().flex().justify_end().py_3().child(self.button(
-            "storage-refresh",
-            "Refresh usage",
-            !busy,
-            |s, _, _| s.refresh_storage(),
-            cx,
-        )))
-        .into_any_element()
     }
 
     fn button(
@@ -1033,14 +836,21 @@ impl Preferences {
                 .filter(|(_, mode)| *mode != MidiControlMode::AbsoluteInverted)
                 .map(|(i, mode)| (i.to_string(), mode.label().into()))
                 .collect(),
-            Selector::MidiPreset => self
-                .core
-                .midi
-                .lock()
-                .expect("controllers")
-                .as_ref()
-                .map(|hub| hub.presets().into_iter().map(|p| (p.id, p.name)).collect())
-                .unwrap_or_default(),
+            Selector::MidiPreset => {
+                let mut options = vec![(String::new(), "None".into())];
+                if let Ok(hub) = self.hub() {
+                    let mut presets: Vec<_> = hub
+                        .presets()
+                        .into_iter()
+                        .map(|p| (p.id, controllers::preset_label(&p.name).to_owned()))
+                        .collect();
+                    presets.sort_by(|a, b| {
+                        controllers::natural_cmp(&a.1, &b.1).then_with(|| a.0.cmp(&b.0))
+                    });
+                    options.extend(presets);
+                }
+                options
+            }
             Selector::ControllerDevice => {
                 let mut options = vec![(String::new(), "No device".into())];
                 let mut devices: Vec<_> = self
@@ -1050,28 +860,41 @@ impl Preferences {
                         !(d.hid && d.usage_page == Some(1) && matches!(d.usage, Some(2 | 6)))
                     })
                     .collect();
-                // Put musical MIDI ports before the computer's many HID interfaces.
-                devices.sort_by(|a, b| (a.hid, &a.name, &a.id).cmp(&(b.hid, &b.name, &b.id)));
+                // Keep MIDI first, then order model numbers naturally within each protocol.
+                devices.sort_by(|a, b| {
+                    a.hid
+                        .cmp(&b.hid)
+                        .then_with(|| {
+                            controllers::natural_cmp(
+                                &self.controller_name(&a.name),
+                                &self.controller_name(&b.name),
+                            )
+                        })
+                        .then_with(|| a.id.cmp(&b.id))
+                });
                 options.extend(devices.iter().map(|d| {
-                    let duplicates =
-                        devices.iter().filter(|other| other.name == d.name).count() > 1;
+                    let name = self.controller_name(&d.name);
+                    let duplicates = devices
+                        .iter()
+                        .filter(|other| self.controller_name(&other.name) == name)
+                        .count()
+                        > 1;
                     let label = if duplicates {
                         // Instance identity is needed only when names cannot distinguish devices.
                         format!(
                             "{} ({})",
-                            d.name,
+                            name,
                             d.interface
                                 .filter(|n| devices
                                     .iter()
-                                    .filter(
-                                        |other| other.name == d.name && other.interface == Some(*n)
-                                    )
+                                    .filter(|other| self.controller_name(&other.name) == name
+                                        && other.interface == Some(*n))
                                     .count()
                                     == 1)
                                 .map_or_else(|| d.id.clone(), |n| format!("Interface {n}"))
                         )
                     } else {
-                        d.name.clone()
+                        name
                     };
                     (d.id.clone(), label)
                 }));
@@ -1204,6 +1027,11 @@ impl Preferences {
                 }
             }
             Selector::MidiPreset => {
+                if optional != self.selected_preset || optional.is_none() {
+                    if !self.restore_controller_audio_draft() {
+                        return;
+                    }
+                }
                 self.selected_preset = optional;
                 self.controller_advanced = false;
                 self.controller_notes = false;
@@ -1211,6 +1039,11 @@ impl Preferences {
             }
             Selector::PresetActions => self.run_preset_action(value, cx),
             Selector::ControllerDevice | Selector::Source => {
+                if optional != self.controller_device {
+                    if !self.restore_controller_audio_draft() {
+                        return;
+                    }
+                }
                 self.controller_advanced = false;
                 self.controller_notes = false;
                 self.controller_monitor = false;
@@ -1234,7 +1067,7 @@ impl Preferences {
         self.selector = None;
     }
 
-    pub(super) fn apply_midi_preset(&mut self, preset_id: &str, device_id: Option<String>) {
+    pub(super) fn apply_midi_preset(&mut self, preset_id: Option<&str>, device_id: Option<String>) {
         self.cancel_learn();
         let result = self
             .core
@@ -1247,10 +1080,20 @@ impl Preferences {
                 let id = device_id
                     .as_deref()
                     .ok_or("Select the device to apply this preset to".to_string())?;
-                hub.apply_preset_to(preset_id, id)
-                    .map_err(|e| e.to_string())
+                match preset_id {
+                    Some(preset) => hub.apply_preset_to(preset, id),
+                    None => hub.unassign(id),
+                }
+                .map_err(|e| e.to_string())
             });
-        self.result(result, "Preset applied to the selected device");
+        self.result(
+            result,
+            if preset_id.is_some() {
+                "Preset applied to the selected device"
+            } else {
+                "Device unassigned"
+            },
+        );
         self.poll();
     }
 
@@ -1261,8 +1104,13 @@ impl Preferences {
             .settings
             .update(|settings| *settings = defaults.clone());
         if result.is_ok() {
+            self.controller_audio_draft = None;
+            self.controller_audio_restore = None;
             self.audio = defaults.audio.clone();
             defaults.apply_playback(&self.core.engine);
+            if let Some(processor) = &self.core.stems {
+                processor.set_storage_format(defaults.stem_storage);
+            }
             self.midi = defaults.midi.clone();
             self.core
                 .engine
@@ -1355,9 +1203,15 @@ impl Render for Preferences {
                     cx.stop_propagation();
                     return;
                 }
-                if s.import_preview.is_some() {
+                if s.import_preview.is_some() || s.import_batch.is_some() {
                     if ev.keystroke.key == "escape" {
-                        s.import_preview = None;
+                        if s.job.is_none() {
+                            if s.import_preview.is_some() {
+                                s.import_preview = None;
+                            } else {
+                                s.import_batch = None;
+                            }
+                        }
                         cx.notify();
                     }
                     cx.stop_propagation();
@@ -1537,7 +1391,10 @@ impl Render for Preferences {
         if self.confirm_reset {
             root = root.child(self.reset_dialog(cx));
         }
-        if self.preset_dialog.is_some() || self.import_preview.is_some() {
+        if self.preset_dialog.is_some()
+            || self.import_preview.is_some()
+            || self.import_batch.is_some()
+        {
             root = root.child(self.controller_dialog(
                 f32::from(window.viewport_size().height),
                 window,

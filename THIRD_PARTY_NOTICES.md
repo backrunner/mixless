@@ -7,6 +7,10 @@ The vendored Signalsmith DSP and stretch sources in
 notices. Consult the LICENSE files alongside those sources when redistributing.
 
 Rust dependencies are pinned in Cargo.lock and retain their respective licenses.
+Local compatibility patches for `block` 0.1.6 (Steven Sheldon, MIT) and
+`proc-macro-error2` 2.0.1 (CreepySkeleton and GnomedDev, MIT selected from
+MIT/Apache-2.0) are retained under `third-party/rust/`. Their standalone MIT
+notices are included in `third-party/` and copied into the app bundle.
 This document is not a complete transitive dependency license audit. Review
 licenses and required notices for the actual binaries before publishing releases.
 
@@ -15,6 +19,18 @@ Optional acquisition and conversion use separately installed yt-dlp
 They are not bundled by this repository, and their use is governed by the
 terms of the services they access. Imported audio remains subject to its own
 rights.
+
+Stem cache encoding uses [libflac-sys](https://github.com/mgeier/libflac-sys)
+0.3.4 with its bundled libFLAC 1.5.0 (BSD-3-Clause) and [mp3lame-encoder](https://github.com/DoumanAsh/mp3lame-encoder)
+0.2.5 with [mp3lame-sys](https://github.com/DoumanAsh/mp3lame-sys) 0.1.11
+(LGPL-3.0), which statically links its unmodified LAME 3.100 sources
+(LGPL-2.0-or-later). Decoding uses Symphonia (MPL-2.0). Codec license texts
+are preserved in `third-party/` and copied into the app bundle. The exact
+Rust packages and bundled LAME sources are available through `cargo vendor
+--locked`; build instructions are in CONTRIBUTING.md. To rebuild with modified
+codec sources, use Cargo's `[patch.crates-io]` path overrides and rebuild the
+application. Preserve these notices and the corresponding sources/rebuild
+materials when distributing a binary containing these libraries.
 
 Native model inference uses [ort](https://github.com/pykeio/ort) (MIT/Apache-2.0)
 and [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT), linked into

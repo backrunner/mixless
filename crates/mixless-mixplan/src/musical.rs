@@ -67,6 +67,17 @@ pub(crate) fn bass_handoff(
     best.map(|(u, _)| u)
 }
 
+/// No drum pattern anywhere in the span: every bar lacks both a kick and a
+/// hat pulse. Such a side can sound against a beat at an unrelated tempo.
+pub(crate) fn beatless(t: &TrackAnalysis, start: f32, end: f32) -> bool {
+    let mut bars = t
+        .bars
+        .iter()
+        .filter(|bar| bar.end_sec > start + 0.05 && bar.start_sec < end - 0.05)
+        .peekable();
+    bars.peek().is_some() && bars.all(|bar| bar.kick_salience < 0.3 && bar.hat_salience < 0.5)
+}
+
 /// Conservative permission for percussion layering across incompatible keys:
 /// one entire overlap must be drum-only evidence, without a pitched foreground.
 pub(crate) fn percussion_only(t: &TrackAnalysis, start: f32, end: f32) -> bool {

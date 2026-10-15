@@ -84,7 +84,7 @@ pub fn export(
                 |dir| -> Result<Vec<Blob>> {
                     Processor::validate_portable_cache(dir, duration, &active)?;
                     let mut files = Vec::new();
-                    for name in mixless_stems::PORTABLE_FILES {
+                    for name in Processor::portable_files(dir)? {
                         files.push(pack.add(File::open(dir.join(name))?, &active)?);
                     }
                     Ok(files)

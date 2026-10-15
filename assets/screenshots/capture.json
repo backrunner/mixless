@@ -1190,6 +1190,348 @@
       "desktopLocked": false,
       "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
       "scope": "Responsive controller details review using the production Preferences view and isolated temporary offline data. Native mouse checks verified Details toggling at both sizes and repeated-click preset menu closure at 940 x 820. Test bundle has a distinct identifier and ad hoc signature; build/hash refer to the source executable. No physical controller attached."
+    },
+    "brand-menu": {
+      "file": "brand-menu.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-12T17:09:15.298963+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:08:30Z"
+      },
+      "binarySha256": "6fbeb7804f52882d4376d7bc48c1fec804081d896f1c9f01264b84208b8377a2",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Logo context menu in the production workspace. Native mouse opened Preferences; keyboard opened Keyboard Shortcuts and About. GPUI interaction tests cover anchoring at 1180 x 760, hover persistence, outside-click input isolation, Escape dismissal and action dispatch. Audio device displayed: external headphones. No audio processing changes or listening measurements."
+    },
+    "hid-device-filter": {
+      "file": "hid-device-filter.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:17:03.334382+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:15:17Z"
+      },
+      "binarySha256": "87bc0156ce1c53415d227f9c2e3cfe36500cfb95e44ba2ba9b388d1d7cc66f14",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Controllers device selector after restricting HID discovery to installed preset endpoints. Native UI shows only No device; ordinary attached HID peripherals are no longer offered. MIDI discovery is unchanged. Synthetic endpoint matching and native enumeration are tested; no physical DJ controller compatibility or listening quality is claimed."
+    },
+    "ddj-flx2-preset": {
+      "file": "ddj-flx2-preset.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:32:00.978694+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:29:26Z"
+      },
+      "binarySha256": "47f4132f68d10a7d63eb12afa92236f391edeed5b4ff1e1043da161897cd51b6",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Preferences with DDJ-FLX2 selected, Details expanded, 69 mappings and 26 feedback rules. Selected from the native preset menu with no device assigned. Protocol implemented; no physical DDJ-FLX2 attached. No listening or physical control/LED/audio routing evidence."
+    },
+    "mapping-scroll-before": {
+      "file": "mapping-scroll-before.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:46:16.306822+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:43:24Z"
+      },
+      "binarySha256": "a1eac586d264a39061b20e7ef01d94f74827ed2ef81a5e0b9f75b2253e8b92ea",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Preferences mapping list at 940 x 820 logical pixels, first rows. Native wheel delivery verified that inner scrolling and overscroll at both edges leave the outer page fixed; scrolling the right page margin still moves the outer page. GPUI regression covers 940 x 820 and 720 x 540. No physical controller or audio listening evidence."
+    },
+    "mapping-scroll-middle": {
+      "file": "mapping-scroll-middle.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:48:41.582821+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:43:24Z"
+      },
+      "binarySha256": "a1eac586d264a39061b20e7ef01d94f74827ed2ef81a5e0b9f75b2253e8b92ea",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Preferences mapping list at 940 x 820 logical pixels, middle rows. Native wheel delivery verified that inner scrolling and overscroll at both edges leave the outer page fixed; scrolling the right page margin still moves the outer page. GPUI regression covers 940 x 820 and 720 x 540. No physical controller or audio listening evidence."
+    },
+    "mapping-scroll-end": {
+      "file": "mapping-scroll-end.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:48:50.740773+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:43:24Z"
+      },
+      "binarySha256": "a1eac586d264a39061b20e7ef01d94f74827ed2ef81a5e0b9f75b2253e8b92ea",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Preferences mapping list at 940 x 820 logical pixels, last rows after overscroll. Native wheel delivery verified that inner scrolling and overscroll at both edges leave the outer page fixed; scrolling the right page margin still moves the outer page. GPUI regression covers 940 x 820 and 720 x 540. No physical controller or audio listening evidence."
+    },
+    "preset-none-menu": {
+      "file": "preset-none-menu.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:55:52.511124+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:54:43Z"
+      },
+      "binarySha256": "f191f4a241cbe98801174e328874510dbf26755e019c2c74e7b0115e0a25d8ee",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Controllers preferences: None selected and visible as the first menu option. Native mouse selected F1; Home and Return selected None again. GPUI checks at 940 x 820 and 720 x 540 cover offline preview clearing, Apply removing only the selected assignment and persistence after reloading. No physical controller attached or audio measurements."
+    },
+    "preset-device-name": {
+      "file": "preset-device-name.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T17:56:00.208824+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T17:54:43Z"
+      },
+      "binarySha256": "f191f4a241cbe98801174e328874510dbf26755e019c2c74e7b0115e0a25d8ee",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Controllers preferences: Traktor Kontrol F1 selected without the template suffix. Native mouse selected F1; Home and Return selected None again. GPUI checks at 940 x 820 and 720 x 540 cover offline preview clearing, Apply removing only the selected assignment and persistence after reloading. No physical controller attached or audio measurements."
+    },
+    "storage-loading": {
+      "file": "storage-loading.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T18:08:16.039032+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T18:02:39Z"
+      },
+      "binarySha256": "758216973e1dfccc48f9019e826f387218aeb26b7067e38d4914d89139a2022d",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Preferences storage loading renderer in an isolated, offline debug preview. Scan state is intentionally held for native pixel review; successive native frames show spinner rotation. GPUI tests cover actual asynchronous scan completion, initial device-scan queuing, scan failure and worker disconnection. This prepared scene does not prove production first-open mouse delivery. No audio measurement."
+    },
+    "storage-loading-small": {
+      "file": "storage-loading-small.jpg",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-12T18:10:16.742147+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T18:02:39Z"
+      },
+      "binarySha256": "758216973e1dfccc48f9019e826f387218aeb26b7067e38d4914d89139a2022d",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "desktopLocked": false,
+      "scope": "Production Preferences storage loading renderer in an isolated, offline debug preview. Scan state is intentionally held for native pixel review; successive native frames show spinner rotation. GPUI tests cover actual asynchronous scan completion, initial device-scan queuing, scan failure and worker disconnection. This prepared scene does not prove production first-open mouse delivery. No audio measurement."
+    },
+    "preset-natural-order": {
+      "file": "preset-natural-order.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-12T19:03:38.942958+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T18:58:00Z"
+      },
+      "binarySha256": "cb863a05df026e42e0929f44e1c943ba1861e60470d0b694249e148be5ec2b62",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1",
+      "scope": "Production Controllers preset menu in an isolated offline debug preview, 940 x 820 logical pixels. Native mouse opened the menu and wheel moved it to the first option; None precedes naturally ordered models. Native mouse selected DDJ-FLX6 and the mapped-control preview changed. No controller/audio hardware evidence."
+    },
+    "controller-presets-small": {
+      "file": "controller-presets-small.jpg",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-12T19:03:38.942958+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-12T18:58:00Z"
+      },
+      "binarySha256": "cb863a05df026e42e0929f44e1c943ba1861e60470d0b694249e148be5ec2b62",
+      "capture": "Original native macOS window JPEG returned by cua_repl at 2x; no resizing or painted UI.",
+      "macOS": "27.0.1",
+      "scope": "Production Controllers closed selector in an isolated offline debug preview, 720 x 540 logical pixels. The open menu was also visually inspected within the viewport. Subsequent native input delivery was intermittent; GPUI tests establish keyboard selection and layout regressions. No physical controller/audio evidence."
+    },
+    "automix-playlist-follow": {
+      "file": "automix-playlist-follow.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-15T02:43:56.620747+08:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T18:40:26Z"
+      },
+      "binarySha256": "d2bdf3506348ea730ed60b6e3834de19214d8fa2baf66d592ac82d6b939d9916",
+      "capture": "Original native macOS window capture at 2x, returned as JPEG; no rescaling or painted UI.",
+      "scope": "Isolated offline production Preferences renderer. Default Follow selected setting."
+    },
+    "automix-playlist-keep": {
+      "file": "automix-playlist-keep.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-15T02:43:56.620747+08:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T18:40:26Z"
+      },
+      "binarySha256": "d2bdf3506348ea730ed60b6e3834de19214d8fa2baf66d592ac82d6b939d9916",
+      "capture": "Original native macOS window capture at 2x, returned as JPEG; no rescaling or painted UI.",
+      "scope": "Isolated offline production Preferences renderer. Keep current selected through native mouse input; persisted to isolated settings and confirmed after reopening."
+    },
+    "stem-storage-wav": {
+      "file": "stem-storage-wav.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-14T19:26:06.368504+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T19:21:43Z"
+      },
+      "binarySha256": "00bdb2ab782030dfa07bc16eafe156fa8169ef6b94bd1d4e31c5e71d932ca2be",
+      "capture": "Original native macOS window JPEG at 2x, no resizing or painted UI.",
+      "scope": "Production Preferences renderer in isolated offline data. Native mouse selected FLAC and MP3 at 940 x 820 and persisted values. The 720 x 540 window reopened the saved MP3 selection, scrolled to the complete setting, then switched to FLAC with its precision note visible and saved."
+    },
+    "stem-storage-flac": {
+      "file": "stem-storage-flac.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-14T19:26:06.368636+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T19:21:43Z"
+      },
+      "binarySha256": "00bdb2ab782030dfa07bc16eafe156fa8169ef6b94bd1d4e31c5e71d932ca2be",
+      "capture": "Original native macOS window JPEG at 2x, no resizing or painted UI.",
+      "scope": "Production Preferences renderer in isolated offline data. Native mouse selected FLAC and MP3 at 940 x 820 and persisted values. The 720 x 540 window reopened the saved MP3 selection, scrolled to the complete setting, then switched to FLAC with its precision note visible and saved."
+    },
+    "stem-storage-mp3": {
+      "file": "stem-storage-mp3.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-14T19:26:06.368638+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T19:21:43Z"
+      },
+      "binarySha256": "00bdb2ab782030dfa07bc16eafe156fa8169ef6b94bd1d4e31c5e71d932ca2be",
+      "capture": "Original native macOS window JPEG at 2x, no resizing or painted UI.",
+      "scope": "Production Preferences renderer in isolated offline data. Native mouse selected FLAC and MP3 at 940 x 820 and persisted values. The 720 x 540 window reopened the saved MP3 selection, scrolled to the complete setting, then switched to FLAC with its precision note visible and saved."
+    },
+    "stem-storage-small": {
+      "file": "stem-storage-small.jpg",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-14T19:26:06.368640+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T19:21:43Z"
+      },
+      "binarySha256": "00bdb2ab782030dfa07bc16eafe156fa8169ef6b94bd1d4e31c5e71d932ca2be",
+      "capture": "Original native macOS window JPEG at 2x, no resizing or painted UI.",
+      "scope": "Production Preferences renderer in isolated offline data. Native mouse selected FLAC and MP3 at 940 x 820 and persisted values. The 720 x 540 window reopened the saved MP3 selection, scrolled to the complete setting, then switched to FLAC with its precision note visible and saved."
+    },
+    "stem-storage-concise": {
+      "file": "stem-storage-concise.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-14T19:31:25.771322+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T19:30:32Z"
+      },
+      "binarySha256": "26f18e84f4d281ba31bfb76f9086a2596275aaa80894e3458247b5ff82ff2e04",
+      "capture": "Original native macOS window JPEG at 2x; no resizing or painted UI.",
+      "scope": "Concise stem storage copy in the production Preferences renderer with isolated offline data. Native mouse selected all three formats at 940 x 820. The 720 x 540 window reopened the saved FLAC choice; native scrolling revealed all controls and both short notes."
+    },
+    "stem-storage-concise-small": {
+      "file": "stem-storage-concise-small.jpg",
+      "width": 1440,
+      "height": 1080,
+      "capturedAt": "2026-10-14T19:32:30.850651+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-6-g8fbe599-dirty",
+        "profile": "debug",
+        "built": "2026-10-14T19:30:32Z"
+      },
+      "binarySha256": "26f18e84f4d281ba31bfb76f9086a2596275aaa80894e3458247b5ff82ff2e04",
+      "capture": "Original native macOS window JPEG at 2x; no resizing or painted UI.",
+      "scope": "Concise stem storage copy in the production Preferences renderer with isolated offline data. Native mouse selected all three formats at 940 x 820. The 720 x 540 window reopened the saved FLAC choice; native scrolling revealed all controls and both short notes."
     }
   }
 }

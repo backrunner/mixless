@@ -41,7 +41,7 @@ impl Preferences {
         };
         let summary = if device.is_some() {
             assigned.as_ref().map_or("No preset applied".into(), |p| {
-                format!("Active preset: {}", p.name)
+                format!("Active preset: {}", preset_label(&p.name))
             })
         } else if exists {
             "Preset preview".into()
@@ -70,7 +70,7 @@ impl Preferences {
                     .child(
                         self.select_control(
                             Selector::ControllerDevice,
-                            device.map_or("No device".into(), |d| d.name.clone()),
+                            device.map_or("No device".into(), |d| self.controller_name(&d.name)),
                             ready,
                             cx,
                         )
@@ -100,7 +100,7 @@ impl Preferences {
                             Selector::MidiPreset,
                             selected
                                 .as_ref()
-                                .map_or("Choose a preset…".into(), |p| p.name.clone()),
+                                .map_or("None".into(), |p| preset_label(&p.name).to_owned()),
                             ready,
                             cx,
                         )
@@ -112,11 +112,10 @@ impl Preferences {
                         self.primary_button(
                             "controller-apply",
                             "Apply",
-                            ready && exists && device.is_some(),
+                            ready && device.is_some() && (exists || assigned.is_some()),
                             |s, _, _| {
-                                if let Some(id) = s.selected_preset.clone() {
-                                    s.apply_midi_preset(&id, s.controller_device.clone());
-                                }
+                                let id = s.selected_preset.clone();
+                                s.apply_midi_preset(id.as_deref(), s.controller_device.clone());
                             },
                             cx,
                         )
@@ -159,7 +158,7 @@ impl Preferences {
             .when_some(recommended, |el, p| {
                 el.child(div().flex().pl(px(76.)).child(self.button(
                     "controller-recommendation",
-                    format!("Select {}", p.name),
+                    format!("Select {}", preset_label(&p.name)),
                     ready,
                     move |s, _, _| {
                         s.selected_preset = Some(p.id.clone());

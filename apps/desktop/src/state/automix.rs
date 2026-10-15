@@ -30,6 +30,40 @@ mod tests {
 }
 
 impl UiState {
+    pub(super) fn mix_playlist(&self) -> Option<i64> {
+        if self.automix_active {
+            self.automix_playlist
+        } else {
+            self.playlist_sel
+        }
+    }
+
+    pub(super) fn prepare_mix_playlist(&mut self, tracks: Vec<TrackId>) {
+        if self.automix_active {
+            self.automix_tracks = tracks.clone();
+        }
+        crate::automix::prepare_playlist(&self.core, tracks);
+    }
+
+    /// ORDER, SHUFFLE and BEST in turn. BEST plays the playlist in the order
+    /// that mixes most smoothly, computed in the background.
+    pub fn cycle_automix_order(&mut self) {
+        let shuffle = self.automix_shuffle.load(Ordering::Acquire);
+        let best = self.core.mix_preparation.best();
+        let (shuffle, best) = match (shuffle, best) {
+            (false, false) => (true, false),
+            (true, _) => (false, true),
+            (false, true) => (false, false),
+        };
+        self.automix_shuffle.store(shuffle, Ordering::Release);
+        let tracks = if self.automix_active {
+            self.automix_tracks.clone()
+        } else {
+            self.tracks.iter().map(|track| track.id).collect()
+        };
+        crate::automix::set_best(&self.core, best, tracks);
+    }
+
     pub fn toggle_automix(&mut self) {
         self.sync_request = None;
         if self.automix_active {
@@ -50,7 +84,12 @@ impl UiState {
             loading.store(false, Ordering::Release);
         }
         self.grid_rx = [None, None];
-        self.start_automix_worker(tracks);
+        self.automix_playlist = self.playlist_sel;
+        self.automix_tracks = tracks.clone();
+        crate::automix::prepare_playlist(&self.core, tracks);
+        // BEST may already know the arranged set; otherwise the worker adopts
+        // it as soon as it is published.
+        self.start_automix_worker(self.core.mix_preparation.tracks());
     }
 
     fn start_automix_worker(&mut self, tracks: Vec<TrackId>) {
@@ -79,6 +118,10 @@ impl UiState {
         self.automix_plan = None;
         self.automix_rx = None;
         self.dispatch(Command::StopAutomix);
+        drop(_commit);
+        self.automix_playlist = None;
+        self.automix_tracks.clear();
+        self.prepare_mix_playlist(self.tracks.iter().map(|track| track.id).collect());
     }
 
     pub(super) fn poll_automix(&mut self) -> bool {
@@ -120,9 +163,9 @@ impl UiState {
                 .automix_retry
                 .is_some_and(|time| std::time::Instant::now() >= time)
             && self.deck_load_rx.iter().all(Option::is_none)
-            && !self.tracks.is_empty()
+            && !self.automix_tracks.is_empty()
         {
-            self.start_automix_worker(self.tracks.iter().map(|t| t.id).collect());
+            self.start_automix_worker(self.automix_tracks.clone());
             changed = true;
         }
         changed

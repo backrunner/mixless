@@ -1,5 +1,6 @@
 //! Offline native inference. Never call from the UI or audio callback.
 mod cache;
+mod codec;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod coreml;
 mod evidence;
@@ -18,11 +19,13 @@ mod runtime;
 mod separation;
 #[cfg(stems_ort)]
 mod session;
+mod storage;
 #[cfg(stems_ort)]
 mod worker;
 pub use evidence::VERSION;
 pub use portable::FILES as PORTABLE_FILES;
 pub use processor::Processor;
+pub use storage::StorageFormat;
 
 /// False on Intel macOS: no ONNX Runtime build exists for
 /// x86_64-apple-darwin, so separation jobs fail there — cached stems and

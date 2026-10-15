@@ -1,5 +1,7 @@
 //! Addresses independently read from AlphaTheta message lists; see SOURCES.md.
 use super::*;
+mod expanded;
+mod flx2;
 
 pub(super) fn rekordbox_entry() -> Vec<ControllerPreset> {
     [false,true].into_iter().map(|flx|{
@@ -175,14 +177,30 @@ fn software_volume(p: &mut ControllerPreset) {
 }
 
 pub(super) fn additional() -> Vec<ControllerPreset> {
-    let mut presets = vec![ddj200(), sb(1), sb(2), sb(3), rb(), rev1(), wego3()];
+    let mut presets = vec![
+        ddj200(),
+        flx2::profile(),
+        sb(1),
+        sb(2),
+        sb(3),
+        rb(),
+        rev1(),
+        wego3(),
+    ];
     for p in &mut presets {
         protect_shift(p);
     }
+    presets.extend(expanded::profiles());
     presets
 }
 fn ddj200() -> ControllerPreset {
-    let mut p = pioneer("DDJ-200", "DDJ-200_MIDI_Message_List_E2.pdf", "E2 (2019)", "p. 2: deck, mixer, pads and vinyl output", "Two decks, eight hot cues per deck; Shift + pad clears a cue. Use a separate audio device. Transition FX is unmapped. Jog calibration and hardware testing pending.");
+    let mut p = pioneer(
+        "DDJ-200",
+        "DDJ-200_MIDI_Message_List_E2.pdf",
+        "E2 (2019)",
+        "p. 2: deck, mixer, pads and vinyl output",
+        "Two decks, eight hot cues per deck; Shift + pad clears a cue. Use a separate audio device. Transition FX is unmapped. Jog calibration and hardware testing pending.",
+    );
     for (ch, deck) in [(0, DeckId::A), (1, DeckId::B)] {
         transport(&mut p, ch, deck, &[0x21, 0x22, 0x23, 0x29]);
         mixer(&mut p, ch, deck, false);
@@ -214,7 +232,13 @@ fn sb(generation: u8) -> ControllerPreset {
             "pp. 1–3: deck, mixer, browse, pads and meter",
         ),
     };
-    let mut p = pioneer(model, file, revision, section, "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, Pad Scratch, Filter Fade and fader start are unmapped. Jog calibration and hardware testing pending.");
+    let mut p = pioneer(
+        model,
+        file,
+        revision,
+        section,
+        "Decks 1/2 only. Select HOT CUE mode; Shift + pad clears a cue. Other pad banks, Pad Scratch, Filter Fade and fader start are unmapped. Jog calibration and hardware testing pending.",
+    );
     for (ch, deck) in [(0, DeckId::A), (1, DeckId::B)] {
         // SB3's table does not declare SB/SB2's shifted platter CC 1F.
         let jog: &[u8] = if generation == 3 {
@@ -247,7 +271,13 @@ fn sb(generation: u8) -> ControllerPreset {
     p
 }
 fn rb() -> ControllerPreset {
-    let mut p = pioneer("DDJ-RB", "DDJ-RB_MIDI_Message_List_E.pdf", "E (no revision printed)", "pp. 1–3: deck, browser, mixer, pads and meters", "Two decks. Select HOT CUE mode; Shift + pad clears a cue. Shift + LOOP OUT toggles the current mixless loop. FX and other pad modes are unmapped. Browser-push channel is ambiguous in the official table and is left unmapped. Jog calibration and hardware testing pending.");
+    let mut p = pioneer(
+        "DDJ-RB",
+        "DDJ-RB_MIDI_Message_List_E.pdf",
+        "E (no revision printed)",
+        "pp. 1–3: deck, browser, mixer, pads and meters",
+        "Two decks. Select HOT CUE mode; Shift + pad clears a cue. Shift + LOOP OUT toggles the current mixless loop. FX and other pad modes are unmapped. Browser-push channel is ambiguous in the official table and is left unmapped. Jog calibration and hardware testing pending.",
+    );
     for (ch, deck) in [(0, DeckId::A), (1, DeckId::B)] {
         transport(&mut p, ch, deck, &[0x21, 0x22, 0x23, 0x1f, 0x26]);
         mixer(&mut p, ch, deck, true);
@@ -262,7 +292,13 @@ fn rb() -> ControllerPreset {
     p
 }
 fn rev1() -> ControllerPreset {
-    let mut p = pioneer("DDJ-REV1", "DDJ-REV1_MIDI_Message_List_E1.pdf", "E1 (no revision printed)", "pp. 1–5: browse, deck, mixer, filter and hot cue pads", "Use deck selection 1/2 and HOT CUE mode. Shift + pad clears a cue. Decks 3/4, Tracking Scratch, Scratch Bank and effect paddles are unmapped. Jog calibration and hardware testing pending.");
+    let mut p = pioneer(
+        "DDJ-REV1",
+        "DDJ-REV1_MIDI_Message_List_E1.pdf",
+        "E1 (no revision printed)",
+        "pp. 1–5: browse, deck, mixer, filter and hot cue pads",
+        "Use deck selection 1/2 and HOT CUE mode. Shift + pad clears a cue. Decks 3/4, Tracking Scratch, Scratch Bank and effect paddles are unmapped. Jog calibration and hardware testing pending.",
+    );
     for (ch, deck) in [(0, DeckId::A), (1, DeckId::B)] {
         transport(&mut p, ch, deck, &[0x21, 0x22, 0x23, 0x1f, 0x26]);
         mixer(&mut p, ch, deck, true);
@@ -276,7 +312,13 @@ fn rev1() -> ControllerPreset {
     p
 }
 fn wego3() -> ControllerPreset {
-    let mut p = pioneer("DDJ-WeGO3", "DDJ-WeGO3_List_of_MIDI_Message_E.pdf", "E (no revision printed)", "pp. 1–2: browser, deck, mixer and LEDs", "Two decks, four hot cues per deck; Shift + cue clears it. Loop controls adjust mixless's current loop. Effects and sampler mode are unmapped. Hardware controls master/headphone volume. Jog calibration and hardware testing pending.");
+    let mut p = pioneer(
+        "DDJ-WeGO3",
+        "DDJ-WeGO3_List_of_MIDI_Message_E.pdf",
+        "E (no revision printed)",
+        "pp. 1–2: browser, deck, mixer and LEDs",
+        "Two decks, four hot cues per deck; Shift + cue clears it. Loop controls adjust mixless's current loop. Effects and sampler mode are unmapped. Hardware controls master/headphone volume. Jog calibration and hardware testing pending.",
+    );
     for (ch, deck) in [(0, DeckId::A), (1, DeckId::B)] {
         transport(&mut p, ch, deck, &[0x21, 0x22, 0x26, 0x27]);
         loops(&mut p, ch, deck);

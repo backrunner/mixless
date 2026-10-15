@@ -30,6 +30,9 @@ pub struct Preparation {
     pub(super) order: Mutex<VecDeque<String>>,
     sequence: Mutex<Sequence>,
     pub preview_revision: AtomicU64,
+    best: std::sync::atomic::AtomicBool,
+    /// Last arranged set: (playlist order, best mixing order).
+    arranged: Mutex<Option<(Vec<TrackId>, Vec<TrackId>)>>,
 }
 
 impl Preparation {
@@ -55,7 +58,7 @@ impl Preparation {
     pub(super) fn has_selection(&self) -> bool {
         self.revision.load(Ordering::Acquire) > 0
     }
-    pub(super) fn tracks(&self) -> Vec<TrackId> {
+    pub fn tracks(&self) -> Vec<TrackId> {
         self.playlist.lock().expect("playlist preparation").clone()
     }
     pub(super) fn revision(&self) -> u64 {
@@ -88,7 +91,78 @@ pub(super) fn following(
 }
 
 pub fn prepare_playlist(core: &Arc<AppCore>, tracks: Vec<TrackId>) {
-    prepare(core, tracks, false, true);
+    prepare(core, arrange(core, tracks), false, true);
+}
+
+impl Preparation {
+    pub fn best(&self) -> bool {
+        self.best.load(Ordering::Acquire)
+    }
+}
+
+/// Switch the set between playlist order and best mixing order. `playlist`
+/// is the order the user sees; the arranged order replaces it for AUTO only.
+pub fn set_best(core: &Arc<AppCore>, on: bool, playlist: Vec<TrackId>) {
+    core.mix_preparation.best.store(on, Ordering::Release);
+    prepare_playlist(core, playlist);
+}
+
+/// The best order when it is known for this playlist; otherwise the playlist
+/// itself while a worker measures it and republishes the set when done.
+fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackId> {
+    if !core.mix_preparation.best() || playlist.len() < 3 {
+        return playlist;
+    }
+    if let Some((input, arranged)) = core
+        .mix_preparation
+        .arranged
+        .lock()
+        .expect("arranged")
+        .as_ref()
+        && *input == playlist
+    {
+        return arranged.clone();
+    }
+    let weak = Arc::downgrade(core);
+    let input = playlist.clone();
+    std::thread::spawn(move || {
+        let Some(core) = weak.upgrade() else { return };
+        let prepared: Vec<_> = input
+            .iter()
+            .map(|id| crate::analysis::prepare(&core, *id).ok())
+            .collect();
+        let known: Vec<usize> = (0..input.len())
+            .filter(|i| prepared[*i].is_some())
+            .collect();
+        let analyses: Vec<_> = known
+            .iter()
+            .map(|i| prepared[*i].as_ref().unwrap().analysis.as_ref())
+            .collect();
+        // Keep the track already on air first, so switching never jumps.
+        let snapshot = core.engine.snapshot();
+        let on_air = [DeckId::A, DeckId::B]
+            .into_iter()
+            .map(|deck| snapshot.deck(deck))
+            .find(|d| d.playing)
+            .and_then(|d| d.track_id);
+        let first = on_air.and_then(|id| known.iter().position(|i| input[*i] == id));
+        let mut arranged: Vec<TrackId> = mixless_mixplan::order::best_order(&analyses, first)
+            .into_iter()
+            .map(|k| input[known[k]])
+            .collect();
+        // Tracks still being analyzed keep their playlist position order at the end.
+        arranged.extend(
+            (0..input.len())
+                .filter(|i| prepared[*i].is_none())
+                .map(|i| input[i]),
+        );
+        *core.mix_preparation.arranged.lock().expect("arranged") = Some((input.clone(), arranged));
+        let current = core.mix_preparation.tracks();
+        if core.mix_preparation.best() && current == input {
+            prepare_playlist(&core, input);
+        }
+    });
+    playlist
 }
 
 pub fn refresh_previews(core: &Arc<AppCore>) {

@@ -170,9 +170,11 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
     );
     let a = &rows[1];
     assert_ne!(a.id, TrackId(1));
-    assert!(restored
-        .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
-        .unwrap());
+    assert!(
+        restored
+            .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
+            .unwrap()
+    );
     assert_eq!(
         restored
             .load_analysis(a.id, mixless_analyze::ANALYSIS_VERSION)
@@ -187,20 +189,24 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
         restored.load_waveform(a.id).unwrap().unwrap().detail_pos,
         [256, 512]
     );
-    assert!(playback
-        .playback(&a.content_hash, 4410, 44100)
-        .unwrap()
-        .is_some());
+    assert!(
+        playback
+            .playback(&a.content_hash, 4410, 44100)
+            .unwrap()
+            .is_some()
+    );
     // Cached analysis returns before attempting the deliberately failing loader.
-    assert!(playback
-        .analyze(
-            &a.content_hash,
-            0.1,
-            || panic!("must not run inference"),
-            &mut |_| {},
-            &|| true
-        )
-        .is_ok());
+    assert!(
+        playback
+            .analyze(
+                &a.content_hash,
+                0.1,
+                || panic!("must not run inference"),
+                &mut |_| {},
+                &|| true
+            )
+            .is_ok()
+    );
     let ids = report.imported;
     let repeat = import_all(&restored, &playback, &path);
     assert_eq!(repeat.imported, ids);
@@ -211,14 +217,18 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
     }
     drop(restored);
     let restarted = Library::open(&dest.path().join("library.db")).unwrap();
-    assert!(!restarted
-        .list_playlists()
-        .unwrap()
-        .iter()
-        .any(|p| p.name == "package-media"));
-    assert!(restarted
-        .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
-        .unwrap());
+    assert!(
+        !restarted
+            .list_playlists()
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "package-media")
+    );
+    assert!(
+        restarted
+            .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -570,4 +580,52 @@ fn non_finite_stems_cannot_replace_a_valid_package_snapshot() {
     let report = import_all(&restored, &playback, &path);
     assert_eq!(report.stems, 1);
     assert!(playback.playback(&hash, 4410, 44100).unwrap().is_some());
+}
+
+#[test]
+fn compressed_stems_roundtrip_with_their_format_and_exact_playback_length() {
+    for (format, fixture) in [
+        ("flac", include_bytes!("fixtures/stem.flac").as_slice()),
+        ("mp3", include_bytes!("fixtures/stem.mp3").as_slice()),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let lib = Library::open(&root.path().join("library.db")).unwrap();
+        let p = processor(root.path());
+        let id = track(&lib, root.path(), "compressed", 0.2);
+        stems(&lib, &p, id);
+        let hash = lib.get_track(id).unwrap().content_hash;
+        let dir = p.cache_path(&hash);
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("analysis.json")).unwrap()).unwrap();
+        metadata["storage"] = serde_json::json!({
+            "version": 1, "format": format, "frames": 4410, "gain": vec![1.; 4],
+            "bytes": vec![fixture.len(); 4], "blake3": vec![blake3::hash(fixture).to_hex().to_string(); 4]
+        });
+        fs::write(
+            dir.join("analysis.json"),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        for stem in ["vocals", "drums", "instruments", "bass"] {
+            fs::remove_file(dir.join(format!("{stem}.wav"))).unwrap();
+            fs::write(dir.join(format!("{stem}.{format}")), fixture).unwrap();
+        }
+        let path = root.path().join("compressed.mixpack");
+        assert_eq!(export_all(&lib, &p, &path).stems, 1);
+        let dest = tempfile::tempdir().unwrap();
+        let restored = Library::open(&dest.path().join("library.db")).unwrap();
+        let q = processor(dest.path());
+        assert_eq!(import_all(&restored, &q, &path).stems, 1);
+        let pcm = q.playback(&hash, 4410, 44100).unwrap().unwrap();
+        assert_eq!(pcm.bytes(), 4410 * 24);
+        assert!(
+            q.cache_path(&hash)
+                .join(format!("vocals.{format}"))
+                .exists()
+        );
+        assert!(!q.cache_path(&hash).join("vocals.wav").exists());
+        // A second export/import preserves the encoding without transcoding.
+        let next = dest.path().join("next.mixpack");
+        assert_eq!(export_all(&restored, &q, &next).stems, 1);
+    }
 }

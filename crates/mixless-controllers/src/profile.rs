@@ -1,5 +1,5 @@
 //! Versioned, portable, declarative profiles. Device-instance identifiers live only in LocalState.
-use crate::{error, MidiBinding, MidiControlMode, MidiError, MidiSourceKind, MidiTarget};
+use crate::{MidiBinding, MidiControlMode, MidiError, MidiSourceKind, MidiTarget, error};
 pub use mixless_midi::Address as MidiAddress;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -672,6 +672,14 @@ impl PresetStore {
 
 pub fn builtin_presets() -> Vec<ControllerPreset> {
     builtin_catalogue().to_vec()
+}
+
+/// A canonical model label only when the observed name matches one built-in.
+/// This is presentation metadata; it never assigns or opens a controller.
+pub fn builtin_model_name(name: &str) -> Option<&'static str> {
+    let mut matches = builtin_catalogue().iter().filter(|p| p.matches_midi(name));
+    let preset = matches.next()?;
+    matches.next().is_none().then_some(preset.name.as_str())
 }
 fn builtin_catalogue() -> &'static [ControllerPreset] {
     static PRESETS: std::sync::OnceLock<Vec<ControllerPreset>> = std::sync::OnceLock::new();

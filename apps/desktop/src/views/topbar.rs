@@ -7,6 +7,8 @@ use gpui::{IntoElement, Rgba, Styled, px};
 use crate::state::{UiState, WaveLayout};
 use crate::theme;
 mod master;
+mod menu;
+pub(crate) use menu::BrandMenu;
 
 fn divider() -> gpui::Div {
     gpui::div()
@@ -202,6 +204,8 @@ impl UiState {
                     .items_center()
                     .gap_2()
                     .id("brand-window-drag")
+                    .debug_selector(|| "brand-window-drag".into())
+                    .relative()
                     .child(gpui::img(crate::branding::mark()).flex_none().size(px(30.)))
                     .child(
                         gpui::div()
@@ -209,6 +213,11 @@ impl UiState {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
                             .child(crate::branding::wordmark()),
+                    )
+                    .child(self.brand_menu.anchor_marker())
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(|s, _, window, cx| s.open_brand_menu(window, cx)),
                     )
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -255,6 +264,7 @@ impl UiState {
             .child(
                 led_chip("QUANTIZE", self.snapshot.quantize, theme::LED_GREEN)
                     .id("quantize-toggle")
+                    .debug_selector(|| "quantize-toggle".into())
                     .cursor_pointer()
                     .tooltip(|_, cx| {
                         cx.new(|_| {
@@ -290,18 +300,20 @@ impl UiState {
                         .load(std::sync::atomic::Ordering::Relaxed)
                     {
                         "SHUFFLE ∞"
+                    } else if self.core.mix_preparation.best() {
+                        "BEST ∞"
                     } else {
                         "ORDER ∞"
                     },
                     self.automix_shuffle
-                        .load(std::sync::atomic::Ordering::Relaxed),
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        || self.core.mix_preparation.best(),
                     theme::ACCENT,
                 )
                 .id("automix-order")
                 .cursor_pointer()
                 .on_click(cx.listener(|s, _, _, cx| {
-                    s.automix_shuffle
-                        .fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                    s.cycle_automix_order();
                     cx.notify();
                 })),
             )

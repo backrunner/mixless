@@ -81,7 +81,9 @@ impl UiState {
         let track = tracks.remove(drag.index);
         tracks.insert(to, track);
         let ordered: Vec<_> = tracks.iter().map(|track| track.id).collect();
-        crate::automix::prepare_playlist(&self.core, ordered.clone());
+        if self.mix_playlist() == self.playlist_sel {
+            self.prepare_mix_playlist(ordered.clone());
+        }
         self.track_sel = Some(drag.id.0);
         self.track_menu = None;
         self.library_key = None;

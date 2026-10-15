@@ -8,7 +8,7 @@ mod performance;
 mod preparation;
 mod start;
 mod updates;
-pub use preparation::{Preparation, prepare_playlist, refresh_previews};
+pub use preparation::{Preparation, prepare_playlist, refresh_previews, set_best};
 
 use crate::state::AppCore;
 use mixless_protocol::{Command, DeckId, PerformanceOffset, TrackId};

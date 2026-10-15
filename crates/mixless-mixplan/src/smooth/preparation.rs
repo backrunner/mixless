@@ -37,7 +37,7 @@ pub(super) fn candidate(
         || !(0.92..=1.08).contains(&(target * factor / gb.bpm(input)))
         || !(0.92..=1.08).contains(&(rate / ctx.offset_a.rate))
     {
-        return None;
+        return miss!();
     }
     let change = (rate / ctx.offset_a.rate).ln().abs();
     // Quintic easing has maximum derivative 1.875; integrate and check again.
@@ -68,7 +68,7 @@ pub(super) fn candidate(
                 .max(options.outgoing_entry_sec)
         || !grid_reliable(ctx.outgoing, start, ga.sec(join))
     {
-        return None;
+        return miss!();
     }
     let prepared = PlanContext {
         outgoing: ctx.outgoing,
@@ -90,7 +90,7 @@ pub(super) fn candidate(
     // Preparation earns no duration reward. The original overlap was scored.
     plan.summary.as_mut()?.score -= change * 0.1;
     if plan.summary.as_ref()?.score <= minimum_score {
-        return None;
+        return miss!();
     }
     prepend(ctx, &mut plan, begin, bars.round(), rate)?;
     Some(plan)
@@ -130,7 +130,7 @@ fn prepend(
         let dt = 2. * (sec - prev_sec) / (rate + prev_rate);
         let bpm = ga.bpm(beat) * rate;
         if dt <= 0. || (bpm / prev_bpm).ln().abs() / dt > MAX_LOG_TEMPO_PER_SEC * 1.02 {
-            return None;
+            return miss!();
         }
         wall += dt;
         clock.push((u, wall));

@@ -10,9 +10,17 @@ use serde::{Deserialize, Serialize};
 use crate::state::WaveLayout;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ControllerAudioRestore {
+    pub previous: AudioConfig,
+    pub suggested: AudioConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub audio: AudioConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controller_audio_restore: Option<ControllerAudioRestore>,
     pub midi: MidiConfig,
     pub wave_layout: WaveLayout,
     pub show_fx: bool,
@@ -20,6 +28,7 @@ pub struct Settings {
     pub library_selection_saved: bool,
     pub fx_auto_fade: bool,
     pub deep_analysis: bool,
+    pub stem_storage: mixless_stems::StorageFormat,
     pub quantize: bool,
     pub filter_resonance: bool,
     pub xf_curve: XfCurve,
@@ -31,6 +40,8 @@ pub struct Settings {
     pub slip: bool,
     /// Filter/stem gestures on the playing deck before each AutoMix transition.
     pub live_moves: LiveMoves,
+    /// Change the running AutoMix source when another playlist is selected.
+    pub automix_follow_playlist: bool,
     /// Custom folder for downloaded audio. None uses the managed data dir.
     pub download_dir: Option<PathBuf>,
 }
@@ -39,6 +50,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             audio: AudioConfig::default(),
+            controller_audio_restore: None,
             midi: MidiConfig::default(),
             wave_layout: WaveLayout::Top,
             show_fx: true,
@@ -46,6 +58,7 @@ impl Default for Settings {
             library_selection_saved: false,
             fx_auto_fade: true,
             deep_analysis: true,
+            stem_storage: mixless_stems::StorageFormat::Wav,
             quantize: true,
             filter_resonance: true,
             xf_curve: XfCurve::EqualPower,
@@ -56,6 +69,7 @@ impl Default for Settings {
             vinyl: false,
             slip: false,
             live_moves: LiveMoves::Subtle,
+            automix_follow_playlist: true,
             download_dir: None,
         }
     }
@@ -209,8 +223,10 @@ mod tests {
             serde_json::from_str(r#"{"show_fx":false,"audio":{"master_device":"USB"}}"#).unwrap();
         assert!(!settings.show_fx);
         assert!(settings.quantize);
+        assert_eq!(settings.stem_storage, mixless_stems::StorageFormat::Wav);
         assert_eq!(settings.cue_mix, 0.);
         assert!(settings.fx_auto_fade);
+        assert!(settings.automix_follow_playlist);
         assert!(settings.midi.enabled);
         assert_eq!(settings.audio.master_device.as_deref(), Some("USB"));
         assert_eq!(settings.audio.buffer_frames, None);
@@ -238,6 +254,8 @@ mod tests {
                 s.cue_mix = 0.5;
                 s.show_fx = false;
                 s.fx_auto_fade = false;
+                s.automix_follow_playlist = false;
+                s.stem_storage = mixless_stems::StorageFormat::Flac;
                 s.midi.enabled = false;
                 s.audio.buffer_frames = Some(128);
                 s.audio.sample_rate = Some(48_000);
@@ -248,6 +266,8 @@ mod tests {
         assert_eq!(saved.cue_mix, 0.5);
         assert!(!saved.midi.enabled);
         assert!(!saved.fx_auto_fade);
+        assert!(!saved.automix_follow_playlist);
+        assert_eq!(saved.stem_storage, mixless_stems::StorageFormat::Flac);
         assert_eq!(saved.audio.buffer_frames, Some(128));
         assert_eq!(saved.audio.sample_rate, Some(48_000));
         assert_eq!(saved.audio.bit_depth, Some(24));

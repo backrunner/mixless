@@ -1,5 +1,46 @@
 use super::*;
 
+pub(super) fn save_audio_settings(
+    core: &AppCore,
+    config: AudioConfig,
+    restore: Option<crate::settings::ControllerAudioRestore>,
+) -> Result<(), String> {
+    let _apply = core.settings_apply.lock().expect("apply settings");
+    save_audio_settings_with(
+        &core.settings,
+        core.engine.audio_config(),
+        config,
+        restore,
+        |config| {
+            core.engine
+                .configure_audio(config)
+                .map_err(|e| e.to_string())
+        },
+    )
+}
+
+// The transaction is also exercised with a simulated device, without opening
+// physical outputs. Production always uses Engine::configure_audio above.
+pub(super) fn save_audio_settings_with(
+    settings: &crate::settings::SettingsStore,
+    previous: AudioConfig,
+    config: AudioConfig,
+    restore: Option<crate::settings::ControllerAudioRestore>,
+    mut configure: impl FnMut(AudioConfig) -> Result<(), String>,
+) -> Result<(), String> {
+    configure(config.clone())?;
+    if let Err(error) = settings.update(|s| {
+        s.audio = config;
+        s.controller_audio_restore = restore;
+    }) {
+        return match configure(previous) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!("{error}; audio restore failed: {rollback}")),
+        };
+    }
+    Ok(())
+}
+
 impl Preferences {
     pub(super) fn save_headphone_mix(&mut self, value: f32) {
         let result = self

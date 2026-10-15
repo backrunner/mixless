@@ -7,3 +7,14 @@ description = "AI mix planner. Depends only on mixless-protocol."
 
 [dependencies]
 mixless-protocol = { workspace = true }
+
+[features]
+# Count candidate rejections per source line for offline audits.
+trace = []
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[[example]]
+name = "automix-audit"
+required-features = ["trace"]

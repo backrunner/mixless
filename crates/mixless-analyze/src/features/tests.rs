@@ -265,3 +265,68 @@ fn a_sustained_tempo_change_survives_the_outlier_filter() {
     assert!((first - 174.).abs() < 1.5, "first {first}");
     assert!((last - 150.).abs() < 2.5, "last {last}");
 }
+
+// Four-on-the-floor kick with 16th hats and an offbeat bass, as in fast
+// hardcore. The 16ths sit a quarter beat from the kick, where displaced-grid
+// controls once read them as evidence against the pulse.
+fn hardcore(sr: u32, bpm: f32, seconds: f32, kick: bool) -> Vec<f32> {
+    let period = 60. / bpm;
+    let mut noise = 0x2545_f491_u32;
+    let mut samples = Vec::new();
+    for i in 0..(sr as f32 * seconds) as usize {
+        let t = i as f32 / sr as f32;
+        let beat = (t / period).fract() * period;
+        let sixteenth = (t / (period / 4.)).fract() * period / 4.;
+        let offbeat = ((t / period + 0.5).fract()) * period;
+        noise ^= noise << 13;
+        noise ^= noise >> 17;
+        noise ^= noise << 5;
+        let white = noise as f32 / u32::MAX as f32 * 2. - 1.;
+        let mut s = 0.25 * white * (-sixteenth * 90.).exp()
+            + 0.3 * (std::f32::consts::TAU * 55. * t).sin() * (-offbeat * 12.).exp()
+            + 0.15 * (std::f32::consts::TAU * 440. * t).sin();
+        if kick {
+            s += 0.8 * (-beat * 30.).exp() * (std::f32::consts::TAU * 60. * beat).sin();
+        }
+        samples.extend([s, s]);
+    }
+    samples
+}
+
+#[test]
+fn dense_sixteenths_do_not_hide_a_steady_fast_pulse() {
+    let sr = 22050;
+    let a = analyze(TrackId(1), &hardcore(sr, 175., 64., true), sr);
+    assert!(
+        (a.tempo.global_bpm - 175.).abs() < 0.3,
+        "{}",
+        a.tempo.global_bpm
+    );
+    let reliable = a
+        .tempo
+        .pulse_confidence
+        .iter()
+        .filter(|c| **c >= 0.65)
+        .count();
+    assert!(
+        reliable * 10 >= a.tempo.pulse_confidence.len() * 9,
+        "{:?}",
+        a.tempo.pulse_confidence
+    );
+}
+
+#[test]
+fn a_kickless_intro_keeps_the_tempo_its_drums_will_play() {
+    let sr = 22050;
+    let mut samples = hardcore(sr, 175., 22., false);
+    samples.extend(hardcore(sr, 175., 44., true));
+    let a = analyze(TrackId(1), &samples, sr);
+    assert!(
+        a.tempo
+            .segments
+            .iter()
+            .all(|s| (s.bpm / a.tempo.global_bpm - 1.).abs() < 0.015),
+        "{:?}",
+        a.tempo.segments.iter().map(|s| s.bpm).collect::<Vec<_>>()
+    );
+}

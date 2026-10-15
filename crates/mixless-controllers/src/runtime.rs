@@ -1,5 +1,7 @@
 mod adapters;
 mod discovery;
+#[cfg(test)]
+mod discovery_tests;
 mod hid_io;
 mod lifecycle;
 #[cfg(test)]
@@ -19,9 +21,9 @@ use mixless_midi::midir::{
 use std::{
     collections::HashMap,
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
-        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -279,6 +281,7 @@ struct Worker {
     hid_inventory: Vec<hidapi::DeviceInfo>,
     hid_scan: Option<crate::hid_backend::Pending<Vec<hidapi::DeviceInfo>>>,
     hid_open: HashMap<String, crate::hid_backend::Pending<crate::hid_backend::OpenedDevice>>,
+    hid_matchers: Vec<DeviceMatcher>,
     profiles: Vec<(DeviceAssignment, ControllerPreset)>,
     wildcard: ControllerPreset,
     wildcard_since: Instant,
@@ -307,6 +310,7 @@ impl Worker {
             hid_inventory: vec![],
             hid_scan: None,
             hid_open: HashMap::new(),
+            hid_matchers: Vec::new(),
             profiles: vec![],
             wildcard: ControllerPreset::blank("Legacy wildcard"),
             wildcard_since: Instant::now(),

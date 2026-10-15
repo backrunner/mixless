@@ -69,12 +69,12 @@ pub(super) fn prepare(
             ctx.offset_a.rate
         };
         if !(0.88..=1.12).contains(&(ra / ctx.offset_a.rate)) {
-            return None;
+            return miss!();
         }
         if j > 0 {
             let dt = 2. * (ta as f64 - prev_a) / (ra as f64 + prev_rate);
             if dt <= 0. {
-                return None;
+                return miss!();
             }
             max_slope = max_slope.max((bpm.ln() - prev_log).abs() / dt as f32);
             wall += dt;
@@ -91,7 +91,7 @@ pub(super) fn prepare(
                 || !(0.5..=2.).contains(&rb)
                 || !(0.88..=1.12).contains(&(rb / ctx.offset_b.rate))
             {
-                return None;
+                return miss!();
             }
             lanes.rate_b.nodes.push((u, rb));
         }
@@ -100,7 +100,7 @@ pub(super) fn prepare(
         prev_log = bpm.ln();
     }
     if blend && max_slope > MAX_LOG_TEMPO_PER_SEC * 1.02 {
-        return None;
+        return miss!();
     }
     // Keep the plan alive for one incoming beat after the cut. This lets the
     // engine launch B exactly at n even when A finishes at the file boundary.
@@ -122,14 +122,14 @@ pub(super) fn prepare(
     };
     if b_end > b.duration_sec + 0.001 || !covers_user_range(bin, b_end, ctx.cues_in, b.sample_rate)
     {
-        return None;
+        return miss!();
     }
     // Leave an incoming phrase to play after the overlap, rather than
     // consuming the entire next track in a long mix.
     if blend && !explicit_in {
         let reserve = (8. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec * 0.25);
         if b_end > b.duration_sec - reserve + 0.01 {
-            return None;
+            return miss!();
         }
     }
     if !blend {
@@ -150,10 +150,10 @@ pub(super) fn prepare(
             })
             || !outgoing.is_some_and(|f| f.vocal_presence < 0.5)
         {
-            return None;
+            return miss!();
         }
         if n < 8. {
-            return None;
+            return miss!();
         }
         let bars = [4u16, 2, 1].into_iter().find(|bars| {
             let end = gb.sec(input + *bars as f32 * gb.meter());
@@ -212,7 +212,7 @@ pub(super) fn prepare(
             let rate =
                 ga.bpm(start_beat + u * ga.meter()) * ctx.offset_a.rate * factor / gb.bpm(beat);
             if !(0.88..=1.12).contains(&(rate / ctx.offset_b.rate)) {
-                return None;
+                return miss!();
             }
             lanes.rate_b.nodes.push((u, rate));
             source_b
@@ -222,10 +222,10 @@ pub(super) fn prepare(
         if b_end > b.duration_sec + 0.001
             || !covers_user_range(bin, b_end, ctx.cues_in, b.sample_rate)
         {
-            return None;
+            return miss!();
         }
         if !harmonic && !percussion_only(a, start, end) && !percussion_only(b, bin, b_end) {
-            return None;
+            return miss!();
         }
     }
     Some(Timing {

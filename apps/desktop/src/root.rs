@@ -166,6 +166,7 @@ impl Render for UiState {
         let track_menu = self.render_track_menu(window, cx);
         let playlist_menu = self.render_playlist_menu(window, cx);
         let deck_menu = self.render_deck_menu(window, cx);
+        let brand_menu = self.render_brand_menu(window, cx);
         let remove_playlist_confirm = self.render_remove_playlist_confirm(cx);
         let error = self.error.clone();
         let update_notice = self.update_notice.clone();
@@ -183,6 +184,11 @@ impl Render for UiState {
             .font_family(theme::FONT_UI)
             .text_color(theme::TEXT)
             .on_key_down(cx.listener(|s, ev: &gpui::KeyDownEvent, window, cx| {
+                if s.brand_menu.open {
+                    s.brand_menu_key(&ev.keystroke, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key == "escape" && cx.stop_active_drag(window) {
                     cx.stop_propagation();
                     return;
@@ -313,6 +319,7 @@ impl Render for UiState {
             .when_some(track_menu, |el, menu| el.child(menu))
             .when_some(playlist_menu, |el, menu| el.child(menu))
             .when_some(deck_menu, |el, menu| el.child(menu))
+            .when_some(brand_menu, |el, menu| el.child(menu))
             .when_some(remove_playlist_confirm, |el, modal| el.child(modal))
             .when_some(import_modal, |el, modal| el.child(modal))
             .when_some(shortcuts, |el, modal| el.child(modal))

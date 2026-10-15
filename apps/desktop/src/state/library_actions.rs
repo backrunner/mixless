@@ -125,9 +125,8 @@ impl UiState {
     }
 
     pub fn remove_playlist(&mut self, id: i64) {
-        // Automix runs on the visible playlist; removing it mid-session would
-        // keep queueing tracks the user just asked to drop.
-        if self.automix_active && self.playlist_sel == Some(id) {
+        // The running source can differ from the playlist being browsed.
+        if self.automix_active && self.automix_playlist == Some(id) {
             self.stop_automix();
         }
         let core = self.core.clone();

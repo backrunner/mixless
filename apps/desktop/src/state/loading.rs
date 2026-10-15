@@ -5,6 +5,14 @@ impl UiState {
     pub fn select_playlist(&mut self, id: Option<i64>) {
         self.library_refresh.initial = false;
         self.track_menu = None;
+        if self.automix_active
+            && self.playlist_sel != id
+            && self.core.settings.get().automix_follow_playlist
+        {
+            self.automix_playlist = id;
+            // Retry only once the newly selected source has finished loading.
+            self.automix_tracks.clear();
+        }
         self.playlist_sel = id;
         if let Err(error) = self.core.settings.update(|s| {
             s.last_playlist = id;

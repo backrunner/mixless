@@ -184,14 +184,16 @@ pub fn app_core() -> Arc<AppCore> {
         library,
         analyzer: mixless_analyze::Analyzer::new(),
         stems: Some({
-            mixless_stems::Processor::new(
+            let processor = mixless_stems::Processor::new(
                 std::env::var_os("MIXLESS_MODEL_DIR")
                     .map(PathBuf::from)
                     .unwrap_or_else(|| data_dir.join("models")),
                 data_dir.join("stem-cache"),
                 std::env::var_os("MIXLESS_MODELS_OFFLINE").is_none(),
             )
-            .with_bundled_models(bundled_models())
+            .with_bundled_models(bundled_models());
+            processor.set_storage_format(initial.stem_storage);
+            processor
         }),
         shutting_down: false.into(),
         acquired_dir,
@@ -354,6 +356,7 @@ pub struct UiState {
     pub track_menu: Option<crate::views::library::TrackMenu>,
     pub playlist_menu: Option<crate::views::library::PlaylistMenu>,
     pub deck_menu: Option<crate::views::deck::DeckMenu>,
+    pub(crate) brand_menu: crate::views::topbar::BrandMenu,
     /// `(playlist id, display name)` awaiting removal confirmation.
     pub confirm_remove_playlist: Option<(i64, String)>,
     library_actions: Vec<Receiver<Result<TrackId, String>>>,
@@ -411,6 +414,9 @@ pub struct UiState {
     import_retries: import_retries::Retries,
     artwork_fetch: artwork_fetch::ArtworkFetch,
     pub automix_active: bool,
+    /// Running source, independent of the browsed playlist. None is All tracks.
+    automix_playlist: Option<i64>,
+    automix_tracks: Vec<TrackId>,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
     automix_preview_revision: u64,
@@ -455,6 +461,7 @@ impl UiState {
             track_menu: None,
             playlist_menu: None,
             deck_menu: None,
+            brand_menu: Default::default(),
             confirm_remove_playlist: None,
             library_actions: Vec::new(),
             playlist_actions: Vec::new(),
@@ -510,6 +517,8 @@ impl UiState {
             import_retries: Default::default(),
             artwork_fetch,
             automix_active: false,
+            automix_playlist: None,
+            automix_tracks: Vec::new(),
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
             automix_preview_revision: 0,

@@ -13,7 +13,14 @@ imageType: image/png
 
 Select a playlist and enable **AUTO**. With empty decks, the first playable song starts in list order, even with shuffle enabled. Subsequent songs follow sequence or shuffle. Each shuffle cycle visits every entry before reshuffling, and the playlist loops continuously.
 
-Selecting a playlist prepares the set in the background. Each track’s entry, completed incoming mix and carried tempo/key constrain its exit. The list and playback share these plans; a new lap is planned separately so its entrance does not overlap the current lap’s exit.
+AutoMix prepares its source playlist in the background. Each track’s entry, completed incoming mix and carried tempo/key constrain its exit. The list and playback share these plans; a new lap is planned separately so its entrance does not overlap the current lap’s exit.
+
+In **Preferences → General → AutoMix**, **On playlist change** controls what happens when you select another playlist:
+
+- **Follow selected** (default): use the newly selected playlist for upcoming tracks.
+- **Keep current**: continue the current AutoMix playlist while you browse other playlists.
+
+The choice is saved and applies to subsequent playlist selections, including **All Tracks**. Turning AUTO off and on starts from the playlist you are viewing. Edits to the running playlist still update its queue; deleting that playlist stops AutoMix.
 
 ## How transitions are chosen
 
@@ -61,4 +68,4 @@ The **Live moves** preference (Off / Subtle / Active) controls extra performance
 
 For the rest of the controls, see [decks and effects](/docs/decks) and [audio levels](/docs/audio).
 
-Changing playlist or order, or completing downloads, analysis or stem preparation, replans the remaining queue. When there is time to prepare a safe handoff, the idle deck switches to the new candidate while the current song continues. Once a mix has begun, or a replacement cannot be ready safely, that handoff finishes and the requested candidate takes the next slot.
+Changing playlist with **Follow selected**, editing the running playlist’s order, or completing its downloads, analysis or stem preparation replans the remaining queue. When there is time to prepare a safe handoff, the idle deck switches to the new candidate while the current song continues. Once a mix has begun, or a replacement cannot be ready safely, that handoff finishes and the requested candidate takes the next slot.

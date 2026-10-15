@@ -1,8 +1,47 @@
 //! Shared settings geometry: readable rows, grouped surfaces and segmented choices.
 use super::*;
+use gpui::AnimationExt;
 
 pub(super) const CONTROL_HEIGHT: f32 = 32.;
 pub(super) const CONTROL_RADIUS: f32 = 5.;
+
+pub(super) fn loading_indicator() -> impl IntoElement {
+    div()
+        .size(px(24.))
+        .flex_none()
+        .rounded_full()
+        .border_2()
+        .border_color(theme::LINE)
+        .with_animation(
+            "storage-loading-indicator",
+            gpui::Animation::new(Duration::from_millis(1000)).repeat(),
+            |el, phase| {
+                el.child(
+                    gpui::canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _| {
+                            let mut path = gpui::PathBuilder::stroke(px(2.));
+                            for step in 0..=32 {
+                                let angle =
+                                    std::f32::consts::TAU * (phase + step as f32 / 32. * 0.75);
+                                let position = bounds.center()
+                                    + gpui::point(px(angle.cos() * 10.), px(angle.sin() * 10.));
+                                if step == 0 {
+                                    path.move_to(position);
+                                } else {
+                                    path.line_to(position);
+                                }
+                            }
+                            if let Ok(path) = path.build() {
+                                window.paint_path(path, theme::ACCENT);
+                            }
+                        },
+                    )
+                    .size_full(),
+                )
+            },
+        )
+}
 
 /// Small vector chevrons share a baseline regardless of the selected font.
 pub(super) fn select_indicator(popup: bool, enabled: bool) -> impl IntoElement {

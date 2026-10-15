@@ -1,6 +1,6 @@
 #[cfg(stems_ort)]
 use crate::Inference;
-use crate::{cache, check, Error, Progress, Result};
+use crate::{Error, Progress, Result, cache, check};
 use mixless_protocol::StemAnalysis;
 #[cfg(stems_ort)]
 use mixless_protocol::{StemKind, StemNote};
@@ -31,6 +31,7 @@ pub struct Processor {
     #[cfg_attr(not(stems_ort), allow(dead_code))]
     download: bool,
     states: Vec<Mutex<State>>,
+    storage: Mutex<crate::StorageFormat>,
 }
 #[derive(Default)]
 struct State {
@@ -46,10 +47,18 @@ impl Processor {
             bundled_models: None,
             cache,
             download,
+            storage: Mutex::new(crate::StorageFormat::default()),
             states: (0..mixless_protocol::BackgroundWorkers::detected().stems)
                 .map(|_| Mutex::new(State::default()))
                 .collect(),
         }
+    }
+    /// Applies to newly generated cache entries; existing audio stays immutable.
+    pub fn set_storage_format(&self, format: crate::StorageFormat) {
+        *self.storage.lock().expect("stem storage format") = format;
+    }
+    pub fn storage_format(&self) -> crate::StorageFormat {
+        *self.storage.lock().expect("stem storage format")
     }
     pub fn parallelism(&self) -> usize {
         self.states.len()
@@ -177,6 +186,7 @@ impl Processor {
                 "Audio duration changed before separation".into(),
             ));
         }
+        let format = self.storage_format();
         let stems = inference.separate(&audio.samples, audio.sample_rate, progress, active)?;
         drop(audio);
         let mut notes = Vec::new();
@@ -204,7 +214,7 @@ impl Processor {
         check(active)?;
         progress(Progress::Saving);
         let path = self.cache_path(content_hash);
-        cache::save(&path, &stems, &analysis)?;
+        cache::save_as(&path, &stems, &analysis, format, active)?;
         Ok(analysis)
     }
 
@@ -354,17 +364,21 @@ mod tests {
             .unwrap();
         assert!(crate::is_current(&result));
         assert!(progress.contains(&Progress::Saving));
-        assert!(!progress
-            .iter()
-            .any(|p| matches!(p, Progress::Downloading { .. })));
+        assert!(
+            !progress
+                .iter()
+                .any(|p| matches!(p, Progress::Downloading { .. }))
+        );
         assert!(
             !downloads.exists(),
             "bundled inference must not populate downloaded models"
         );
         assert_eq!(processor.clear_models().unwrap(), 0);
-        assert!(bundled
-            .join(mixless_protocol::STEM_SEPARATOR.name)
-            .is_file());
+        assert!(
+            bundled
+                .join(mixless_protocol::STEM_SEPARATOR.name)
+                .is_file()
+        );
         crate::verify_bundled_models(&bundled).unwrap();
     }
 }

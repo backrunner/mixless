@@ -456,12 +456,16 @@ impl Preferences {
                     .min_w_0()
                     .child(
                         div()
+                            .id("mapping-list-scroll-boundary")
                             .flex_1()
                             .min_w_0()
                             .border_1()
                             .border_color(theme::LINE)
                             .rounded(px(4.))
                             .overflow_hidden()
+                            // Let the list consume the wheel first, then stop
+                            // it before the enclosing settings page scrolls.
+                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                             .child(table),
                     )
                     .child(self.midi_editor(

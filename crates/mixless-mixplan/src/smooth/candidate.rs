@@ -48,27 +48,27 @@ pub(super) fn direct(
     let loop_roll = mode == TransitionMode::LoopRoll;
     let detailed = !a.moments.is_empty() && !b.moments.is_empty();
     if options.strategy == Some(S::LoopConstruct) && !loop_roll {
-        return None;
+        return miss!();
     }
     if options.strategy == Some(S::ScratchCut) && (blend || loop_roll) {
-        return None;
+        return miss!();
     }
     let requested_hold = options.strategy == Some(S::EnergyHold) && blend;
     if options.strategy == Some(S::DropCut) && (blend || loop_roll) {
-        return None;
+        return miss!();
     }
     if options.strategy == Some(S::Spinback) && (blend || loop_roll) {
-        return None;
+        return miss!();
     }
     if options.strategy == Some(S::LoopOut) && !blend {
-        return None;
+        return miss!();
     }
     let correction = outgoing_bpm * factor / incoming_bpm;
     if blend && ((correction - 1.).abs() > 0.08 || ga.meter() != gb.meter()) {
-        return None;
+        return miss!();
     }
     if loop_roll && ((correction - 1.).abs() > 0.12 || ga.meter() != gb.meter()) {
-        return None;
+        return miss!();
     }
     let boundary_only = length == 0 && mode == TransitionMode::PhraseBridge;
     let mut n = length.max(1);
@@ -92,7 +92,7 @@ pub(super) fn direct(
         n = n.min(available);
     }
     if n == 0 || (n > available && !boundary_only) || n > 128 {
-        return None;
+        return miss!();
     }
     let n = n as f32;
     let start_beat = out - n * ga.meter();
@@ -174,7 +174,7 @@ pub(super) fn direct(
     if ((!detailed || (!blend && !loop_roll)) && !crate::vocals::safe_exit(a, end))
         || !crate::vocals::safe_entry(b, bin)
     {
-        return None;
+        return miss!();
     }
     let out_phrase = boundary_quality(a, end)
         .max(crate::recovery::quality(a, end))
@@ -196,7 +196,7 @@ pub(super) fn direct(
     // Every technique finishes A at an evidenced phrase edge. Recovery
     // quality may authorize layering, never an internal exit, even with stems.
     if !explicit_out && !crate::phrasing::exit_boundary(a, end) {
-        return None;
+        return miss!();
     }
     // A recovery interval can support an overlap, but its internal downbeats
     // are not automatically phrase endings for a bridge or performance cut.
@@ -206,19 +206,19 @@ pub(super) fn direct(
         && !a.phrase_boundaries.is_empty()
         && boundary_quality(a, end) < 0.5
     {
-        return None;
+        return miss!();
     }
     // A hard cut or FX bridge may only land where the outgoing voice has
     // released — singing up to the boundary is fine, sounding past it is not.
     // A user's own OUT cue stays authoritative.
     if !blend && !loop_roll && !explicit_out && !crate::continuity::voice_released(a, end) {
-        return None;
+        return miss!();
     }
     if !explicit_in && !crate::drops::entry_allowed(b, bin) {
-        return None;
+        return miss!();
     }
     if blend && explicit_out && (out - ga.floor_bar(end)).abs() > 0.01 {
-        return None;
+        return miss!();
     }
     // A metrical downbeat is not automatically the beginning of a phrase.
     // Strong structural evidence takes precedence over the old fixed offsets.
@@ -226,21 +226,21 @@ pub(super) fn direct(
         || (!b.phrase_boundaries.is_empty() && !explicit_in && in_phrase < 0.5)
         || (blend && !a.phrase_boundaries.is_empty() && !explicit_out && start_phrase < 0.5)
     {
-        return None;
+        return miss!();
     }
     if feature(b, bin + 0.001).is_some_and(|bar| bar.rms <= 0.001)
         || feature(a, end - 0.001).is_some_and(|bar| bar.rms <= 0.001)
     {
-        return None;
+        return miss!();
     }
     if end > a.duration_sec + 0.001
         || (start < options.earliest_outgoing_sec && !boundary_only)
         || bin >= b.duration_sec
     {
-        return None;
+        return miss!();
     }
     if !covers_user_range(start, end, ctx.cues_out, a.sample_rate) {
-        return None;
+        return miss!();
     }
     let timing::Timing {
         mut lanes,
@@ -265,7 +265,7 @@ pub(super) fn direct(
     )?;
     let takeover = if blend || loop_roll { b_end } else { bin };
     if !explicit_in && !crate::energy::handoff_supported(a, b, end, takeover) {
-        return None;
+        return miss!();
     }
     // Exiting onto the downbeat that resolves A's build throws the tension
     // away unless B's own drop lands exactly where A leaves (a build-up
@@ -289,7 +289,7 @@ pub(super) fn direct(
                         && (s.start_sec - lands).abs() < 0.08
                 }))
         {
-            return None;
+            return miss!();
         }
     }
     // The incoming peak may resolve at the overlap's end or later; it must
@@ -300,16 +300,16 @@ pub(super) fn direct(
             .iter()
             .any(|p| p.0 >= bin - 0.05 && p.0 < b_end - 0.05)
     {
-        return None;
+        return miss!();
     }
     if !detailed
         && (!fits_region(a, mixless_protocol::MixRegionKind::Out, end, start, end)
             || !fits_region(b, mixless_protocol::MixRegionKind::In, bin, bin, b_end))
     {
-        return None;
+        return miss!();
     }
     if blend && (!grid_reliable(a, start, end) || !grid_reliable(b, bin, b_end)) {
-        return None;
+        return miss!();
     }
     // LoopOut: the outgoing deck loops its final phrase while stems or a deep
     // EQ strip remove its foreground and the incoming track takes over on the
@@ -377,7 +377,7 @@ pub(super) fn direct(
     // A filtered blend that runs for many phrases layers two full tracks; it
     // is only a true sweep when at least one side is bare percussion.
     if filtered && n > 16. && !percussion_only(a, start, end) && !percussion_only(b, bin, b_end) {
-        return None;
+        return miss!();
     }
     let tonal_clash = blend
         && !harmonic
@@ -393,7 +393,7 @@ pub(super) fn direct(
         && b.stems.is_some()
         && ((8. ..=32.).contains(&n) || loop_out);
     if tonal_clash && !stem_layer {
-        return None;
+        return miss!();
     }
     // Do not let a long intro blend consume the start of an incoming vocal hook
     // merely because the outgoing side is instrumental. End it on a phrase.
@@ -411,7 +411,7 @@ pub(super) fn direct(
         && end_phrase < 0.5
         && !(recovery && feature(b, b_end - 0.01).is_some_and(|f| crate::vocals::risk(f) < 0.35))
     {
-        return None;
+        return miss!();
     }
     let mut clash = 0.;
     let mut vocal_a = 0.;
@@ -477,14 +477,14 @@ pub(super) fn direct(
                     )
                 )
             {
-                return None;
+                return miss!();
             }
             clash += 1. / samples as f32;
             clash_run += ga.meter() * n / samples as f32;
             // A long overlap must not dilute a whole colliding vocal line to
             // an acceptable percentage. Allow at most one beat of spillover.
             if !stem_layer && (blend || loop_roll) && (!detailed || n < 4.) && clash_run > 1. {
-                return None;
+                return miss!();
             }
         } else {
             clash_run = 0.;
@@ -496,7 +496,7 @@ pub(super) fn direct(
         clash = 0.;
     }
     if (blend || loop_roll) && (!detailed || n < 4.) && clash > 0.0625 {
-        return None;
+        return miss!();
     }
     let sa = section(a, end - 0.001);
     let sb = section(b, bin + 0.001);
@@ -563,7 +563,7 @@ pub(super) fn direct(
             || (options.strategy.is_none() && options.live_moves == crate::LiveMoves::Active));
     if !explicit_out && crate::arrangement::breaks_build(a, end, b, if blend { b_end } else { bin })
     {
-        return None;
+        return miss!();
     }
     // A released instrumental recovery can carry a short native-rate overlap
     // even when incompatible tempi rule out a beat blend. Require measured
@@ -594,8 +594,15 @@ pub(super) fn direct(
         && crate::continuity::cut_safe(a, end, false)
         && !matches!(sa, mixless_protocol::SectionLabel::BuildUp);
     if boundary_only && !instant && !drop_cut && !spinback {
-        return None;
+        return miss!();
     }
+    // Stems can strip the outgoing rhythm on a phrase line, so a short
+    // native-rate exit is available where the tempi cannot be matched.
+    let stem_strip = !blend
+        && !loop_roll
+        && stem_pair
+        && (2. ..4.).contains(&n)
+        && (correction - 1.).abs() > 0.08;
     if !blend
         && !loop_roll
         && n < 4.
@@ -604,11 +611,12 @@ pub(super) fn direct(
         && !instant
         && !spinback
         && !short_overlap
+        && !stem_strip
     {
-        return None;
+        return miss!();
     }
     if drop_cut && !crate::continuity::cut_safe(a, end, true) {
-        return None;
+        return miss!();
     }
     let fx_decision = if blend || instant {
         policy::Decision {
@@ -654,7 +662,7 @@ pub(super) fn direct(
                 ),
         )
     {
-        return None;
+        return miss!();
     }
     if (loop_roll && fx_decision.technique != Technique::LoopRoll)
         || (options.strategy == Some(S::DropCut) && fx_decision.technique != Technique::DropCut)
@@ -663,7 +671,7 @@ pub(super) fn direct(
         || (options.strategy == Some(S::Spinback) && fx_decision.technique != Technique::Spinback)
         || (options.strategy == Some(S::LoopOut) && !loop_out)
     {
-        return None;
+        return miss!();
     }
     let handoff = if filtered {
         n - 1.
@@ -746,7 +754,7 @@ pub(super) fn direct(
             0.
         };
     if score <= minimum_score {
-        return None;
+        return miss!();
     }
     // Every decoded source has its own gated loudness trim. Pair-relative RMS
     // boosts would undo it, amplify quiet intros and accumulate across a set.
@@ -817,7 +825,7 @@ pub(super) fn direct(
         let pull = ((1.5 * ga.meter() * 60. / outgoing_bpm).min(1.9) * a.sample_rate as f32).round()
             as i64;
         if start_src_frame < pull as u64 {
-            return None;
+            return miss!();
         }
         lanes.scratch_a = Some(ScratchOp {
             start_src_frame,
@@ -925,7 +933,8 @@ pub(super) fn direct(
             Technique::DropCut | Technique::ScratchCut | Technique::Spinback
         )
     {
-        crate::bridge::expand(&mut plan, ctx, fx_decision.technique, harmonic)?;
+        crate::bridge::expand(&mut plan, ctx, fx_decision.technique, harmonic, stem_pair)
+            .or_else(|| miss!())?;
     }
     if filtered {
         crate::filtered::arrange(&mut plan, a, b)?;
@@ -937,7 +946,7 @@ pub(super) fn direct(
         crate::instant::compact(&mut plan);
     }
     if plan.t_in_a < options.earliest_outgoing_sec {
-        return None;
+        return miss!();
     }
     if stem_layer && !loop_out {
         crate::stem_mix::layer(ctx, &mut plan, handoff);

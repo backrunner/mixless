@@ -1,0 +1,2792 @@
+{
+  "version": 1,
+  "id": "builtin-ddj-flx2-v1",
+  "name": "DDJ-FLX2",
+  "manufacturer": "Pioneer DJ / AlphaTheta",
+  "notes": "Connect by USB MIDI. Use HOT CUE mode (Shift + BEAT SYNC, then pad 1); Shift + pad clears a cue. CFX controls the mixless filter. Browse and load in the workspace. Smart Fader, master CUE, other pad modes, shifted transport and fader start are unmapped. Choose audio outputs manually. Jog calibration and hardware testing pending.",
+  "provenance": [
+    {
+      "url": "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX2/DDJ-FLX2_MIDI_Message_List_E1.pdf",
+      "revision": "E1 (copyright 2024; no printed revision)",
+      "section": "p. 1: deck/jog, mixer and 14-bit controls; p. 2: hot cue pads and vinyl output"
+    },
+    {
+      "url": "https://downloads.support.alphatheta.com/manuals/dj-controllers/DDJ-FLX2/DDJ-FLX2_DRI1917A_manual.pdf",
+      "revision": "DRI1917A",
+      "section": "pp. 77, 82, 143: Mac audio setup, pad mode selection and USB MIDI for other DJ applications"
+    }
+  ],
+  "endpoints": [
+    {
+      "id": "main",
+      "matcher": {
+        "protocol": "midi",
+        "names": [
+          "DDJ-FLX2"
+        ]
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "id": "control-0",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 11
+        }
+      },
+      "target": {
+        "type": "play",
+        "deck": "a"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-1",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 12
+        }
+      },
+      "target": {
+        "type": "temporary_cue",
+        "deck": "a"
+      },
+      "mode": "momentary",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-2",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 88
+        }
+      },
+      "target": {
+        "type": "sync",
+        "deck": "a"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-3",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 54
+        }
+      },
+      "target": {
+        "type": "jog_touch",
+        "deck": "a"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-4",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 103
+        }
+      },
+      "target": {
+        "type": "jog_touch",
+        "deck": "a"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-5",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 0,
+          "number": 33
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "a"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-6",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 0,
+          "number": 34
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "a"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-7",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 0,
+          "number": 35
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "a"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-8",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 0,
+          "number": 41
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "a"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-9",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 0,
+          "msb": 0,
+          "lsb": 32
+        }
+      },
+      "target": {
+        "type": "tempo",
+        "deck": "a"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-10",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 0,
+          "msb": 7,
+          "lsb": 39
+        }
+      },
+      "target": {
+        "type": "eq",
+        "deck": "a",
+        "band": "high"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-11",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 0,
+          "msb": 11,
+          "lsb": 43
+        }
+      },
+      "target": {
+        "type": "eq",
+        "deck": "a",
+        "band": "mid"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-12",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 0,
+          "msb": 15,
+          "lsb": 47
+        }
+      },
+      "target": {
+        "type": "eq",
+        "deck": "a",
+        "band": "low"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-13",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 0,
+          "msb": 19,
+          "lsb": 51
+        }
+      },
+      "target": {
+        "type": "fader",
+        "deck": "a"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-14",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 6,
+          "msb": 23,
+          "lsb": 55
+        }
+      },
+      "target": {
+        "type": "filter",
+        "deck": "a"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-15",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 84
+        }
+      },
+      "target": {
+        "type": "pfl",
+        "deck": "a"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-16",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 0
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 0
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-17",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 0
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 0
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-18",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 1
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 1
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-19",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 1
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 1
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-20",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 2
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 2
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-21",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 2
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 2
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-22",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 3
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 3
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-23",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 3
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 3
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-24",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 4
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 4
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-25",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 4
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 4
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-26",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 5
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 5
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-27",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 5
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 5
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-28",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 6
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 6
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-29",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 6
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 6
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-30",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 7,
+          "number": 7
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "a",
+        "index": 7
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-31",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 8,
+          "number": 7
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "a",
+        "index": 7
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-0",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-32",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 11
+        }
+      },
+      "target": {
+        "type": "play",
+        "deck": "b"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-33",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 12
+        }
+      },
+      "target": {
+        "type": "temporary_cue",
+        "deck": "b"
+      },
+      "mode": "momentary",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-34",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 88
+        }
+      },
+      "target": {
+        "type": "sync",
+        "deck": "b"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-35",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 54
+        }
+      },
+      "target": {
+        "type": "jog_touch",
+        "deck": "b"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-36",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 103
+        }
+      },
+      "target": {
+        "type": "jog_touch",
+        "deck": "b"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-37",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 1,
+          "number": 33
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "b"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-38",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 1,
+          "number": 34
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "b"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-39",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 1,
+          "number": 35
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "b"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-40",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc",
+          "channel": 1,
+          "number": 41
+        }
+      },
+      "target": {
+        "type": "jog",
+        "deck": "b"
+      },
+      "mode": "binary_offset",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": 720.0,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-41",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 1,
+          "msb": 0,
+          "lsb": 32
+        }
+      },
+      "target": {
+        "type": "tempo",
+        "deck": "b"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-42",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 1,
+          "msb": 7,
+          "lsb": 39
+        }
+      },
+      "target": {
+        "type": "eq",
+        "deck": "b",
+        "band": "high"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-43",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 1,
+          "msb": 11,
+          "lsb": 43
+        }
+      },
+      "target": {
+        "type": "eq",
+        "deck": "b",
+        "band": "mid"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-44",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 1,
+          "msb": 15,
+          "lsb": 47
+        }
+      },
+      "target": {
+        "type": "eq",
+        "deck": "b",
+        "band": "low"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-45",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 1,
+          "msb": 19,
+          "lsb": 51
+        }
+      },
+      "target": {
+        "type": "fader",
+        "deck": "b"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-46",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 6,
+          "msb": 24,
+          "lsb": 56
+        }
+      },
+      "target": {
+        "type": "filter",
+        "deck": "b"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-47",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 84
+        }
+      },
+      "target": {
+        "type": "pfl",
+        "deck": "b"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-48",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 0
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 0
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-49",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 0
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 0
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-50",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 1
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 1
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-51",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 1
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 1
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-52",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 2
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 2
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-53",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 2
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 2
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-54",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 3
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 3
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-55",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 3
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 3
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-56",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 4
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 4
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-57",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 4
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 4
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-58",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 5
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 5
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-59",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 5
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 5
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-60",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 6
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 6
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-61",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 6
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 6
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-62",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 9,
+          "number": 7
+        }
+      },
+      "target": {
+        "type": "cue",
+        "deck": "b",
+        "index": 7
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": false
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-63",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 10,
+          "number": 7
+        }
+      },
+      "target": {
+        "type": "clear_cue",
+        "deck": "b",
+        "index": 7
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": {
+        "name": "shift-1",
+        "active": true
+      },
+      "sets_layer": null
+    },
+    {
+      "id": "control-64",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 6,
+          "msb": 31,
+          "lsb": 63
+        }
+      },
+      "target": {
+        "type": "xfader"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-65",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 6,
+          "msb": 8,
+          "lsb": 40
+        }
+      },
+      "target": {
+        "type": "master"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-66",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "cc14",
+          "channel": 6,
+          "msb": 13,
+          "lsb": 45
+        }
+      },
+      "target": {
+        "type": "cue_gain"
+      },
+      "mode": "absolute",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": null
+    },
+    {
+      "id": "control-67",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 0,
+          "number": 63
+        }
+      },
+      "target": {
+        "type": "master"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": "shift-0"
+    },
+    {
+      "id": "control-68",
+      "endpoint": "main",
+      "source": {
+        "protocol": "midi",
+        "address": {
+          "type": "note",
+          "channel": 1,
+          "number": 63
+        }
+      },
+      "target": {
+        "type": "master"
+      },
+      "mode": "auto",
+      "inverted": false,
+      "pickup": false,
+      "sensitivity": 1.0,
+      "minimum": null,
+      "maximum": null,
+      "ticks_per_revolution": null,
+      "layer": null,
+      "sets_layer": "shift-1"
+    }
+  ],
+  "feedback": [
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "play",
+          "deck": "a"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          144,
+          11,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "temporary_cue",
+          "deck": "a"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          144,
+          12,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "sync",
+          "deck": "a"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          144,
+          88,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "pfl",
+          "deck": "a"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          144,
+          84,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 0
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          0,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 1
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          1,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 2
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          2,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 3
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          3,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 4
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          4,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 5
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          5,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 6
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          6,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "a",
+          "index": 7
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          151,
+          7,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "vinyl",
+          "deck": "a"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          144,
+          23,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "play",
+          "deck": "b"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          145,
+          11,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "temporary_cue",
+          "deck": "b"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          145,
+          12,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "sync",
+          "deck": "b"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          145,
+          88,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "pfl",
+          "deck": "b"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          145,
+          84,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 0
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          0,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 1
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          1,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 2
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          2,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 3
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          3,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 4
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          4,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 5
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          5,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 6
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          6,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "cue",
+          "deck": "b",
+          "index": 7
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          153,
+          7,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    },
+    {
+      "signal": {
+        "type": "control",
+        "target": {
+          "type": "vinyl",
+          "deck": "b"
+        }
+      },
+      "packet": {
+        "endpoint": "main",
+        "data": [
+          145,
+          23,
+          0
+        ],
+        "report": null
+      },
+      "bit_offset": 16,
+      "bits": 7,
+      "little_endian": true,
+      "off": 0,
+      "on": 127
+    }
+  ],
+  "initialize": [],
+  "shutdown": [
+    {
+      "endpoint": "main",
+      "data": [
+        144,
+        11,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        144,
+        12,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        144,
+        88,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        144,
+        84,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        0,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        1,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        2,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        3,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        4,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        5,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        6,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        151,
+        7,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        144,
+        23,
+        127
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        145,
+        11,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        145,
+        12,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        145,
+        88,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        145,
+        84,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        0,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        1,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        2,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        3,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        4,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        5,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        6,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        153,
+        7,
+        0
+      ],
+      "report": null
+    },
+    {
+      "endpoint": "main",
+      "data": [
+        145,
+        23,
+        127
+      ],
+      "report": null
+    }
+  ],
+  "audio": null,
+  "verification": "protocol"
+}
