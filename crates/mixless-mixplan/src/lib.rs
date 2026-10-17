@@ -61,7 +61,8 @@ pub const STRATEGIES: [StrategyId; 9] = [
 
 #[derive(Debug, Clone)]
 pub struct PlannerOptions {
-    /// Set the inaudible incoming deck by at most two semitones, then hold it.
+    /// Match the inaudible incoming deck to the sounding outgoing key, then
+    /// hold it. Search the nearest match within six semitones of the source.
     pub harmonic_key_shift: bool,
     /// Audition-oriented policy. False preserves the original catalog golden tables.
     pub smooth: bool,

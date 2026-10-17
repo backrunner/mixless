@@ -19,6 +19,10 @@ impl UiState {
         let track = d
             .track_id
             .and_then(|id| self.tracks.iter().find(|t| t.id == id));
+        let key = track
+            .and_then(|t| t.camelot.as_deref().or(t.key.as_deref()))
+            .map(|key| super::header::sounding_key(key, &d))
+            .unwrap_or_default();
         let device_sr = self.snapshot.sample_rate;
         let dc = theme::deck_color(deck);
         let loaded = d.frames > 0;
@@ -110,17 +114,10 @@ impl UiState {
                     .child(
                         gpui::div()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(
-                                track
-                                    .and_then(|t| t.camelot.as_deref().or(t.key.as_deref()))
-                                    .map(theme::key_color)
-                                    .unwrap_or(theme::MUTED),
-                            )
-                            .child(
-                                track
-                                    .and_then(|t| t.camelot.clone().or_else(|| t.key.clone()))
-                                    .unwrap_or_default(),
-                            ),
+                            .text_color(theme::key_color(
+                                key.split_whitespace().next().unwrap_or(&key),
+                            ))
+                            .child(key),
                     )
                     .child(self.deck_time(deck, "strip", cx)),
             );

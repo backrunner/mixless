@@ -43,24 +43,27 @@ fn short_recovery_keeps_clock_and_carries_offset_instead_of_waiting_for_eof() {
         )
         .unwrap();
         assert!((p.t_out_a - a.duration_sec).abs() < 0.001);
-        assert!(pair(
-            &ctx,
-            &PlannerOptions::default(),
-            112.,
-            0.,
-            TransitionMode::BeatBlend,
-            4,
-            -1.
-        )
-        .is_none());
+        assert!(
+            pair(
+                &ctx,
+                &PlannerOptions::default(),
+                112.,
+                0.,
+                TransitionMode::BeatBlend,
+                4,
+                -1.
+            )
+            .is_none()
+        );
         assert_eq!(p.incoming_start_bar, 0.);
         assert!((p.incoming_offset_end.rate - 128. / 120.).abs() < 0.001);
-        assert!(p
-            .lanes
-            .rate_a
-            .nodes
-            .iter()
-            .all(|(_, rate)| (*rate - 1.).abs() < 0.001));
+        assert!(
+            p.lanes
+                .rate_a
+                .nodes
+                .iter()
+                .all(|(_, rate)| (*rate - 1.).abs() < 0.001)
+        );
         let explicit = PlannerOptions {
             strategy: Some(S::BassSwap),
             ..Default::default()
@@ -72,7 +75,7 @@ fn short_recovery_keeps_clock_and_carries_offset_instead_of_waiting_for_eof() {
 #[test]
 fn measured_instrumental_tail_overlaps_at_native_rate_but_missing_evidence_does_not() {
     let mut a = recovery_track(128.);
-    let b = crate::tests::track(2, 105., "3B", L::Intro, 64, 0.8, 0.2);
+    let b = crate::tests::track(2, 105., "8A", L::Intro, 64, 0.8, 0.2);
     let make = |a: &TrackAnalysis| {
         pair(
             &context(a, &b),
@@ -86,7 +89,7 @@ fn measured_instrumental_tail_overlaps_at_native_rate_but_missing_evidence_does_
         .unwrap()
     };
     let without = make(&a);
-    assert_eq!(without.summary.unwrap().length_bars, 0);
+    assert!(without.incoming_start_bar > 0.);
     for i in 0..(a.duration_sec / 0.05) as usize {
         a.moments.push(mixless_protocol::MusicalMoment {
             start_sec: i as f32 * 0.05,
@@ -112,7 +115,7 @@ fn measured_instrumental_tail_overlaps_at_native_rate_but_missing_evidence_does_
     for m in &mut a.moments {
         m.vocal_confidence = Some(1.);
     }
-    assert_eq!(make(&a).summary.unwrap().length_bars, 0);
+    assert!(make(&a).incoming_start_bar > 0.);
 }
 
 #[test]
@@ -146,25 +149,29 @@ fn recovery_overlap_quality_does_not_authorize_an_interior_instant_cut() {
     let b = crate::tests::track(2, 95., "3B", L::Intro, 64, 0.8, 0.2);
     assert!(crate::recovery::quality(&a, 50.) >= 0.6);
     assert!(boundary_quality(&a, 50.) < 0.6);
-    assert!(pair(
-        &context(&a, &b),
-        &PlannerOptions::default(),
-        100.,
-        0.,
-        TransitionMode::PhraseBridge,
-        0,
-        -1.
-    )
-    .is_none());
+    assert!(
+        pair(
+            &context(&a, &b),
+            &PlannerOptions::default(),
+            100.,
+            0.,
+            TransitionMode::PhraseBridge,
+            0,
+            -1.
+        )
+        .is_none()
+    );
     // The true end remains a valid boundary; do not reject every short handoff.
-    assert!(pair(
-        &context(&a, &b),
-        &PlannerOptions::default(),
-        128.,
-        0.,
-        TransitionMode::PhraseBridge,
-        0,
-        -1.
-    )
-    .is_some());
+    assert!(
+        pair(
+            &context(&a, &b),
+            &PlannerOptions::default(),
+            128.,
+            0.,
+            TransitionMode::PhraseBridge,
+            0,
+            -1.
+        )
+        .is_some()
+    );
 }

@@ -74,6 +74,42 @@ fn sung_into_send(ctx: &PlanContext<'_>, plan: &MixPlan) -> bool {
 /// A sung tail stays intelligible through a low-cut echo; an instrumental
 /// tail sits darker under the incoming highs.
 pub(crate) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
+    // An effect tail is still a tonal overlap, including after the dry A
+    // fader has closed. Do not let an already selected effect bypass harmony.
+    let tail = plan.send_fx.map_or(4., |fx| fx.tail_seconds);
+    let (a, b) = (ctx.outgoing, ctx.incoming);
+    let ra = ((plan.t_out_a - 2.).max(plan.t_in_a), plan.t_out_a);
+    let rb = (
+        plan.t_in_b,
+        (plan.t_end_b + tail * plan.incoming_offset_end.rate).min(b.duration_sec),
+    );
+    let (key, shift, reliable) = crate::score::overlap_key_match(
+        a,
+        b,
+        ra,
+        rb,
+        plan.outgoing_offset.pitch_semitones,
+        plan.incoming_offset_end.pitch_semitones,
+    )
+    .unwrap_or_else(|| {
+        crate::score::window_key_match(
+            a,
+            b,
+            plan.t_out_a,
+            plan.t_in_b,
+            plan.outgoing_offset.pitch_semitones,
+            plan.incoming_offset_end.pitch_semitones,
+        )
+    });
+    if !(reliable && key >= 0.85 && shift == 0.)
+        && !crate::musical::percussion_only(a, ra.0, ra.1)
+        && !crate::musical::percussion_only(b, rb.0, rb.1)
+    {
+        plan.send_fx = None;
+        plan.lanes.fx_send_a = Polyline::constant(0.);
+        plan.lanes.fx_send_b = Polyline::constant(0.);
+        return;
+    }
     if plan.send_fx.is_some()
         || !plan
             .lanes
@@ -128,7 +164,7 @@ pub(crate) fn cut_tail(ctx: &PlanContext<'_>, plan: &mut MixPlan, harmonic: bool
         })
         .fold(0., f32::max);
     let outgoing_voice = crate::continuity::voice_active(a, plan.t_out_a - 0.25);
-    let fx = if outgoing_voice > 0.35 && incoming_voice < 0.35 && locked(ctx, plan) {
+    let fx = if harmonic && outgoing_voice > 0.35 && incoming_voice < 0.35 && locked(ctx, plan) {
         // Throw the last sung word: repeats land on the shared beat.
         echo(FxKind::LowCutEcho, 1., 0.4, outgoing_bpm(ctx, plan))
     } else if incoming_voice < 0.35
@@ -185,6 +221,32 @@ mod tests {
             Default::default(),
             Default::default(),
         )
+    }
+
+    #[test]
+    fn an_existing_tail_cannot_bypass_the_sounding_key_check() {
+        let a = crate::tests::track(1, 120., "10A", S::Outro, 64, 0.9, 0.2);
+        let mut b = crate::tests::track(2, 120., "10B", S::Intro, 64, 0.9, 0.2);
+        let mut p = cut(&a, &b);
+        p.send_fx = Some(reverb(2.5));
+        p.lanes.fx_send_a = Polyline::constant(0.3);
+        b.camelot = Some("7B".into());
+        let ctx = PlanContext {
+            outgoing: &a,
+            incoming: &b,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: Default::default(),
+        };
+        let mut shifted = p.clone();
+        shifted.incoming_offset_end.pitch_semitones = -3.;
+        arrange(&ctx, &mut shifted);
+        assert!(shifted.send_fx.is_some());
+        arrange(&ctx, &mut p);
+        assert!(p.send_fx.is_none());
+        assert_eq!(p.lanes.fx_send_a.sample(0.), 0.);
+        assert_eq!(p.lanes.fx_send_b.sample(0.), 0.);
     }
 
     #[test]

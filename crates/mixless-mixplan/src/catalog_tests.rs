@@ -219,6 +219,30 @@ fn energy_hold_offset_is_carried_into_next_pair() {
     close(next.outgoing_offset.rate, p.incoming_offset_end.rate);
     close(next.lanes.rate_b.sample(0.) * 130., 128. * 1.03);
 }
+
+#[test]
+fn catalog_pitch_stays_matched_during_the_mix_and_tempo_recovery() {
+    let a = track(1, 128., "10A", S::Outro, 64, 0.9, 0.2);
+    let b = track(2, 126., "7B", S::Intro, 64, 0.9, 0.2);
+    for strategy in [
+        StrategyId::PhraseBlend,
+        StrategyId::BassSwap,
+        StrategyId::EchoOut,
+    ] {
+        let p = Planner::with_options(PlannerOptions {
+            smooth: false,
+            harmonic_key_shift: true,
+            strategy: Some(strategy),
+            ..Default::default()
+        })
+        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert!(p.failure_reason.is_none(), "{:?}", p.failure_reason);
+        assert_eq!(p.incoming_offset_end.pitch_semitones, -3.);
+        for (_, pitch) in p.lanes.pitch_b.nodes {
+            assert_eq!(pitch, -3., "{strategy:?}: audible pitch reset");
+        }
+    }
+}
 #[test]
 fn catalog_golden_nodes_and_log_filters() {
     let (a, b) = pair();

@@ -41,6 +41,84 @@ fn harmonic_correction_is_prepared_and_held_without_an_audible_pitch_ramp() {
 }
 
 #[test]
+fn every_key_pair_can_match_without_accumulating_pitch_across_tracks() {
+    for ma in ["A", "B"] {
+        for mb in ["A", "B"] {
+            for ka in 1..=12 {
+                for kb in 1..=12 {
+                    let a = track(1, 120., &format!("{ka}{ma}"), S::Outro, 64, 0.9, 0.2);
+                    let b = track(2, 120., &format!("{kb}{mb}"), S::Intro, 64, 0.9, 0.2);
+                    for pa in [-5., 0., 5., 0.35] {
+                        for pb in [-5., 0., 5., -0.2] {
+                            let (score, shift, reliable) =
+                                score::window_key_match(&a, &b, 128., 0., pa, pb);
+                            assert!(reliable && score > 0.);
+                            assert!((pb + shift).abs() <= 6.);
+                            let (matched, extra, _) =
+                                score::window_key_match(&a, &b, 128., 0., pa, pb + shift);
+                            assert!(
+                                matched >= 0.85 && extra == 0.,
+                                "{ka}{ma} -> {kb}{mb} {pa}/{pb}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn harmonic_matching_covers_blends_loops_and_tempo_gap_tails() {
+    for (tempo, strategy) in [
+        (120., None),
+        (120., Some(StrategyId::LoopConstruct)),
+        (93., None),
+    ] {
+        let a = track(1, 120., "10A", S::Outro, 64, 0.9, 0.2);
+        let b = track(2, tempo, "7B", S::Intro, 64, 0.9, 0.2);
+        let p = Planner::with_options(PlannerOptions {
+            harmonic_key_shift: true,
+            strategy,
+            ..Default::default()
+        })
+        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert!(
+            p.failure_reason.is_none(),
+            "{tempo} {strategy:?}: {:?}",
+            p.failure_reason
+        );
+        assert!(p.send_fx.is_some() || p.incoming_start_bar == 0.);
+        assert_eq!(p.lanes.pitch_b.nodes, vec![(0., -3.)]);
+        assert_eq!(p.incoming_offset_end.pitch_semitones, -3.);
+        assert_eq!(p.lanes.pitch_a.nodes, vec![(0., 0.)]);
+    }
+}
+
+#[test]
+fn uncertain_emergency_handoff_never_crossfades_conflicting_keys() {
+    let a = track(1, 120., "10A", S::Outro, 64, 0.9, 0.2);
+    let mut b = track(2, 120., "7B", S::Intro, 64, 0.9, 0.2);
+    b.key_confidence = 0.1;
+    let p = short_handoff(
+        &PlanContext {
+            outgoing: &a,
+            incoming: &b,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: Default::default(),
+        },
+        125.,
+    );
+    assert!(p.failure_reason.is_none());
+    assert_eq!(p.incoming_start_bar, 1.);
+    assert!(p.lanes.gain_a.sample(1.) <= -90.);
+    assert_eq!(p.incoming_offset_end.pitch_semitones, 0.);
+    assert!(p.send_fx.is_none());
+}
+
+#[test]
 fn local_window_key_overrides_the_global_key_and_low_confidence_cannot_authorize_a_shift() {
     let mut a = track(1, 120., "1A", S::Outro, 64, 0.9, 0.2);
     let mut b = track(2, 120., "1A", S::Intro, 64, 0.9, 0.2);

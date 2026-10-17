@@ -19,7 +19,9 @@ impl UiState {
         let track = d
             .track_id
             .and_then(|id| self.tracks.iter().find(|t| t.id == id));
-        let key = track.and_then(|t| t.camelot.clone().or_else(|| t.key.clone()));
+        let key = track
+            .and_then(|t| t.camelot.as_deref().or(t.key.as_deref()))
+            .map(|key| sounding_key(key, d));
 
         let focus_btn = {
             let el = gpui::div()
@@ -88,7 +90,7 @@ impl UiState {
                     ),
             );
         if let Some(key) = key {
-            let key_color = theme::key_color(&key);
+            let key_color = theme::key_color(key.split_whitespace().next().unwrap_or(&key));
             header_right = header_right.child(
                 gpui::div()
                     .flex_none()
@@ -164,5 +166,47 @@ impl UiState {
             )
             .child(header_right)
             .into_any_element()
+    }
+}
+
+pub(super) fn sounding_key(key: &str, deck: &DeckSnapshot) -> String {
+    let pitch = deck.pitch_semitones
+        + if deck.keylock {
+            0.
+        } else {
+            12. * deck.rate.max(0.001).log2()
+        };
+    let Some(shifted) = mixless_protocol::transpose_camelot(key, pitch.round()) else {
+        return if pitch.abs() < 0.005 {
+            key.into()
+        } else {
+            format!("{key} {pitch:+.1} st")
+        };
+    };
+    let cents = ((pitch - pitch.round()) * 100.).round() as i32;
+    if cents == 0 {
+        shifted
+    } else {
+        format!("{shifted} {cents:+}¢")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn badge_tracks_pitch_and_unlocked_tempo() {
+        let mut d = DeckSnapshot::default();
+        d.keylock = true;
+        d.pitch_semitones = -3.;
+        d.rate = 1.12;
+        assert_eq!(sounding_key("7B", &d), "10B");
+        d.keylock = false;
+        d.rate = 2f32.powf(1. / 12.);
+        assert_eq!(sounding_key("7B", &d), "5B");
+        d.keylock = true;
+        d.pitch_semitones = 0.25;
+        assert_eq!(sounding_key("10A", &d), "10A +25¢");
     }
 }

@@ -136,13 +136,6 @@ pub(crate) fn compile(
         scratch_a: None,
         scratch_b: None,
     };
-    if c.strategy == S::PhraseBlend {
-        lanes.pitch_b.nodes = vec![
-            (0., c.offset_b.pitch_semitones + c.shift_b),
-            (n * 0.5, (c.offset_b.pitch_semitones + c.shift_b) * 0.5),
-            (n, 0.),
-        ];
-    }
     let mut clock = Polyline::default();
     let mut incoming_source = Polyline::default();
     lanes.rate_b.nodes.clear();
@@ -198,7 +191,7 @@ pub(crate) fn compile(
     let hold = c.strategy == S::EnergyHold;
     // Catalog rate nodes cover the overlap. Non-hold strategies recover only
     // once A is silent; this preserves the documented constant rB envelope.
-    if !hold && ((held_rate - 1.0).abs() > 0.0001 || held_pitch.abs() > 0.0001) {
+    if !hold && (held_rate - 1.0).abs() > 0.0001 {
         let overlap_sec = clock.sample(n);
         let recovery_sec = (4.0 * ga.meter() * 60.0 / (ga.bpm(c.out_beat) * c.rate_a))
             .min(((b.duration_sec - t_end_b) / ((held_rate + 1.0) * 0.5)).max(0.0));
@@ -208,10 +201,6 @@ pub(crate) fn compile(
                 .nodes
                 .push((n + recovery_bars, overlap_sec + recovery_sec));
             lanes.rate_b.nodes.push((n + recovery_bars, 1.0));
-            if lanes.pitch_b.nodes.last().is_none_or(|p| p.0 < n) {
-                lanes.pitch_b.nodes.push((n, held_pitch));
-            }
-            lanes.pitch_b.nodes.push((n + recovery_bars, 0.0));
         }
     }
     MixPlan {
@@ -229,7 +218,10 @@ pub(crate) fn compile(
                 pitch_semitones: held_pitch,
             }
         } else {
-            PerformanceOffset::identity()
+            PerformanceOffset {
+                rate: 1.,
+                pitch_semitones: held_pitch,
+            }
         },
         outgoing_offset: c.offset_a,
         bar_map: c.bar_map,

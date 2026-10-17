@@ -195,7 +195,33 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         },
         ..Default::default()
     };
+    let (key, shift, reliable) = crate::score::overlap_key_match(
+        a,
+        b,
+        (start, out),
+        (input, plan.t_end_b),
+        ctx.offset_a.pitch_semitones,
+        ctx.offset_b.pitch_semitones,
+    )
+    .unwrap_or_else(|| {
+        crate::score::window_key_match(
+            a,
+            b,
+            out,
+            input,
+            ctx.offset_a.pitch_semitones,
+            ctx.offset_b.pitch_semitones,
+        )
+    });
+    let harmonic = reliable && key > 0.;
+    let tonal = !crate::musical::percussion_only(a, start, out)
+        && !crate::musical::percussion_only(b, input, plan.t_end_b);
+    if harmonic && tonal {
+        plan.lanes.pitch_b = Polyline::constant(ctx.offset_b.pitch_semitones + shift);
+        plan.incoming_offset_end.pitch_semitones += shift;
+    }
     if terminal
+        || (tonal && !harmonic)
         || crate::vocals::last_end(a, start, out).is_some()
         || (explicit_out.is_none()
             && crate::drops::peaks(a)
@@ -220,6 +246,9 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         plan.lanes.gain_a = line(&[(0., 0.), (1. - fade, 0.), (1., -96.)]);
         plan.lanes.filter_a.lp_hz = Polyline::constant(20000.);
         plan.summary.as_mut().unwrap().strategy = StrategyId::DryCut;
+        // No overlap needs a pitch change. Preserve the incoming user's key.
+        plan.lanes.pitch_b = Polyline::constant(ctx.offset_b.pitch_semitones);
+        plan.incoming_offset_end.pitch_semitones = ctx.offset_b.pitch_semitones;
         plan.stages[0].label = if terminal {
             "Complete track · native handoff"
         } else {

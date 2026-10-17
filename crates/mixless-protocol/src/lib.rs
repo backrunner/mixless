@@ -27,7 +27,7 @@ pub use models::{ModelArtifact, STEM_MODELS, STEM_NOTES, STEM_SEPARATOR};
 pub use phrases::{drop_suspension, main_peak, major_peaks, peak_ranges, peak_units};
 pub use snapshot::*;
 pub use stems::*;
-pub use tonal::estimate_key;
+pub use tonal::{estimate_harmonic_key, estimate_key, transpose_camelot};
 
 mod workers;
 pub use workers::{BackgroundCpuPermit, BackgroundWorkers};

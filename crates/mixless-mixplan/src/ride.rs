@@ -45,7 +45,14 @@ fn correlation(x: &[f32], y: &[f32]) -> f32 {
 
 /// Mean dissonance of the sung notes at `sec` in `a` against the sounding
 /// note chroma of `bed` at `bed_sec`. None where either side is silent.
-fn sung_cost(a: &TrackAnalysis, sec: f32, bed: &TrackAnalysis, bed_sec: f32) -> Option<f32> {
+fn sung_cost(
+    a: &TrackAnalysis,
+    sec: f32,
+    bed: &TrackAnalysis,
+    bed_sec: f32,
+    voice_pitch: f32,
+    bed_pitch: f32,
+) -> Option<f32> {
     let notes: Vec<u8> = a
         .stems
         .as_ref()?
@@ -67,7 +74,12 @@ fn sung_cost(a: &TrackAnalysis, sec: f32, bed: &TrackAnalysis, bed_sec: f32) -> 
     let cost: f32 = notes
         .iter()
         .flat_map(|m| (0..12).map(move |pc| (*m, pc)))
-        .map(|(m, pc)| DISSONANCE[(m as usize + 12 - pc) % 12] * chroma[pc].powi(2))
+        .map(|(m, pc)| {
+            let interval = (m as f32 + voice_pitch - pc as f32 - bed_pitch).rem_euclid(12.);
+            let low = interval.floor() as usize;
+            let mix = interval.fract();
+            (DISSONANCE[low] * (1. - mix) + DISSONANCE[(low + 1) % 12] * mix) * chroma[pc].powi(2)
+        })
         .sum();
     Some(cost / (mass * notes.len() as f32))
 }
@@ -83,7 +95,14 @@ pub(crate) fn fit(
     source_b: &Polyline,
     n: f32,
     harmonic: bool,
+    pitch_a: f32,
+    pitch_b: f32,
 ) -> Option<f32> {
+    // Local note consonance cannot substitute for a compatible key across
+    // the complete sung phrase.
+    if !harmonic {
+        return None;
+    }
     let (ua, ub) = (usual(a), usual(b));
     let bars = n.floor() as usize;
     if ua <= 0. || ub <= 0. || bars < 8 {
@@ -131,7 +150,10 @@ pub(crate) fn fit(
     for j in 0..bars * 8 {
         let u = j as f32 / 8.;
         let (sa, sb) = (source_a.sample(u), source_b.sample(u));
-        if let (Some(x), Some(y)) = (sung_cost(a, sa, b, sb), sung_cost(a, sa, a, sa)) {
+        if let (Some(x), Some(y)) = (
+            sung_cost(a, sa, b, sb, pitch_a, pitch_b),
+            sung_cost(a, sa, a, sa, pitch_a, pitch_a),
+        ) {
             over += x;
             own += y;
             count += 1;
@@ -288,15 +310,38 @@ mod tests {
     }
 
     #[test]
+    fn sung_notes_are_compared_at_both_decks_sounding_pitch() {
+        let (mut a, mut b, s) = pair();
+        a.stems
+            .as_mut()
+            .unwrap()
+            .notes
+            .push(mixless_protocol::StemNote {
+                stem: StemKind::Vocals,
+                start_sec: 0.,
+                end_sec: a.duration_sec,
+                midi: 60,
+                confidence: 0.95,
+            });
+        for frame in &mut b.stems.as_mut().unwrap().frames {
+            frame.note_chroma = std::array::from_fn(|pc| if pc == 1 { 1. } else { 0. });
+        }
+        assert!(fit(&a, &b, &s, &s, 32., true, 0., 0.).is_none());
+        assert!(fit(&a, &b, &s, &s, 32., true, 0., -1.).is_some());
+        assert!(fit(&a, &b, &s, &s, 32., true, 2., 1.).is_some());
+        assert!(fit(&a, &b, &s, &s, 32., false, 0., -1.).is_none());
+    }
+
+    #[test]
     fn the_bed_must_keep_the_groove_and_direction_the_voice_was_sung_to() {
         let (a, b, s) = pair();
-        assert!(fit(&a, &b, &s, &s, 32., true).is_some_and(|f| f > 0.8));
+        assert!(fit(&a, &b, &s, &s, 32., true, 0., 0.).is_some_and(|f| f > 0.8));
         // A voice from a groove laid over a beatless bed, or the reverse.
         let mut beatless = b.clone();
         for bar in &mut beatless.bars {
             bar.kick_salience = 0.1;
         }
-        assert!(fit(&a, &beatless, &s, &s, 32., true).is_none());
+        assert!(fit(&a, &beatless, &s, &s, 32., true, 0., 0.).is_none());
         // The original builds while the incoming bed falls away.
         let (mut rising, mut falling) = (a.clone(), b.clone());
         for (i, bar) in rising.bars.iter_mut().enumerate() {
@@ -305,9 +350,9 @@ mod tests {
         for (i, bar) in falling.bars.iter_mut().enumerate() {
             bar.rms = 0.33 - 0.004 * i as f32;
         }
-        assert!(fit(&rising, &falling, &s, &s, 32., true).is_none());
+        assert!(fit(&rising, &falling, &s, &s, 32., true, 0., 0.).is_none());
         // Without heard notes the key match decides.
-        assert!(fit(&a, &b, &s, &s, 32., false).is_none());
+        assert!(fit(&a, &b, &s, &s, 32., false, 0., 0.).is_none());
     }
 
     #[test]

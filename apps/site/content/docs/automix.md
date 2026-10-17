@@ -26,6 +26,8 @@ The choice is saved and applies to subsequent playlist selections, including **A
 
 mixless compares entry and exit regions using local tempo, phrase boundaries, key compatibility, energy, rhythm, and vocal evidence. Prepared stems and note analysis add information about foreground material and harmonic movement.
 
+For overlaps, AutoMix checks the sounding keys in the transition windows, including carried pitch and effect tails. When the evidence supports a match, it transposes the incoming track before it becomes audible, choosing the nearest compatible key within six semitones of the recording. The pitch stays fixed through the mix and carries into the next transition. Vocal rides also compare the transposed notes; uncertain harmony uses a separated drum layer, filtered transition, or cut instead.
+
 | Technique | Musical purpose |
 | --- | --- |
 | Phrase blend | Align phrases and gradually exchange space between two playing tracks |

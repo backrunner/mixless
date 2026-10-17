@@ -179,18 +179,19 @@ pub(super) fn direct(
             bin = bin.min(cue);
         }
     }
-    let (key, shift, key_reliable) = if blend {
-        crate::score::overlap_key_match(
-            a,
-            b,
-            (start, end),
-            (bin, gb.sec(input + n * ga.meter() * factor)),
-            ctx.offset_a.pitch_semitones,
-            ctx.offset_b.pitch_semitones,
-        )
+    let incoming_end = if blend || loop_roll {
+        gb.sec(input + n * ga.meter() * factor)
     } else {
-        None
-    }
+        bin + (end - start) / ctx.offset_a.rate * ctx.offset_b.rate
+    };
+    let (key, shift, key_reliable) = crate::score::overlap_key_match(
+        a,
+        b,
+        (start, end),
+        (bin, incoming_end.min(b.duration_sec)),
+        ctx.offset_a.pitch_semitones,
+        ctx.offset_b.pitch_semitones,
+    )
     .unwrap_or_else(|| {
         window_key_match(
             a,
@@ -201,13 +202,15 @@ pub(super) fn direct(
             ctx.offset_b.pitch_semitones,
         )
     });
-    let key_shift = if blend && options.harmonic_key_shift && key_reliable && key >= 0.25 {
+    let key_shift = if options.harmonic_key_shift && key_reliable && key > 0. {
         shift
     } else {
         0.
     };
-    let harmonic =
-        key_reliable && ((shift == 0. && key >= 0.85) || (key_shift != 0. && key >= 0.25));
+    let harmonic = key_reliable && ((shift == 0. && key >= 0.85) || key_shift != 0.);
+    if carry && !harmonic {
+        return miss!();
+    }
     let recovery = crate::recovery::contains(a, start, end);
     if ((!detailed || (!blend && !loop_roll)) && !crate::vocals::safe_exit(a, end))
         || !crate::vocals::safe_entry(b, bin)
@@ -350,7 +353,17 @@ pub(super) fn direct(
     // The bed must carry the voice for the whole window, and the incoming
     // voice must be able to come in on a breath where the line has gone.
     let ride = if carry {
-        let fit = crate::ride::fit(a, b, &source_a, &source_b, n, harmonic).or_else(|| miss!())?;
+        let fit = crate::ride::fit(
+            a,
+            b,
+            &source_a,
+            &source_b,
+            n,
+            harmonic,
+            ctx.offset_a.pitch_semitones,
+            ctx.offset_b.pitch_semitones + key_shift,
+        )
+        .or_else(|| miss!())?;
         let shape = crate::ride::shape(
             a,
             b,
@@ -1275,6 +1288,9 @@ pub(super) fn direct(
                 }
             }
         }
+    }
+    if !harmonic && plan.requires_stems {
+        crate::stem_mix::separate_tonal(&mut plan).or_else(|| miss!())?;
     }
     Some(plan)
 }

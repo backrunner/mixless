@@ -1759,13 +1759,18 @@ mod tests {
 
     #[test]
     fn emergency_short_clip_handoff_renders_both_decks_in_both_directions() {
-        for outgoing in [DeckId::A, DeckId::B] {
+        for (outgoing, known_key) in [DeckId::A, DeckId::B]
+            .into_iter()
+            .flat_map(|d| [(d, true), (d, false)])
+        {
             let (engine, _) = setup(outgoing);
             let mut a = analysis(1, 48000, 1.);
             let mut b = analysis(2, 48000, 4.);
             b.tempo.global_bpm = 97.;
             b.tempo.segments[0].bpm = 97.;
             for t in [&mut a, &mut b] {
+                t.camelot = known_key.then(|| "8A".into());
+                t.key_confidence = if known_key { 0.95 } else { 0. };
                 t.bars = vec![mixless_protocol::BarFeature {
                     bar_index: 0,
                     start_sec: 0.,
@@ -1801,15 +1806,22 @@ mod tests {
             let boundary = ((plan.t_in_a + plan.clock.sample(plan.incoming_start_bar)) * 48000.)
                 .round() as usize;
             assert!(plan.summary.is_some(), "{:?}", plan.failure_reason);
-            // 120 against 97 BPM never runs together: B launches for the
-            // last outgoing beat only.
-            assert!(plan.incoming_start_bar > 0. && plan.incoming_start_bar < 1.);
+            // A known compatible key permits a last-beat overlap across the
+            // tempo gap. Unknown harmony must wait until A is silent.
+            if known_key {
+                assert!(plan.incoming_start_bar > 0. && plan.incoming_start_bar < 1.);
+            } else {
+                assert_eq!(plan.incoming_start_bar, 1.);
+                assert!(plan.lanes.gain_a.sample(1.) <= -90.);
+            }
             engine.load_plan_on(plan, outgoing).unwrap();
             engine.render_offline(boundary);
             assert!(!engine.snapshot().decks[1 - outgoing.index()].playing);
             let start = engine.render_offline(4800);
             let snap = engine.snapshot();
-            assert!(snap.deck(outgoing).playing);
+            if known_key {
+                assert!(snap.deck(outgoing).playing);
+            }
             assert!(snap.decks[1 - outgoing.index()].playing);
             assert!(snap.decks[1 - outgoing.index()].frame.abs_diff(4800) < 64);
             assert!(start.iter().any(|s| s.abs() > 0.05));

@@ -447,6 +447,21 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
         assert_eq!(stems.outgoing[1].sample(u), 1., "outgoing drums at {u}");
     }
     assert_eq!(stems.outgoing[0].sample(n), 0.);
+    for i in 0..=512 {
+        let u = n * i as f32 / 512.;
+        let outgoing = [0, 2, 3]
+            .into_iter()
+            .map(|s| stems.outgoing[s].sample(u))
+            .fold(0., f32::max);
+        let incoming = [0, 2, 3]
+            .into_iter()
+            .map(|s| stems.incoming[s].sample(u))
+            .fold(0., f32::max);
+        assert!(
+            outgoing <= 0.0001 || incoming <= 0.0001,
+            "pitched stems overlap at {u}"
+        );
+    }
     assert!(plan.requires_stems);
 }
 

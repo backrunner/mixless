@@ -1,7 +1,7 @@
 //! Render adjacent audited pairs without re-running spectral analysis or opening devices.
 //! render-audit ANALYSES.json AUDIO_PATHS.json OUTPUT_DIRECTORY
 use mixless_engine::{Engine, EngineConfig};
-use mixless_mixplan::{short_handoff, PlanContext, Planner, PlannerOptions};
+use mixless_mixplan::{PlanContext, Planner, PlannerOptions, short_handoff};
 use mixless_protocol::{Command, Cue, CueKind, DeckId, TrackAnalysis};
 use std::{collections::HashMap, error::Error, path::Path};
 
@@ -153,6 +153,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         })?;
         engine.dispatch(Command::PlayPause { deck: DeckId::A })?;
         let summary = plan.summary.clone().ok_or("Missing summary")?;
+        let expected_offset = plan.incoming_offset_end;
         // Record the outgoing deck's source frame per rendered block so a
         // spinback's backwards pull can be verified from the actual render.
         let spin_window = plan.lanes.scratch_a.as_ref().map(|op| {
@@ -251,6 +252,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         if snapshot.automix_on || snapshot.automix_progress < 1. || !snapshot.decks[1].playing {
             return Err(format!("Pair {}→{} did not complete", a.track_id.0, b.track_id.0).into());
         }
+        if (snapshot.decks[1].pitch_semitones - expected_offset.pitch_semitones).abs() > 0.01
+            || (snapshot.decks[1].rate - expected_offset.rate).abs() > 0.002
+        {
+            return Err("Incoming sounding offset differs from the completed plan".into());
+        }
         if let Some((on_sec, off_sec, delta)) = spin_window {
             let lo = before + on_sec;
             let hi = before + off_sec;
@@ -269,7 +275,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
         }
         println!(
-            "{}→{} {:?} {:.2}s peak={:.4} completed stem_blocks={} gain_max={:.2}dB prepare={:.1}ms",
+            "{}→{} {:?} {:.2}s peak={:.4} completed stem_blocks={} gain_max={:.2}dB prepare={:.1}ms pitch={:+.1}st rate={:.5}",
             a.track_id.0,
             b.track_id.0,
             summary.strategy,
@@ -277,7 +283,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             peak,
             stem_blocks,
             gain_max,
-            preparation_ms
+            preparation_ms,
+            snapshot.decks[1].pitch_semitones,
+            snapshot.decks[1].rate
         );
     }
     Ok(())

@@ -41,24 +41,15 @@ impl ScoreComponents {
     }
 }
 
-// Pitch classes indexed by Camelot number (1..12), minor then major.
-const MINOR: [i32; 12] = [8, 3, 10, 5, 0, 7, 2, 9, 4, 11, 6, 1];
-const MAJOR: [i32; 12] = [11, 6, 1, 8, 3, 10, 5, 0, 7, 2, 9, 4];
-fn sounding_camelot(track: &TrackAnalysis, pitch: f32) -> Option<(i32, bool)> {
-    shifted_camelot(track.camelot.as_deref()?, pitch)
-}
+// Zero-based Camelot wheel position and mode, after transposition.
 fn shifted_camelot(cam: &str, pitch: f32) -> Option<(i32, bool)> {
+    let cam = mixless_protocol::transpose_camelot(cam, pitch)?;
     let minor = cam.ends_with('A');
-    if !minor && !cam.ends_with('B') {
-        return None;
-    }
     let number: usize = cam.get(..cam.len().checked_sub(1)?)?.parse().ok()?;
     if !(1..=12).contains(&number) || (pitch - pitch.round()).abs() > 0.05 {
         return None;
     }
-    let table = if minor { MINOR } else { MAJOR };
-    let pc = (table[number - 1] + pitch.round() as i32).rem_euclid(12);
-    Some((table.iter().position(|v| *v == pc)? as i32, minor))
+    Some((number as i32 - 1, minor))
 }
 
 pub(crate) fn window_key_match(
@@ -80,27 +71,14 @@ pub(crate) fn window_key_match(
     let (ka, ca) = local(a, out, mixless_protocol::MixRegionKind::Out);
     let (kb, cb) = local(b, input, mixless_protocol::MixRegionKind::In);
     let reliable = ca >= 0.55 && cb >= 0.55;
-    let (Some(ka), Some(kb)) = (
-        ka.as_deref().and_then(|k| shifted_camelot(k, pa)),
-        kb.as_deref(),
-    ) else {
+    let Some((score, shift)) = ka
+        .as_deref()
+        .zip(kb.as_deref())
+        .and_then(|(ka, kb)| match_keys(ka, kb, pa, pb))
+    else {
         return (0., 0., false);
     };
-    let Some(native) = shifted_camelot(kb, pb) else {
-        return (0., 0., false);
-    };
-    let score = compatibility(ka, native);
-    if score > 0. {
-        return (score, 0., reliable);
-    }
-    for shift in [-1f32, 1., -2., 2.] {
-        if (pb + shift).abs() <= 2.
-            && shifted_camelot(kb, pb + shift).is_some_and(|k| compatibility(ka, k) >= 0.85)
-        {
-            return (if shift.abs() == 1. { 0.5 } else { 0.25 }, shift, reliable);
-        }
-    }
-    (0., 0., reliable)
+    (score, shift, reliable)
 }
 fn compatibility(a: (i32, bool), b: (i32, bool)) -> f32 {
     if a == b {
@@ -133,44 +111,46 @@ pub(crate) fn overlap_key_match(
         if chroma.iter().sum::<f32>() <= 1e-8 {
             return None;
         }
-        let (_, key, confidence) = mixless_protocol::estimate_key(&chroma);
+        let (_, key, confidence) = mixless_protocol::estimate_harmonic_key(&chroma);
         Some((key?, confidence))
     };
     let ((ka, ca), (kb, cb)) = (local(a, range_a)?, local(b, range_b)?);
-    let ka = shifted_camelot(&ka, pa)?;
-    let native = shifted_camelot(&kb, pb)?;
-    let reliable = ca >= 0.55 && cb >= 0.55;
-    let score = compatibility(ka, native);
-    if score > 0. {
-        return Some((score, 0., reliable));
-    }
-    for shift in [-1f32, 1., -2., 2.] {
-        if (pb + shift).abs() <= 2.
-            && shifted_camelot(&kb, pb + shift).is_some_and(|k| compatibility(ka, k) >= 0.85)
-        {
-            return Some((if shift.abs() == 1. { 0.5 } else { 0.25 }, shift, reliable));
-        }
-    }
-    Some((0., 0., reliable))
+    let (score, shift) = match_keys(&ka, &kb, pa, pb)?;
+    Some((score, shift, ca >= 0.55 && cb >= 0.55))
 }
 
 pub(crate) fn key_match(a: &TrackAnalysis, b: &TrackAnalysis, pa: f32, pb: f32) -> (f32, f32) {
-    let Some(ka) = sounding_camelot(a, pa) else {
-        return (0.0, 0.0);
-    };
-    let Some(kb) = sounding_camelot(b, pb) else {
-        return (0.0, 0.0);
-    };
-    let compatible = compatibility(ka, kb);
-    if compatible > 0.0 {
-        return (compatible, 0.0);
+    a.camelot
+        .as_deref()
+        .zip(b.camelot.as_deref())
+        .and_then(|(a, b)| match_keys(a, b, pa, pb))
+        .unwrap_or((0., 0.))
+}
+
+// Match the sounding keys, including fine tuning carried from an unlocked
+// tempo control. Only the inaudible incoming deck moves; the outgoing deck
+// never snaps back to an equal-tempered key. Absolute bounds prevent drift.
+fn match_keys(a: &str, b: &str, pa: f32, pb: f32) -> Option<(f32, f32)> {
+    if !pa.is_finite() || !pb.is_finite() {
+        return None;
     }
-    for shift in [-1.0, 1.0, -2.0, 2.0] {
-        if sounding_camelot(b, pb + shift).is_some_and(|k| compatibility(ka, k) > 0.0) {
-            return (if shift.abs() == 1.0 { 0.5 } else { 0.25 }, shift);
-        }
+    let ka = shifted_camelot(a, pa.round())?;
+    let kb = shifted_camelot(b, pb.round())?;
+    let detune = pa - pa.round();
+    let native = compatibility(ka, kb);
+    if native > 0. && (detune - (pb - pb.round())).abs() <= 0.005 {
+        return Some((native, 0.));
     }
-    (0.0, 0.0)
+    let shift = (-6..=6)
+        .filter_map(|semitones| {
+            let pitch = semitones as f32 + detune;
+            (pitch.abs() <= 6.
+                && shifted_camelot(b, semitones as f32)
+                    .is_some_and(|k| compatibility(ka, k) >= 0.85))
+            .then_some(pitch - pb)
+        })
+        .min_by(|a, b| a.abs().total_cmp(&b.abs()))?;
+    Some((0.5 / shift.abs().max(1.), shift))
 }
 
 pub(crate) fn section(track: &TrackAnalysis, sec: f32) -> S {

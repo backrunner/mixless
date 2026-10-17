@@ -375,6 +375,16 @@ pub(super) fn ride_supported(
     b: &TrackAnalysis,
     n: f32,
 ) -> Option<f32> {
+    crate::ride::fit(
+        a,
+        b,
+        &plan.outgoing_source,
+        &plan.incoming_source,
+        n,
+        true,
+        plan.lanes.pitch_a.sample(0.),
+        plan.lanes.pitch_b.sample(0.),
+    )?;
     let incoming = &plan.incoming_source;
     let quiet = (0..64).all(|i| {
         let u = n * (i as f32 + 0.5) / 64.;
@@ -389,6 +399,50 @@ pub(super) fn ride_supported(
         .map(|i| n * 0.75 + (n * 0.25 - 0.25) * i as f32 / 64.)
         .find(|u| crate::continuity::voice_gap(a, plan.outgoing_source.sample(*u)) == Some(true))
         .filter(|_| crate::continuity::voice_active(a, plan.outgoing_source.sample(n * 0.6)) > 0.35)
+}
+
+/// When keys cannot be matched, the drum layer may continue, but incoming
+/// pitched parts wait until *all* outgoing pitched parts have left. Merely
+/// crossfading each stem separately still puts the old voice over the new bass.
+pub(super) fn separate_tonal(plan: &mut MixPlan) -> Option<()> {
+    let n = plan.summary.as_ref()?.length_bars as f32;
+    let Some(stems) = plan.stem_mix.as_mut() else {
+        return Some(());
+    };
+    let pitched = [
+        StemKind::Vocals.index(),
+        StemKind::Bass.index(),
+        StemKind::Instruments.index(),
+    ];
+    let release = pitched
+        .iter()
+        .map(|s| {
+            let lane = &stems.outgoing[*s];
+            lane.nodes
+                .windows(2)
+                .filter(|p| p[0].1 > 0.0001)
+                .map(|p| p[1].0)
+                .fold(0., f32::max)
+        })
+        .fold(0., f32::max);
+    if release + 0.25 > n {
+        return None;
+    }
+    for stem in pitched {
+        let original = stems.incoming[stem].clone();
+        let mut nodes: Vec<f32> = original.nodes.iter().map(|p| p.0).collect();
+        nodes.extend([release, release + 0.25, n]);
+        nodes.sort_by(f32::total_cmp);
+        nodes.dedup();
+        stems.incoming[stem].nodes = nodes
+            .into_iter()
+            .map(|u| {
+                let x = ((u - release) / 0.25).clamp(0., 1.);
+                (u, original.sample(u) * x * x * (3. - 2. * x))
+            })
+            .collect();
+    }
+    Some(())
 }
 
 /// Where the voices change hands. The outgoing voice leaves on a measured

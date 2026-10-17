@@ -19,6 +19,8 @@ Manual scrubbing, reversing, or changing the follower's tempo takes control of t
 
 Click a deck’s time to switch between remaining time and elapsed playback time. Each deck remembers its choice; its waveform time uses the same mode.
 
+**KEY** changes pitch independently of tempo. The key badge shows the sounding key after transposition; with **KEY LOCK** off, it also includes the pitch change from tempo. Fractional tuning is shown in cents.
+
 ## Cue points
 
 There are eight saved hot cues per track. Press an empty pad to save the current position; an existing pad jumps there on mouse-down without changing playback. Right-click to delete. **G** fills the next empty slot without replacing existing cues.

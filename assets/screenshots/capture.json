@@ -2219,6 +2219,24 @@
       "macOS": "27.0.1 (26A434)",
       "audioDevice": "External Headphones",
       "scope": "Audio buffer dropdown stays anchored above its trigger and closes with Escape without applying changes. Native static rendering and interaction evidence. Shared popup timing, reversal, retained dismissal content, reduced-motion behavior and click shielding are covered by automated tests. No native frame-time or listening measurements; system file dialogs and standalone native window transitions remain OS managed."
+    },
+    "harmonic-sounding-key": {
+      "file": "harmonic-key/sounding-key.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T10:41:02.122Z",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-8-g4b5671c-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T10:36:10Z"
+      },
+      "binarySha256": "a56d1be7d9a95a78e395c724c01f1e00a444b56b81ea56f264cb43e9cf7677d8",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Isolated offline native instance with real Ghost Voices and Platinum tracks loaded. Native KEY drag sets Platinum to -3 semitones: deck and top waveform show 10B, while the library retains source key 7B. The isolated instance has no stem cache. Rendering and control evidence only, not AutoMix playback or listening evidence. The original live playback instance was not restarted."
     }
   }
 }

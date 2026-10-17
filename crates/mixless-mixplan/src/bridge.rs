@@ -1,12 +1,12 @@
 //! Actual overlap for filter, echo and dry phrase transitions. A transition
 //! name must not disguise a last-beat launch and a 40 ms crossfader cut.
 use crate::{
+    PlanContext,
     constraints::covers_user_range,
     grid::Grid,
     musical::{beatless, feature, percussion_only},
     policy::Technique,
     smooth::grid_reliable,
-    PlanContext,
 };
 use mixless_protocol::{BarMap, MixPlan, MixStage, Polyline, StrategyId};
 
@@ -88,7 +88,6 @@ pub(super) fn expand(
         return miss!();
     }
     if !harmonic
-        && n > 2.
         && !percussion_only(a, plan.t_in_a, plan.t_out_a)
         && !percussion_only(b, plan.t_in_b, b_end)
     {
