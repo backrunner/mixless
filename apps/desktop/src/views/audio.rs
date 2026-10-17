@@ -134,9 +134,6 @@ impl UiState {
     }
 
     pub fn render_audio_menu(&self, cx: &mut gpui::Context<Self>) -> Option<gpui::AnyElement> {
-        if !self.audio.open {
-            return None;
-        }
         let config = self.core.engine.audio_config();
         let disabled = self.audio.pending || self.audio.recording.active;
         let mut panel = div()

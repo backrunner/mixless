@@ -37,10 +37,10 @@ impl UiState {
 
     pub fn render_deck_menu(
         &self,
+        menu: DeckMenu,
         window: &Window,
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
-        let menu = self.deck_menu.clone()?;
         let blocked: Option<UnloadBlock> = self.unload_block(menu.target);
         let enabled = blocked.is_none();
         let panel = div()

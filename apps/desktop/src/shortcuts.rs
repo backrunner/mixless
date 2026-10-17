@@ -126,7 +126,7 @@ impl UiState {
         let action = resolve(
             ev,
             self.focus,
-            self.show_import_modal || self.fx_editor.is_some(),
+            self.show_import_modal || self.package.export_open || self.fx_editor.is_some(),
             self.picker_open,
         );
         let Some(action) = action else { return };
@@ -142,6 +142,8 @@ impl UiState {
                 self.close_fx_editor();
                 self.show_shortcuts = false;
                 self.show_import_modal = false;
+                self.package.export_open = false;
+                self.package.menu = None;
                 self.playlist_menu = None;
                 self.confirm_remove_playlist = None;
                 self.keyboard_focus.focus(window);

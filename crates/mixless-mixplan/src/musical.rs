@@ -70,6 +70,32 @@ pub(crate) fn bass_handoff(
 /// No drum pattern anywhere in the span: every bar lacks both a kick and a
 /// hat pulse. Such a side can sound against a beat at an unrelated tempo.
 pub(crate) fn beatless(t: &TrackAnalysis, start: f32, end: f32) -> bool {
+    // The separated drum part is the direct evidence: a bass line or a
+    // plucked synth can excite the mixture kick and hat proxies, but not the
+    // drum stem. Under a fifth of the track's usual kit (about -14 dB) there
+    // is no beat to clash with.
+    if let Some(stems) = &t.stems {
+        let mut levels: Vec<f32> = stems.frames.iter().map(|f| f.rms[1]).collect();
+        levels.sort_by(f32::total_cmp);
+        let kit = levels
+            .get(levels.len().saturating_sub(1) * 4 / 5)
+            .copied()
+            .unwrap_or(0.);
+        let span: Vec<f32> = stems
+            .frames
+            .iter()
+            .filter(|f| f.end_sec > start && f.start_sec < end)
+            .map(|f| f.rms[1])
+            .collect();
+        if kit > 0.001 && !span.is_empty() {
+            // Judge each bar-sized stretch, so a single fill does not count.
+            let bar = ((end - start) / ((end - start) / 2.).ceil().max(1.)).max(0.5);
+            let chunk = ((bar / 0.05) as usize).max(1);
+            return span
+                .chunks(chunk)
+                .all(|c| c.iter().sum::<f32>() / (c.len() as f32) < kit * 0.2);
+        }
+    }
     let mut bars = t
         .bars
         .iter()

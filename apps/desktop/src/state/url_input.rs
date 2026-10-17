@@ -1,5 +1,5 @@
 //! UTF-8 byte selection for the single-line Spotify URL field.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct UrlSelection {
     pub cursor: usize,
     pub anchor: Option<usize>,

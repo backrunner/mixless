@@ -62,6 +62,11 @@ impl Shared {
             self.master_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
         ));
 
+        if let Ok(settings) = self.master_chain.settings.try_lock() {
+            rt.master_chain.configure(*settings);
+        }
+        rt.master_chain.begin_block();
+
         let bufs: [Option<Arc<AudioBuffer>>; 2] =
             std::array::from_fn(|index| match self.decks[index].buffer.try_lock() {
                 Ok(buffer) => buffer.clone(),
@@ -108,6 +113,7 @@ impl Shared {
                 deck.brake_elapsed = None;
                 deck.paused_seek = false;
                 deck.touching = false;
+                deck.monitor_scrub = false;
                 deck.isolator_l = Isolator::new(sr);
                 deck.isolator_r = Isolator::new(sr);
                 deck.filter_l = ChannelFilter::new(sr);
@@ -185,25 +191,7 @@ impl Shared {
             };
             deck.step.set(deck.step_target);
             let touching = slot.jog_touch.load(Ordering::Acquire);
-            if touching && !deck.touching {
-                deck.slip_position = deck.position;
-                deck.scratch_speed = 0.0;
-            } else if !touching && deck.touching {
-                if deck.slip && deck.playing {
-                    deck.old_ph = deck.position;
-                    deck.tail_index = deck.transition_tail.len();
-                    deck.position = deck.slip_position.clamp(
-                        0.0,
-                        slot.frames.load(Ordering::Relaxed).saturating_sub(1) as f64,
-                    );
-                    deck.seek.start(xf_len);
-                }
-                deck.step = SmoothValue::new(deck.scratch_speed as f32, sr, 0.002);
-                deck.step.set(deck.step_target);
-                deck.music.invalidate();
-            }
-            deck.touching = touching;
-            deck.slip = slot.slip.load(Ordering::Relaxed);
+            deck.update_scrub(slot, touching, sr, xf_len);
             let bpm_raw = slot.bpm_milli.load(Ordering::Relaxed) as f32 / 100.0;
             let fallback_bpm = if bpm_raw > 0.0 { bpm_raw } else { 120.0 };
             // A loaded analysis grid is authoritative for tempo-synced loops
@@ -312,11 +300,14 @@ impl Shared {
                 deck.old_ph = deck.position;
                 deck.position = (slot.seek_to.load(Ordering::Relaxed) as f64 / 65536.0)
                     .min(slot.frames.load(Ordering::Relaxed).saturating_sub(1) as f64);
-                slot.jog_target
-                    .store((deck.position * 65536.0) as u64, Ordering::Relaxed);
+                if !touching {
+                    slot.jog_target
+                        .store((deck.position * 65536.0) as u64, Ordering::Relaxed);
+                }
                 deck.paused_seek = !deck.playing;
                 deck.seek.start(xf_len);
             }
+            deck.follow_scrub_target(slot, bufs[index].as_deref(), source_rate, xf_len);
             if let Ok(grid) = slot.beat_grid.try_lock() {
                 deck.fx_clock = grid.as_ref().map(|grid| {
                     let (beat, period) = grid.fx_clock_at(deck.position / source_rate as f64);
@@ -370,7 +361,7 @@ impl Shared {
         let mut recording = self.recorder.sink.try_lock().ok();
         let pfl = std::array::from_fn::<_, 2, _>(|i| self.decks[i].pfl.load(Ordering::Relaxed));
         let preview = std::array::from_fn::<_, 2, _>(|i| {
-            self.decks[i].preview_cue.load(Ordering::Acquire) > 0
+            self.decks[i].preview_cue.load(Ordering::Acquire) > 0 || rt.decks[i].monitor_scrub
         });
         let cue_mix = self.cue_mix.load(Ordering::Relaxed) as f32 / 1000.0;
         let cue_gain = self.cue_gain.load(Ordering::Relaxed) as f32 / 1000.0;
@@ -409,7 +400,10 @@ impl Shared {
                 r += wet[1];
             }
             let master_gain = rt.master_gain.next();
-            (l, r) = rt.limiter.process(l * master_gain, r * master_gain);
+            if !l.is_finite() || !r.is_finite() {
+                last_ok = false;
+            }
+            [l, r] = rt.master_chain.process([l * master_gain, r * master_gain]);
             let master = rt.master.next();
             l *= master;
             r *= master;
@@ -449,6 +443,8 @@ impl Shared {
         }
         // Peak-hold with per-block decay so the UI meters fall smoothly.
         let decay = (-(frames as f32) / (sr * 0.18)).exp();
+        rt.master_chain.finish_block();
+        self.master_chain.publish(rt.master_chain.meters, decay);
         for ch in 0..2 {
             let previous = f32::from_bits(self.master_level[ch].load(Ordering::Relaxed));
             self.master_level[ch].store(

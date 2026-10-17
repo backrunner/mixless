@@ -5,6 +5,37 @@ pub(crate) fn risk(bar: &BarFeature) -> f32 {
     bar.vocal_confidence.unwrap_or(bar.vocal_presence)
 }
 
+/// A chopped vocal is rhythmic material: many short, repeated voice notes
+/// rather than a held line. Chops may be cut through, entered over and
+/// layered like any other percussion, while a sung line may not. Judged on
+/// the measured note lengths, so a held note is never called a chop.
+pub(crate) fn chops(t: &TrackAnalysis, start: f32, end: f32) -> bool {
+    let Some(stems) = &t.stems else { return false };
+    if end <= start + 0.05 {
+        return false;
+    }
+    let notes: Vec<_> = stems
+        .notes
+        .iter()
+        .filter(|n| {
+            n.stem == mixless_protocol::StemKind::Vocals
+                && n.confidence >= 0.45
+                && n.start_sec < end
+                && n.end_sec > start
+        })
+        .collect();
+    if notes.len() < 6 {
+        return false;
+    }
+    let bar = 240. / t.tempo.global_bpm.max(30.);
+    let per_bar = notes.len() as f32 / ((end - start) / bar).max(0.25);
+    let short = notes
+        .iter()
+        .filter(|n| (n.end_sec - n.start_sec).clamp(0.05, 2.) <= 0.35)
+        .count();
+    per_bar >= 4. && short * 2 >= notes.len()
+}
+
 pub(crate) fn phrases(t: &TrackAnalysis) -> Vec<(f32, f32)> {
     let gap = 240. / t.tempo.global_bpm.max(30.);
     let mut result: Vec<(f32, f32)> = vec![];
@@ -163,4 +194,70 @@ pub(crate) fn protect(plan: &mut mixless_protocol::MixPlan, t: &TrackAnalysis) -
     ];
     plan.stages.retain(|s| s.end_bar > s.start_bar);
     Some(())
+}
+
+#[cfg(test)]
+mod chop_tests {
+    use super::*;
+    use mixless_protocol::{
+        SectionLabel as S, StemAnalysis, StemFrame, StemKind, StemNote, TrackId,
+    };
+
+    fn track(vocal: bool) -> TrackAnalysis {
+        let mut t = crate::tests::track(1, 128., "8A", S::Drop, 32, 0.9, 0.3);
+        let mut stems = StemAnalysis {
+            version: 2,
+            separator_sha256: String::new(),
+            notes_sha256: String::new(),
+            duration_sec: t.duration_sec,
+            residual_rms: 0.01,
+            frames: (0..(t.duration_sec / 0.05) as usize)
+                .map(|i| StemFrame {
+                    start_sec: i as f32 * 0.05,
+                    end_sec: (i + 1) as f32 * 0.05,
+                    rms: if vocal {
+                        [0.05, 0.02, 0.02]
+                    } else {
+                        [0., 0., 0.]
+                    },
+                    band_db: [[-30.; 3]; 3],
+                    onset: [0.; 3],
+                    drum_low_onset: 0.,
+                    vocal_activity: f32::from(vocal) * 0.8,
+                    note_chroma: [0.; 12],
+                })
+                .collect(),
+            notes: vec![],
+        };
+        // A chop repeats every 16th note; a sung line holds for a bar.
+        let step = if vocal { 60. / 128. / 4. } else { 240. / 128. };
+        let length = if vocal { 0.1 } else { 1.6 };
+        let mut at = 0.;
+        while at < t.duration_sec - 1. {
+            stems.notes.push(StemNote {
+                stem: StemKind::Vocals,
+                start_sec: at,
+                end_sec: at + length,
+                midi: 60,
+                confidence: 0.9,
+            });
+            at += step;
+        }
+        t.stems = Some(stems);
+        t.track_id = TrackId(1);
+        t
+    }
+
+    #[test]
+    fn repeated_short_notes_are_chops_and_a_held_line_is_not() {
+        let chopped = track(true);
+        assert!(chops(&chopped, 4., 12.));
+        let mut sung = track(true);
+        for note in &mut sung.stems.as_mut().unwrap().notes {
+            note.end_sec = note.start_sec + 1.6;
+        }
+        assert!(!chops(&sung, 4., 12.), "a held vocal line is not a chop");
+        assert!(!chops(&track(false), 4., 12.));
+        assert!(!chops(&chopped, 4., 4.02));
+    }
 }

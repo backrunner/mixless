@@ -2,6 +2,7 @@
 //! table, cached cover art, and a secondary import modal.
 
 mod drag;
+mod import;
 pub(crate) mod import_rows;
 mod menu;
 mod packages;
@@ -16,6 +17,8 @@ use std::path::PathBuf;
 use crate::state::UiState;
 use crate::theme;
 use crate::views::{TextTip, ellipsized_text};
+mod cache;
+
 use gpui::prelude::*;
 use gpui::{IntoElement, MouseButton, MouseDownEvent, SharedString, Styled, Window, px};
 use mixless_protocol::{Track, TrackId};
@@ -179,36 +182,38 @@ fn source_row(
             )
         })
         .when(!selected, |el| el.hover(|s| s.bg(theme::PANEL_RAISED)))
-        .child(
-            gpui::canvas(
-                |_, _, _| {},
-                move |bounds, _, window, _| {
-                    let x = f32::from(bounds.origin.x);
-                    let y = f32::from(bounds.origin.y);
-                    match icon {
-                        SourceIcon::Collection => {
-                            for (dx, dy) in [(1., 1.), (7., 1.), (1., 7.), (7., 7.)] {
-                                crate::controls::quad_fill(window, x + dx, y + dy, 4., 4., color);
-                            }
-                        }
-                        SourceIcon::Folder => {
-                            crate::controls::quad_fill(window, x + 1., y + 2., 5., 2., color);
-                            crate::controls::quad_fill(window, x + 1., y + 4., 10., 7., color);
-                        }
-                        SourceIcon::Playlist => {
-                            for dy in [1., 5., 9.] {
-                                crate::controls::quad_fill(window, x + 1., y + dy, 2., 2., color);
-                                crate::controls::quad_fill(window, x + 5., y + dy, 6., 2., color);
-                            }
-                        }
-                    }
-                },
-            )
-            .flex_none()
-            .size(px(12.)),
-        )
+        .child(source_icon(icon, color))
         .child(ellipsized_text(name).flex_1().w_0().min_w_0().h(px(16.)))
         .when_some(count, |el, count| el.child(source_count(count)))
+}
+
+fn source_icon(icon: SourceIcon, color: gpui::Rgba) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let x = f32::from(bounds.origin.x);
+            let y = f32::from(bounds.origin.y);
+            match icon {
+                SourceIcon::Collection => {
+                    for (dx, dy) in [(1., 1.), (7., 1.), (1., 7.), (7., 7.)] {
+                        crate::controls::quad_fill(window, x + dx, y + dy, 4., 4., color);
+                    }
+                }
+                SourceIcon::Folder => {
+                    crate::controls::quad_fill(window, x + 1., y + 2., 5., 2., color);
+                    crate::controls::quad_fill(window, x + 1., y + 4., 10., 7., color);
+                }
+                SourceIcon::Playlist => {
+                    for dy in [1., 5., 9.] {
+                        crate::controls::quad_fill(window, x + 1., y + dy, 2., 2., color);
+                        crate::controls::quad_fill(window, x + 5., y + dy, 6., 2., color);
+                    }
+                }
+            }
+        },
+    )
+    .flex_none()
+    .size(px(12.))
 }
 
 // Downloader-created folder IDs are not useful playlist titles. Keep the
@@ -275,10 +280,11 @@ pub type LibraryKey = (
     mixless_protocol::DeckId,
     [Option<TrackId>; 2],
     [Option<u32>; 2],
-    (u64, bool, bool, u64, usize),
+    (u64, bool, bool, u64),
     bool,
     bool,
     SharedString,
+    (u32, u32),
 );
 
 pub struct LibraryView {
@@ -418,6 +424,22 @@ impl UiState {
             .overflow_hidden()
             .child(
                 gpui::div()
+                    .id("library-header")
+                    .debug_selector(|| "library-header".into())
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|s, ev: &MouseDownEvent, window, cx| {
+                            s.track_menu = None;
+                            s.playlist_menu = None;
+                            s.deck_menu = None;
+                            s.brand_menu.open = false;
+                            s.audio.open = false;
+                            s.package.menu = Some(ev.position);
+                            s.keyboard_focus.focus(window);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
                     .flex()
                     .flex_none()
                     .items_center()
@@ -448,6 +470,8 @@ impl UiState {
                             .child("+")
                             .tooltip(|_, cx| cx.new(|_| TextTip("Import music".into())).into())
                             .on_click(cx.listener(|s, _, _, cx| {
+                                s.package.export_open = false;
+                                s.package.menu = None;
                                 s.show_import_modal = true;
                                 cx.notify();
                             })),
@@ -477,7 +501,7 @@ impl UiState {
                     .child(playlist_list),
             );
 
-        let shown = self.tracks.clone();
+        let shown = self.shown_tracks();
         let analysis_statuses = self.core.analysis.statuses();
         let stem_statuses = self.core.analysis.stem_statuses();
         let loaded_tracks = self.snapshot.decks.each_ref().map(|d| d.track_id);
@@ -488,20 +512,7 @@ impl UiState {
         let menu_playlist = self.playlist_sel;
         let track_state = cx.entity();
         let previews = self.library_previews.clone();
-        let prepared = if self
-            .automix_shuffle
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            vec![]
-        } else {
-            self.core.mix_preparation.previews()
-        };
-        let mix_overlays = crate::wave::mix_overlay::rows(
-            self.automix_active,
-            &shown,
-            &prepared,
-            self.automix_plan.as_ref().map(|(_, p)| p.as_ref()),
-        );
+        let mix_overlays = self.library_mix_overlays(&shown);
         let preview_core = self.core.clone();
         let reorder_end_state = track_state.clone();
         let track_count = shown.len();
@@ -529,7 +540,7 @@ impl UiState {
                 gpui::div()
                     .flex_1()
                     .min_w(px(280.))
-                    .child("WAVEFORM · CUES"),
+                    .child("WAVEFORM / CUES"),
             )
             .child(gpui::div().flex_none().w(px(COL_ARTIST)).child("ARTIST"))
             .when(!compact, |el| {
@@ -611,7 +622,11 @@ impl UiState {
                         let dur = fmt_duration(t.duration_ms as u64);
 
                         let row = gpui::div()
-                            .id(SharedString::from(format!("track-{}-{ix}", t.id.0)))
+                            .id(SharedString::from(format!("track-{}", t.id.0)))
+                            .debug_selector({
+                                let id = t.id.0;
+                                move || format!("track-row-{id}")
+                            })
                             .relative()
                             .overflow_hidden()
                             .w_full()
@@ -667,7 +682,9 @@ impl UiState {
                                     .child(t.title.clone()),
                             )
                             .child(crate::wave::preview::element(
-                                previews.get(t, &preview_core),
+                                &previews,
+                                t,
+                                &preview_core,
                                 mix_overlays.get(ix).copied().unwrap_or_default(),
                                 std::array::from_fn(|i| {
                                     (loaded_tracks[i] == Some(t.id))
@@ -902,214 +919,6 @@ impl UiState {
                 s.choose_download_dir(cx);
             }))
             .into_any_element()
-    }
-
-    pub fn render_import_modal(
-        &self,
-        window: &Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.show_import_modal {
-            return None;
-        }
-
-        let state = cx.entity();
-        let dismiss_state = state.clone();
-        let close_state = state.clone();
-        let spotify_state = state.clone();
-        let can_import_spotify = !self.url.trim().is_empty();
-        let download_dir = self.core.download_dir();
-        let download_path = download_dir.display().to_string();
-        let download_label = crate::state::display_dir(&download_dir);
-
-        let close = gpui::div()
-            .id("import-modal-close")
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(26.))
-            .rounded(px(4.))
-            .text_size(px(16.))
-            .text_color(theme::MUTED)
-            .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
-            .child("×")
-            .on_click(move |_ev, window, cx| {
-                window.blur();
-                close_state.update(cx, |s, cx| {
-                    s.show_import_modal = false;
-                    cx.notify();
-                });
-            });
-
-        let spotify_button = gpui::div()
-            .id("import-spotify-playlist")
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .h(px(26.))
-            .px_3()
-            .rounded(px(3.))
-            .bg(theme::PANEL_RAISED)
-            .border_1()
-            .border_color(theme::LINE)
-            .text_size(px(11.))
-            .text_color(theme::TEXT)
-            .when(!can_import_spotify, |el| el.opacity(0.45))
-            .when(can_import_spotify, |el| {
-                el.cursor_pointer().hover(|s| s.bg(theme::LINE))
-            })
-            .child("Import")
-            .on_click(move |_ev, window, cx| {
-                if can_import_spotify {
-                    spotify_state.update(cx, |s, cx| {
-                        if !s.url.trim().is_empty() {
-                            s.import_spotify(s.url.trim().to_string());
-                            s.keyboard_focus.focus(window);
-                            cx.notify();
-                        }
-                    });
-                }
-            });
-
-        let panel = gpui::div()
-            .id("import-modal-panel")
-            .max_h((window.viewport_size().height - px(32.)).max(px(0.)))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .w(px(460.))
-            .p_3()
-            .rounded(px(theme::DIALOG_RADIUS))
-            .bg(theme::PANEL)
-            .border_1()
-            .border_color(theme::LINE)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|s, _, window, cx| {
-                    s.keyboard_focus.focus(window);
-                    cx.stop_propagation();
-                    cx.notify();
-                }),
-            )
-            .on_click(|_ev, _window, cx| cx.stop_propagation())
-            .child(
-                gpui::div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .pb_2()
-                    .border_b_1()
-                    .border_color(theme::LINE)
-                    .child(gpui::div().text_size(px(13.)).child("Import music"))
-                    .child(close),
-            )
-            .child(
-                gpui::div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(gpui::div().flex_1().text_size(px(11.)).child("Local audio"))
-                    .child(self.local_import_button(cx, false, "Choose files…"))
-                    .child(self.local_import_button(cx, true, "Choose folder…")),
-            )
-            .child(
-                gpui::div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .pt_3()
-                    .border_t_1()
-                    .border_color(theme::LINE)
-                    .child(gpui::div().text_size(px(11.)).child("Spotify playlist"))
-                    .child(
-                        gpui::div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(self.render_url_input(window, cx))
-                            .child(spotify_button),
-                    )
-                    .child(
-                        gpui::div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                gpui::div()
-                                    .flex_none()
-                                    .text_size(px(10.))
-                                    .text_color(theme::MUTED)
-                                    .child("Save to"),
-                            )
-                            .child(
-                                gpui::div()
-                                    .id("download-dir")
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(10.))
-                                    .text_color(theme::TEXT)
-                                    .child(download_label)
-                                    .tooltip(move |_, cx| {
-                                        cx.new(|_| TextTip(download_path.clone())).into()
-                                    }),
-                            )
-                            .child(self.download_dir_button(cx)),
-                    ),
-            )
-            .child(self.render_packages(cx))
-            .when(!self.import_details.is_empty(), |el| {
-                el.child(
-                    gpui::div()
-                        .id("import-details")
-                        .max_h(px(120.))
-                        .overflow_y_scroll()
-                        .text_size(px(10.))
-                        .text_color(theme::MUTED)
-                        .children(
-                            self.import_details
-                                .iter()
-                                .map(|detail| gpui::div().py_1().child(detail.clone())),
-                        ),
-                )
-            })
-            .when(!self.acquire.is_empty(), |el| {
-                el.child(
-                    gpui::div()
-                        .pt_2()
-                        .border_t_1()
-                        .border_color(theme::LINE)
-                        .text_size(px(10.))
-                        .text_color(theme::MUTED)
-                        .child(self.import_status()),
-                )
-            });
-
-        Some(
-            gpui::div()
-                .id("import-modal-backdrop")
-                .absolute()
-                .top_0()
-                .right_0()
-                .bottom_0()
-                .left_0()
-                .occlude()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::rgba(0x000000b8))
-                .on_click(move |_ev, window, cx| {
-                    window.blur();
-                    dismiss_state.update(cx, |s, cx| {
-                        s.show_import_modal = false;
-                        cx.notify();
-                    });
-                })
-                .child(panel)
-                .into_any_element(),
-        )
     }
 }
 

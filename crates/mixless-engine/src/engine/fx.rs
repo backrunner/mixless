@@ -2,9 +2,73 @@
 
 use super::*;
 
+/// Every setting of one send, so a planned transition tail can hand the send
+/// back to the user exactly as it was.
+#[derive(Clone, Copy)]
+pub(super) struct SavedFx {
+    revision: u64,
+    pub(super) words: [u32; 10],
+    pub(super) bypass: bool,
+}
+
 impl AtomicFx {
+    fn words(&self) -> [&AtomicU32; 10] {
+        [
+            &self.kind,
+            &self.mix,
+            &self.feedback,
+            &self.beats,
+            &self.rate,
+            &self.depth,
+            &self.drive,
+            &self.decay,
+            &self.size,
+            &self.damping,
+        ]
+    }
+
+    pub(super) fn save(&self) -> SavedFx {
+        SavedFx {
+            revision: self.revision.load(Ordering::Acquire),
+            words: self.words().map(|w| w.load(Ordering::Acquire)),
+            bypass: self.bypass.load(Ordering::Acquire),
+        }
+    }
+
+    pub(super) fn restore(&self, saved: &SavedFx) {
+        // Callers serialize with host edits through automation.control.
+        if self.revision.load(Ordering::Acquire) != saved.revision {
+            return;
+        }
+        for (word, value) in self.words().into_iter().zip(saved.words) {
+            word.store(value, Ordering::Release);
+        }
+        self.bypass.store(saved.bypass, Ordering::Release);
+    }
+
+    /// Set the send to a transition's tail effect at full wet level.
+    pub(super) fn apply_send(&self, fx: &mixless_protocol::SendFx) {
+        self.apply(fx.kind, fx.beats, fx.feedback, fx.decay_seconds);
+    }
+
+    /// Engage one effect at full wet level with planned timing.
+    pub(super) fn apply(&self, kind: EffectKind, beats: f32, feedback: f32, decay: f32) {
+        self.feedback
+            .store(feedback.clamp(0.0, 0.88).to_bits(), Ordering::Relaxed);
+        self.beats.store(
+            beats.clamp(0.0625, kind.max_beats()).to_bits(),
+            Ordering::Relaxed,
+        );
+        self.decay
+            .store(decay.clamp(0.2, 8.0).to_bits(), Ordering::Relaxed);
+        self.mix.store(1.0f32.to_bits(), Ordering::Relaxed);
+        self.kind.store(kind as u32, Ordering::Release);
+        self.bypass.store(false, Ordering::Release);
+    }
+
     pub(super) fn new() -> Self {
         Self {
+            revision: AtomicU64::new(0),
             kind: AtomicU32::new(0),
             mix: AtomicU32::new(0.5f32.to_bits()),
             bypass: AtomicBool::new(true),
@@ -20,6 +84,7 @@ impl AtomicFx {
     }
 
     pub(super) fn set(&self, params: &FxParams, kind: EffectKind) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
         self.mix
             .store(params.mix.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
         self.feedback.store(

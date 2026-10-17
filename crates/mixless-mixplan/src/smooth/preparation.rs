@@ -85,8 +85,16 @@ pub(super) fn candidate(
         strategy: Some(S::EnergyHold),
         ..options.clone()
     };
-    let mut plan =
-        super::candidate::direct(&prepared, &held, out, input, mode, length, minimum_score)?;
+    let mut plan = super::candidate::direct(
+        &prepared,
+        &held,
+        out,
+        input,
+        mode,
+        length,
+        minimum_score,
+        false,
+    )?;
     // Preparation earns no duration reward. The original overlap was scored.
     plan.summary.as_mut()?.score -= change * 0.1;
     if plan.summary.as_ref()?.score <= minimum_score {

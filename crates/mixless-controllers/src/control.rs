@@ -178,6 +178,19 @@ impl MidiAction {
                 deck,
                 semitones: range(d?.pitch_semitones, -6., 6.),
             },
+            Position { deck } => {
+                let d = d?;
+                let maximum = d.frames.saturating_sub(1);
+                let current = if maximum > 0 {
+                    d.frame as f32 / maximum as f32
+                } else {
+                    0.
+                };
+                Command::Seek {
+                    deck,
+                    frame: (range(current, 0., 1.) as f64 * maximum as f64).round() as u64,
+                }
+            }
             Jog { deck } => Command::Jog {
                 deck,
                 delta_frames: match self.value {

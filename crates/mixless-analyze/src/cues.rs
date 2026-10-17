@@ -14,12 +14,22 @@ pub fn automatic_cues(t: &TrackAnalysis) -> Vec<Cue> {
         return vec![];
     };
     let entry = first.start_sec;
-    let exit = mixless_protocol::peak_ranges(t)
-        .into_iter()
-        .find(|&(start, end)| {
+    // The natural exit follows the main drop, the moment the track builds
+    // towards, not a shorter preview drop before it.
+    let exit = mixless_protocol::main_peak(t, entry)
+        .filter(|&(start, end)| {
             end - start >= 8.
                 && end > entry + 16.
                 && mixless_protocol::drop_suspension(t, end).is_none()
+        })
+        .or_else(|| {
+            mixless_protocol::peak_ranges(t)
+                .into_iter()
+                .find(|&(start, end)| {
+                    end - start >= 8.
+                        && end > entry + 16.
+                        && mixless_protocol::drop_suspension(t, end).is_none()
+                })
         })
         .map_or(last.end_sec.min(t.duration_sec), |(_, end)| end);
     let mut selected = vec![(entry, 1., CueKind::In), (exit, 1., CueKind::Out)];
@@ -27,11 +37,16 @@ pub fn automatic_cues(t: &TrackAnalysis) -> Vec<Cue> {
     let mut candidates = Vec::new();
     for pair in t.sections.windows(2) {
         let (previous, next) = (&pair[0], &pair[1]);
+        // The end of a peak into a break is where a DJ mixes out; it is as
+        // structural as the drop that begins one.
+        let peak_end = matches!(previous.label, S::Drop | S::Chorus)
+            && matches!(next.label, S::Break | S::Breakdown | S::Outro);
         if previous.label == next.label
-            || !matches!(
-                next.label,
-                S::Drop | S::Chorus | S::BuildUp | S::Breakdown | S::Outro
-            )
+            || !(peak_end
+                || matches!(
+                    next.label,
+                    S::Drop | S::Chorus | S::BuildUp | S::Breakdown | S::Outro
+                ))
         {
             continue;
         }

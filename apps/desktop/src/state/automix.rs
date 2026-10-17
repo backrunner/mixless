@@ -38,6 +38,36 @@ impl UiState {
         }
     }
 
+    /// The rows the library shows. While AUTO plays this playlist in BEST
+    /// order the list follows that order; the playlist itself is untouched
+    /// and its own order returns as soon as AUTO stops.
+    pub fn shown_tracks(&self) -> Arc<Vec<Track>> {
+        if !self.automix_active || self.automix_playlist != self.playlist_sel {
+            return self.tracks.clone();
+        }
+        let ids: Vec<_> = self.tracks.iter().map(|track| track.id).collect();
+        let Some(order) = crate::automix::arranged(&self.core, &ids).filter(|o| *o != ids) else {
+            return self.tracks.clone();
+        };
+        let mut cache = self.best_rows.borrow_mut();
+        if let Some((source, cached, rows)) = cache.as_ref()
+            && Arc::ptr_eq(source, &self.tracks)
+            && *cached == order
+        {
+            return rows.clone();
+        }
+        let by_id: std::collections::HashMap<_, _> =
+            self.tracks.iter().map(|track| (track.id, track)).collect();
+        let rows: Arc<Vec<Track>> = Arc::new(
+            order
+                .iter()
+                .filter_map(|id| by_id.get(id).map(|track| (*track).clone()))
+                .collect(),
+        );
+        *cache = Some((self.tracks.clone(), order, rows.clone()));
+        rows
+    }
+
     pub(super) fn prepare_mix_playlist(&mut self, tracks: Vec<TrackId>) {
         if self.automix_active {
             self.automix_tracks = tracks.clone();
@@ -75,6 +105,10 @@ impl UiState {
             self.error = "Import a track to start Automix".into();
             return;
         }
+        if let Some(error) = crate::analysis::preparation_error(&self.core, &tracks) {
+            self.error = format!("AutoMix cannot prepare tracks: {error}").into();
+            return;
+        }
         for epoch in self.deck_load_epoch.iter() {
             epoch.fetch_add(1, Ordering::AcqRel);
         }
@@ -86,14 +120,34 @@ impl UiState {
         self.grid_rx = [None, None];
         self.automix_playlist = self.playlist_sel;
         self.automix_tracks = tracks.clone();
-        crate::automix::prepare_playlist(&self.core, tracks);
-        // BEST may already know the arranged set; otherwise the worker adopts
-        // it as soon as it is published.
-        self.start_automix_worker(self.core.mix_preparation.tracks());
+        // The smoothest order is the default; an explicit ORDER, BEST or
+        // SHUFFLE choice is kept instead.
+        if !self.automix_shuffle.load(Ordering::Acquire) {
+            crate::automix::default_to_best(&self.core, tracks.clone());
+        }
+        // BEST needs a planned pair for every neighbouring pair, so the set
+        // is analysed and ordered first; AUTO shows that it is working
+        // rather than starting on the wrong order.
+        if crate::analysis::needs_work(&self.core, &tracks)
+            || !crate::automix::order_ready(&self.core, &tracks)
+        {
+            self.automix_active = true;
+            self.automix_waiting = true;
+            self.update_preparation_progress();
+            return;
+        }
+        self.start_automix_worker(self.automix_order(tracks));
+    }
+
+    /// The set in the order AUTO plays it.
+    fn automix_order(&self, tracks: Vec<TrackId>) -> Vec<TrackId> {
+        crate::automix::arranged(&self.core, &tracks).unwrap_or(tracks)
     }
 
     fn start_automix_worker(&mut self, tracks: Vec<TrackId>) {
         self.automix_retry = None;
+        self.automix_loading = true;
+        self.automix_preparation_progress = None;
         let generation = self.automix_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         self.automix_active = true;
         self.automix_status = "Loading next track".into();
@@ -113,6 +167,9 @@ impl UiState {
         let _commit = core.automix_commit.lock().expect("automix commit");
         self.automix_epoch.fetch_add(1, Ordering::AcqRel);
         self.automix_active = false;
+        self.automix_waiting = false;
+        self.automix_loading = false;
+        self.automix_preparation_progress = None;
         self.automix_retry = None;
         self.automix_status.clear();
         self.automix_plan = None;
@@ -134,13 +191,19 @@ impl UiState {
                     crate::automix::AutomixMsg::Status(status) => self.automix_status = status,
                     crate::automix::AutomixMsg::Preparing(title) => {
                         self.automix_plan = None;
+                        self.automix_loading = true;
+                        self.automix_preparation_progress = None;
                         self.automix_status = format!("Loading {title}");
                     }
                     crate::automix::AutomixMsg::Plan(deck, plan) => {
-                        self.automix_plan = Some((deck, plan))
+                        self.automix_plan = Some((deck, plan));
+                        self.automix_loading = false;
+                        self.automix_preparation_progress = None;
                     }
                     crate::automix::AutomixMsg::Done(result) => {
                         finished = true;
+                        self.automix_loading = false;
+                        self.automix_preparation_progress = None;
                         self.automix_plan = None;
                         self.automix_status = match result {
                             Ok(()) => "Waiting for playback".into(),
@@ -158,6 +221,23 @@ impl UiState {
                 self.automix_rx = Some(rx);
             }
         }
+        if self.automix_waiting {
+            if let Some(error) =
+                crate::analysis::preparation_error(&self.core, &self.automix_tracks)
+            {
+                self.stop_automix();
+                self.error = format!("AutoMix cannot prepare tracks: {error}").into();
+                changed = true;
+            } else if crate::analysis::needs_work(&self.core, &self.automix_tracks) {
+                changed |= self.update_preparation_progress();
+            } else if !crate::automix::order_ready(&self.core, &self.automix_tracks) {
+                changed |= self.update_preparation_progress();
+            } else {
+                self.automix_waiting = false;
+                self.start_automix_worker(self.automix_order(self.automix_tracks.clone()));
+                changed = true;
+            }
+        }
         if self.automix_active
             && self
                 .automix_retry
@@ -165,9 +245,32 @@ impl UiState {
             && self.deck_load_rx.iter().all(Option::is_none)
             && !self.automix_tracks.is_empty()
         {
-            self.start_automix_worker(self.automix_tracks.clone());
+            self.start_automix_worker(self.automix_order(self.automix_tracks.clone()));
             changed = true;
         }
+        changed
+    }
+
+    fn update_preparation_progress(&mut self) -> bool {
+        let (ready, total) = crate::analysis::work_progress(&self.core, &self.automix_tracks);
+        let (status, progress) = if ready < total {
+            (
+                format!("Analyzing tracks {ready}/{total}"),
+                Some(ready as f32 / total as f32),
+            )
+        } else {
+            (
+                "Finding the best order".into(),
+                self.core
+                    .mix_preparation
+                    .order_progress(&self.automix_tracks),
+            )
+        };
+        let changed =
+            self.automix_status != status || self.automix_preparation_progress != progress;
+        self.automix_status = status;
+        self.automix_preparation_progress = progress;
+        self.automix_loading = true;
         changed
     }
 }

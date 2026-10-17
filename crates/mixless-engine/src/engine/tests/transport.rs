@@ -176,6 +176,13 @@ fn roll_loops_the_selected_fraction_and_brake_ramps_to_stop() {
 #[test]
 fn scratch_paused_deck_forward_backward_hold_and_release() {
     let engine = test_engine(48_000);
+    let (producer, mut consumer) = rtrb::RingBuffer::new(8192);
+    engine.rt.lock().unwrap().cue_output = Some(device::CueWriter::new(producer, 48_000, 48_000));
+    let mut monitor = || {
+        std::iter::from_fn(|| consumer.pop().ok())
+            .flatten()
+            .collect::<Vec<_>>()
+    };
     let slot = &engine.shared.decks[0];
     slot.set_playhead(48_000.0);
     engine.render_offline(128);
@@ -193,7 +200,8 @@ fn scratch_paused_deck_forward_backward_hold_and_release() {
         })
         .unwrap();
     let forward = engine.render_offline(1024);
-    assert!(energy(&forward) > 0.001);
+    assert!(energy(&forward) < 1e-10);
+    assert!(energy(&monitor()) > 0.001);
     let ahead = engine.snapshot().decks[0].frame;
     assert!(ahead > start + 2000 && ahead <= start + 2400);
     engine
@@ -203,10 +211,13 @@ fn scratch_paused_deck_forward_backward_hold_and_release() {
         })
         .unwrap();
     let backward = engine.render_offline(2048);
-    assert!(energy(&backward) > 0.001);
+    assert!(energy(&backward) < 1e-10);
+    assert!(energy(&monitor()) > 0.001);
     assert!(engine.snapshot().decks[0].frame < start - 2000);
     engine.render_offline(4800);
+    monitor();
     assert!(energy(&engine.render_offline(512)) < 1e-10);
+    assert!(energy(&monitor()) < 1e-10);
     engine
         .dispatch(Command::SetJogTouch {
             deck: DeckId::A,
@@ -476,4 +487,75 @@ fn quantized_loop_never_anchors_ahead_of_the_playhead() {
         );
         assert!(d.loop_end_frame > d.frame);
     }
+}
+
+#[test]
+fn absolute_seek_keeps_transport_and_clamps_without_touch_or_slip_return() {
+    let engine = test_engine(48_000);
+    for playing in [false, true] {
+        engine.shared.decks[0]
+            .playing
+            .store(playing, Ordering::Relaxed);
+        engine
+            .dispatch(Command::SetVinylMode {
+                deck: DeckId::A,
+                vinyl: true,
+                slip: true,
+            })
+            .unwrap();
+        for frame in [48_000, 12_000, 72_000] {
+            engine
+                .dispatch(Command::Seek {
+                    deck: DeckId::A,
+                    frame,
+                })
+                .unwrap();
+        }
+        engine.render_offline(256);
+        let d = engine.snapshot().decks[0].clone();
+        assert_eq!(d.playing, playing);
+        assert!(!engine.shared.decks[0].jog_touch.load(Ordering::Acquire));
+        assert!(d.frame >= 72_000 && d.frame <= 72_256);
+        engine.render_offline(256);
+        assert!(engine.snapshot().decks[0].frame >= 72_000);
+    }
+    engine.shared.decks[0]
+        .playing
+        .store(false, Ordering::Relaxed);
+    engine
+        .dispatch(Command::Seek {
+            deck: DeckId::A,
+            frame: u64::MAX,
+        })
+        .unwrap();
+    engine.render_offline(256);
+    let d = engine.snapshot().decks[0].clone();
+    assert_eq!(d.frame, d.frames - 1);
+    assert_eq!(engine.snapshot().decks[1].frame, 0);
+}
+
+#[test]
+fn wheel_jogs_accumulate_before_callback_and_clamp_at_start() {
+    let engine = test_engine(48_000);
+    for _ in 0..4 {
+        engine
+            .dispatch(Command::Jog {
+                deck: DeckId::A,
+                delta_frames: 2400.,
+            })
+            .unwrap();
+    }
+    engine.render_offline(256);
+    assert_eq!(engine.snapshot().decks[0].frame, 9600);
+    for _ in 0..6 {
+        engine
+            .dispatch(Command::Jog {
+                deck: DeckId::A,
+                delta_frames: -2400.,
+            })
+            .unwrap();
+    }
+    engine.render_offline(256);
+    assert_eq!(engine.snapshot().decks[0].frame, 0);
+    assert!(!engine.snapshot().decks[0].playing);
 }

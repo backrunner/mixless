@@ -1,4 +1,4 @@
-use crate::{grid::Grid, Candidate};
+use crate::{Candidate, grid::Grid};
 use mixless_protocol::{
     AutomationLanes, EqLane, FilterLane, LoopOp, MixPlan, MixPlanSummary, PerformanceOffset,
     Polyline, ScratchOp, StrategyId as S, TrackAnalysis,
@@ -10,7 +10,7 @@ pub const KILL: f32 = -96.0;
 type Row = [f32; 13];
 fn rows(strategy: S) -> Vec<Row> {
     match strategy {
-        S::PhraseBlend | S::EnergyHold => vec![
+        S::PhraseBlend | S::EnergyHold | S::StemSwap | S::VocalRide => vec![
             [0., -1., 0., -3., 0., -6., 0., -3., 0., 0., 20000., 20., 0.],
             [0.5, 0., 0., 0., -3., 0., 0., 0., -3., 0., 20000., 20., 0.],
             [
@@ -46,7 +46,7 @@ fn rows(strategy: S) -> Vec<Row> {
             [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
         ],
-        S::ScratchCut | S::Spinback => vec![
+        S::ScratchCut | S::Spinback | S::TapeStop | S::BuildRoll => vec![
             [0., -1., 0., -6., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [0.75, -1., 0., 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
             [1., 1., KILL, 0., 0., 0., 0., 0., 0., 0., 20000., 20., 0.],
@@ -190,6 +190,7 @@ pub(crate) fn compile(
             peak_bar,
             off_bar: n,
             accelerate: c.strategy == S::Spinback,
+            brake: false,
         });
     }
     let held_rate = lanes.rate_b.sample(n);
@@ -248,5 +249,7 @@ pub(crate) fn compile(
         literal_half_double: c.literal,
         failure_reason: None,
         requires_stems: false,
+        send_fx: None,
+        insert_a: None,
     }
 }

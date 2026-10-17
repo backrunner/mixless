@@ -16,6 +16,7 @@ mod packages;
 mod playback;
 mod poll;
 pub use packages::PackageAction;
+pub(crate) use packages::{CheckState, PackageNode};
 mod transport;
 mod unloading;
 pub(crate) mod url_input;
@@ -241,6 +242,10 @@ pub enum WaveLayout {
 /// to that position. The crossfader maps absolutely inside its captured bounds;
 /// knobs, the jog wheel and the waveform use relative motion.
 pub enum DragCtl {
+    MasterEq {
+        band: usize,
+        bounds: Bounds<Pixels>,
+    },
     Knob {
         ctl: KnobCtl,
         start_y: f32,
@@ -256,8 +261,7 @@ pub enum DragCtl {
     },
     /// Jog scrubbing: angular input around the platter center (circular
     /// gestures), linear vertical input near the center. One full revolution
-    /// maps to `frames_per_rev` source frames so the pointer and the spinning
-    /// marker stay in sync.
+    /// maps to `frames_per_rev` source frames, including mouse sensitivity.
     Jog {
         deck: DeckId,
         cx: f32,
@@ -269,6 +273,10 @@ pub enum DragCtl {
         last_y: f32,
         dead_radius: f32,
         frames_per_rev: f64,
+    },
+    Progress {
+        deck: DeckId,
+        drag: crate::controls::ProgressDrag,
     },
     /// Waveform scrubbing: pointer motion along the time axis dispatches the
     /// same Jog command the platter uses, so both stay in sync.
@@ -285,6 +293,7 @@ pub enum KnobCtl {
     Stem(DeckId, mixless_protocol::StemKind),
     Master,
     MasterGain,
+    MasterProcessor(crate::master::MasterParam),
     Key(DeckId),
     Trim(DeckId),
     Gain(DeckId),
@@ -308,6 +317,7 @@ impl KnobCtl {
             KnobCtl::Stem(_, _) => (0., 1., 0.01),
             KnobCtl::Master => (0.0, 1.0, 0.01),
             KnobCtl::MasterGain => (-12.0, 12.0, 0.1),
+            KnobCtl::MasterProcessor(_) => (0., 1., 0.001),
             KnobCtl::Key(_) => (-6.0, 6.0, 0.1),
             KnobCtl::Trim(_) | KnobCtl::Gain(_) => (-12.0, 12.0, 0.1),
             KnobCtl::Balance(_) => (-1.0, 1.0, 0.01),
@@ -356,6 +366,7 @@ pub struct UiState {
     pub track_menu: Option<crate::views::library::TrackMenu>,
     pub playlist_menu: Option<crate::views::library::PlaylistMenu>,
     pub deck_menu: Option<crate::views::deck::DeckMenu>,
+    pub(crate) popup_motion: crate::root::overlays::Popups,
     pub(crate) brand_menu: crate::views::topbar::BrandMenu,
     /// `(playlist id, display name)` awaiting removal confirmation.
     pub confirm_remove_playlist: Option<(i64, String)>,
@@ -363,11 +374,14 @@ pub struct UiState {
     playlist_actions: Vec<Receiver<Result<library_actions::PlaylistAction, String>>>,
     pub audio: audio::AudioUi,
     pub focus: DeckId,
+    pub deck_elapsed: [bool; 2],
+    pub progress_hover: [bool; 2],
     pub url: String,
     pub url_selection: url_input::UrlSelection,
     pub url_focus: FocusHandle,
     pub keyboard_focus: FocusHandle,
     pub show_shortcuts: bool,
+    pub master_mixer: crate::master::MasterMixer,
     pub show_import_modal: bool,
     pub package: packages::PackageUi,
     pub error: SharedString,
@@ -403,6 +417,7 @@ pub struct UiState {
     transport_press: Option<transport::TransportPress>,
     pub drag: Option<DragCtl>,
     pub pending_drag: Option<(f32, f32)>,
+    pub(super) wheel_scrub: Option<(DeckId, std::time::Instant)>,
     /// `(deck, slot, was_on)` for the FX button currently held by the mouse.
     /// The root mouse-up capture restores `was_on` even when the pointer leaves
     /// the small HOLD hitbox.
@@ -417,13 +432,19 @@ pub struct UiState {
     /// Running source, independent of the browsed playlist. None is All tracks.
     automix_playlist: Option<i64>,
     automix_tracks: Vec<TrackId>,
+    /// The list as AUTO plays it in BEST order: (source list, order, rows).
+    best_rows: std::cell::RefCell<Option<(Arc<Vec<Track>>, Vec<TrackId>, Arc<Vec<Track>>)>>,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
+    pub automix_loading: bool,
+    pub automix_preparation_progress: Option<f32>,
     automix_preview_revision: u64,
     pub automix_plan: Option<(DeckId, Arc<mixless_protocol::MixPlan>)>,
     automix_epoch: Arc<AtomicU64>,
     automix_rx: Option<Receiver<crate::automix::AutomixMsg>>,
     automix_retry: Option<std::time::Instant>,
+    /// AUTO's start is waiting for the best order to be measured.
+    automix_waiting: bool,
 }
 
 impl UiState {
@@ -462,18 +483,22 @@ impl UiState {
             playlist_menu: None,
             deck_menu: None,
             brand_menu: Default::default(),
+            popup_motion: Default::default(),
             confirm_remove_playlist: None,
             library_actions: Vec::new(),
             playlist_actions: Vec::new(),
             audio: Default::default(),
             focus: DeckId::A,
+            deck_elapsed: [false; 2],
+            progress_hover: [false; 2],
             url: String::new(),
             url_selection: Default::default(),
             url_focus: cx.focus_handle(),
             keyboard_focus: cx.focus_handle(),
             show_shortcuts: false,
+            master_mixer: Default::default(),
             show_import_modal: false,
-            package: packages::PackageUi::new(),
+            package: packages::PackageUi::new(cx),
             error: core.library_notice.clone().unwrap_or_default().into(),
             update_notice: "".into(),
             update_entry: None,
@@ -509,6 +534,7 @@ impl UiState {
             transport_press: None,
             drag: None,
             pending_drag: None,
+            wheel_scrub: None,
             momentary_fx: None,
             import_rx: None,
             import_queue: Default::default(),
@@ -519,20 +545,28 @@ impl UiState {
             automix_active: false,
             automix_playlist: None,
             automix_tracks: Vec::new(),
+            best_rows: Default::default(),
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
+            automix_loading: false,
+            automix_preparation_progress: None,
             automix_preview_revision: 0,
             automix_plan: None,
             automix_epoch: core.controller_automix_epoch.clone(),
             automix_rx: None,
             automix_retry: None,
+            automix_waiting: false,
         }
     }
 
     /// State that must track the display's VSync rather than a wall-clock
     /// timer. Idle windows fall back to the lightweight background poller.
     pub fn needs_continuous_repaint(&self) -> bool {
+        if self.master_mixer.open {
+            return true;
+        }
         self.drag.is_some()
+            || self.wheel_scrub.is_some()
             || self.transport_press.is_some()
             || self
                 .snapshot

@@ -53,7 +53,9 @@ A manually selected file is checked before the saved path changes. If its conten
 
 ## Portable packages
 
-Open **+** in the library and use **Portable package**. **Entire library** exports every track and playlist; turn it off to select several playlists. You can also right-click a playlist and choose **Export package…**.
+Right-click the **LIBRARY** heading and choose **Export package…** to open the export dialog. Select **Entire library** or use the collapsible folder and playlist groups to choose what to include. A partially selected group shows a dash in its checkbox. Right-clicking a playlist and choosing **Export package…** opens the same dialog with that playlist selected.
+
+To import a package, open **+** in the library and choose **Import…** under **Portable package**.
 
 - **Export…** creates a `.mixpack` file containing original audio, metadata, playlist order, cues, artwork, and existing analysis, waveforms, and stems. Shared audio blocks are stored once.
 - **Update existing…** updates the selected playlists in the same file and keeps its other playlists. Entire-library updates replace that source library's package snapshot. Only new or changed blocks are appended; interrupted updates retain the previous complete commit.

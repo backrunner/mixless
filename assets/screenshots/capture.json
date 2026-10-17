@@ -1532,6 +1532,693 @@
       "binarySha256": "26f18e84f4d281ba31bfb76f9086a2596275aaa80894e3458247b5ff82ff2e04",
       "capture": "Original native macOS window JPEG at 2x; no resizing or painted UI.",
       "scope": "Concise stem storage copy in the production Preferences renderer with isolated offline data. Native mouse selected all three formats at 940 x 820. The 720 x 540 window reopened the saved FLAC choice; native scrolling revealed all controls and both short notes."
+    },
+    "automix-controls-off": {
+      "file": "automix-controls/off.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T22:10:30.523182+08:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:07:30Z"
+      },
+      "binarySha256": "08a622df08044fea6e7d1e6bdea0f1aee0914d2c148fd8a94f2e92fe295e2139",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "AutoMix stopped. Order and transport controls are hidden. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "automix-controls-best-paused": {
+      "file": "automix-controls/best-paused.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T22:12:31.872781+08:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:07:30Z"
+      },
+      "binarySha256": "08a622df08044fea6e7d1e6bdea0f1aee0914d2c148fd8a94f2e92fe295e2139",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "AutoMix paused in Best order. Resume and Skip SVG controls. Loaded tracks retain A/B markers after list scrolling; positions match the deck times. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "automix-controls-shuffle": {
+      "file": "automix-controls/shuffle.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T22:13:14.153548+08:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:07:30Z"
+      },
+      "binarySha256": "08a622df08044fea6e7d1e6bdea0f1aee0914d2c148fd8a94f2e92fe295e2139",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Shuffle SVG and paused transport controls after native mouse cycled Best, Order and Shuffle. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "automix-controls-best-playing": {
+      "file": "automix-controls/best-playing.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T22:13:48.821402+08:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:07:30Z"
+      },
+      "binarySha256": "08a622df08044fea6e7d1e6bdea0f1aee0914d2c148fd8a94f2e92fe295e2139",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Native Resume and Skip changed the active deck and loaded the next track. A/B markers follow the new identities; successive native captures confirm the playing marker advances. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "deck-navigation-ring-idle": {
+      "file": "deck-navigation/ring-idle.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T14:37:32.564538+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:35:14Z"
+      },
+      "binarySha256": "5bc02364c751b400bba8ac33335303d5b9398d90124c3aa448484251c361d8df",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Paused deck shows elapsed time. Progress thumb is hidden with pointer outside the ring. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "deck-navigation-ring-hover": {
+      "file": "deck-navigation/ring-hover.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T14:37:22.661739+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:35:14Z"
+      },
+      "binarySha256": "5bc02364c751b400bba8ac33335303d5b9398d90124c3aa448484251c361d8df",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Pointer hovers at the bottom of the progress ring; the thumb marks the unchanged paused track position. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "deck-navigation-center-scrolled": {
+      "file": "deck-navigation/center-scrolled.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T14:33:23.545074+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:30:41Z"
+      },
+      "binarySha256": "a0ce33fda14d061c4e0134064e3850629ebfd501c17c010713879983d378d99d",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Native wheel input advanced paused vertical waveform from 1:11 to 1:12; reverse wheel returned it. Ring dragging then reached 2:22, half of the 4:45 track. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "deck-navigation-jog-sensitivity": {
+      "file": "deck-navigation/jog-sensitivity.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-16T14:33:41.177907+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:30:41Z"
+      },
+      "binarySha256": "a0ce33fda14d061c4e0134064e3850629ebfd501c17c010713879983d378d99d",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "General preferences show all five mouse jog sensitivity choices. 4x persisted across a native app restart; restored 1x and Top layout after verification. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "automix-details-hover-live": {
+      "file": "automix-details/hover-live.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T14:55:08.239464+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:53:16Z"
+      },
+      "binarySha256": "1b93063961b75f5fbc520fc73b3dfa24f700d4741b5b6b58ca70f6c1acc11bb5",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Transition status sits immediately after AUTO. Bounded hover detail appears below the status with separate source windows, incoming controls and stage rows. Countdown shows 1:31. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "automix-details-hover-updated": {
+      "file": "automix-details/hover-updated.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T14:55:17.401196+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:53:16Z"
+      },
+      "binarySha256": "1b93063961b75f5fbc520fc73b3dfa24f700d4741b5b6b58ca70f6c1acc11bb5",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Pointer moved from the status into the hover panel; it remains visible and countdown advances to 1:22 without reopening. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "automix-details-paused": {
+      "file": "automix-details/paused.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T14:55:27.663725+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:53:16Z"
+      },
+      "binarySha256": "1b93063961b75f5fbc520fc73b3dfa24f700d4741b5b6b58ca70f6c1acc11bb5",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Moving away to Pause dismisses the detail panel. AutoMix status changes to amber and transport changes to Resume. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "library-waveform-before-enlarged": {
+      "file": "library-waveform/before-enlarged.jpg",
+      "width": 3840,
+      "height": 1934,
+      "capturedAt": "2026-10-16T15:14:29.172390+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T14:53:16Z"
+      },
+      "binarySha256": "1b93063961b75f5fbc520fc73b3dfa24f700d4741b5b6b58ca70f6c1acc11bb5",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Before the resolution fix. Enlarged native window stretches fixed 512-column previews across approximately 1940 physical pixels. UI rendering evidence only."
+    },
+    "library-waveform-standard": {
+      "file": "library-waveform/standard.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T15:19:33.184452+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T15:18:35Z"
+      },
+      "binarySha256": "790343bcbc046a732f1f8bec393ffd60a20616180eb00064508fa748d7337f86",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Initial 1440-point native window; previews resolve physical widths at Retina scale while decks are stopped. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "library-waveform-enlarged": {
+      "file": "library-waveform/enlarged.jpg",
+      "width": 3840,
+      "height": 1934,
+      "capturedAt": "2026-10-16T15:19:54.346007+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T15:18:35Z"
+      },
+      "binarySha256": "790343bcbc046a732f1f8bec393ffd60a20616180eb00064508fa748d7337f86",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Same running process zoomed to a 1920-point native window; approximately 1940-pixel library waveform width refreshes from 1024 to 2048 columns. Native rendering shows fine envelope and spectral detail instead of stretched 512-column previews. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "library-waveform-restored": {
+      "file": "library-waveform/restored.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-16T15:20:20.330500+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-16T15:18:35Z"
+      },
+      "binarySha256": "790343bcbc046a732f1f8bec393ffd60a20616180eb00064508fa748d7337f86",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Same process zoomed back to 1440 points; larger cached previews are reduced with peak-preserving sampling. No track playback or library switch was needed to refresh the table. UI behavior and rendering evidence only; no listening or frame-time measurements."
+    },
+    "master-mixer-live": {
+      "file": "master-mixer/live.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T08:30:07.551841+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:27:46Z"
+      },
+      "binarySha256": "872b0c80a0446d04ce9ce12ad749ab646197bbaf91c26923024dd11b983c07cb",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Master mixer with five-band EQ, compressor, expander and always-on limiter. Native playback produced nonzero stereo input/output meters, RMS, changing compressor gain reduction and limiter history. Compact right-aligned input/output knobs, SVG close, no subtitle and no arrow on the MASTER trigger. Close icon and Escape verified. UI and numerical test evidence only; no listening or frame-time measurements."
+    },
+    "master-mixer-gate": {
+      "file": "master-mixer/gate.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T08:31:03.494781+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:27:46Z"
+      },
+      "binarySha256": "872b0c80a0446d04ce9ce12ad749ab646197bbaf91c26923024dd11b983c07cb",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Native Gate mode switch updates its transfer curve and hides the expander ratio control. Scrolled body exposes all lower controls, stereo meters, RMS and sample-peak limiter description. Header and footer remain fixed. Expander mode restored afterward. UI behavior and rendering evidence only."
+    },
+    "scrub-monitor-paused-progress": {
+      "file": "scrub-monitor/paused-progress.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T08:50:41.949637+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:45:22Z"
+      },
+      "binarySha256": "0d761a4ba0c07f70ef232babfa4173c030b140e2098933ca1bd487ee057b8702",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "cueDevice": "Disabled",
+      "scope": "Paused Top waveform drag advanced from 0:00 to 0:01; wheel advanced to 0:05; progress-ring drag then landed at 2:22, halfway through the 4:45 track. Transport remained paused and PFL remained off. Native UI behavior and rendering evidence only. Cue output was disabled; monitor-only routing, release tails, zero master leakage and callback allocation were verified by offline PCM tests. No listening or frame-time measurements."
+    },
+    "scrub-monitor-playing-progress": {
+      "file": "scrub-monitor/playing-progress.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T08:50:56.000222+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:45:22Z"
+      },
+      "binarySha256": "0d761a4ba0c07f70ef232babfa4173c030b140e2098933ca1bd487ee057b8702",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "cueDevice": "Disabled",
+      "scope": "After starting playback and raising deck A fader, Top waveform drag and wheel advanced playback to 2:28. Progress-ring drag then moved to 1:11 while playback continued and Master meters remained nonzero. PFL remained off. Native UI behavior and rendering evidence only. Cue output was disabled; monitor-only routing, release tails, zero master leakage and callback allocation were verified by offline PCM tests. No listening or frame-time measurements."
+    },
+    "scrub-monitor-paused-center-wave": {
+      "file": "scrub-monitor/paused-center-wave.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T08:51:07.589604+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:45:22Z"
+      },
+      "binarySha256": "0d761a4ba0c07f70ef232babfa4173c030b140e2098933ca1bd487ee057b8702",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "cueDevice": "Disabled",
+      "scope": "After pausing at 1:15, Center waveform drag and wheel moved the deck to 1:35 while transport remained paused and Master meters were dark. Top layout and original fader position restored afterward. Native UI behavior and rendering evidence only. Cue output was disabled; monitor-only routing, release tails, zero master leakage and callback allocation were verified by offline PCM tests. No listening or frame-time measurements."
+    },
+    "automix-loading-progress-start": {
+      "file": "automix-loading/progress-start.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:00:04.246675+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:58:58Z"
+      },
+      "binarySha256": "b561cd362a056119fffbea33714d9fa890e107305cf90f959e961c8323f9fc47",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Started AUTO on the 29-track MUG playlist. Spinner appears while the worker gathers cached analyses; no invented percentage is displayed before measured work starts. Native UI behavior and rendering evidence; no listening or frame-time measurements. Reduced Motion is read from the system and uses a static arc; that system setting was not changed for this capture."
+    },
+    "automix-loading-progress-updated": {
+      "file": "automix-loading/progress-updated.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:00:20.272033+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:58:58Z"
+      },
+      "binarySha256": "b561cd362a056119fffbea33714d9fa890e107305cf90f959e961c8323f9fc47",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "The same native ordering task reached 74 percent of measured work. The row grew to include the percentage; toolbar controls stayed visible. Existing status tooltip was open in this capture. Native UI behavior and rendering evidence; no listening or frame-time measurements. Reduced Motion is read from the system and uses a static arc; that system setting was not changed for this capture."
+    },
+    "automix-loading-progress-late": {
+      "file": "automix-loading/progress-late.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:00:44.346772+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:58:58Z"
+      },
+      "binarySha256": "b561cd362a056119fffbea33714d9fa890e107305cf90f959e961c8323f9fc47",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "The ordering task completed and AUTO started playback. Spinner and preparation percentage disappeared, replaced by the live transition chip. Native UI behavior and rendering evidence; no listening or frame-time measurements. Reduced Motion is read from the system and uses a static arc; that system setting was not changed for this capture."
+    },
+    "automix-loading-second-playlist-start": {
+      "file": "automix-loading/second-playlist-start.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:01:26.538855+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:58:58Z"
+      },
+      "binarySha256": "b561cd362a056119fffbea33714d9fa890e107305cf90f959e961c8323f9fc47",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "A new 14-track DnB source showed analysis readiness 3/14 (21 percent), with a native animated arc and content-sized row. Native UI behavior and rendering evidence; no listening or frame-time measurements. Reduced Motion is read from the system and uses a static arc; that system setting was not changed for this capture."
+    },
+    "automix-loading-second-playlist-updated": {
+      "file": "automix-loading/second-playlist-updated.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:01:38.858353+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T08:58:58Z"
+      },
+      "binarySha256": "b561cd362a056119fffbea33714d9fa890e107305cf90f959e961c8323f9fc47",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Analysis and ordering completed, then loading the incoming track kept the animated arc without a fabricated percentage. The row contracted for its shorter content. AUTO was stopped, both decks paused and the original MUG selection restored after verification. Native UI behavior and rendering evidence; no listening or frame-time measurements. Reduced Motion is read from the system and uses a static arc; that system setting was not changed for this capture."
+    },
+    "automix-preview-stability-planning": {
+      "file": "automix-preview-stability/planning.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:14:13.546169+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:12:25Z"
+      },
+      "binarySha256": "3ab973dedf227856a60ad849dacf45b84bba89499198e61992c1239075dbf912",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "AUTO measuring the best order at 32 percent while the previous playlist forecast remains visible. First session planning on the real 29-track MUG playlist. Native UI state and rendering evidence only; no listening or frame-time measurements. Controlled regression tests cover retained previews during execution-cache invalidation, obsolete worker results, delayed UI state and superseded transition edges."
+    },
+    "automix-preview-stability-committed": {
+      "file": "automix-preview-stability/committed.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:15:06.989882+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:12:25Z"
+      },
+      "binarySha256": "3ab973dedf227856a60ad849dacf45b84bba89499198e61992c1239075dbf912",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "BEST playback with the committed Ghost Voices OUT and Platinum IN. Both markers come from the same preparation snapshot. Native UI state and rendering evidence only; no listening or frame-time measurements. Controlled regression tests cover retained previews during execution-cache invalidation, obsolete worker results, delayed UI state and superseded transition edges."
+    },
+    "automix-preview-stability-replanned-order": {
+      "file": "automix-preview-stability/replanned-order.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:16:22.491497+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:12:25Z"
+      },
+      "binarySha256": "3ab973dedf227856a60ad849dacf45b84bba89499198e61992c1239075dbf912",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "After switching BEST to ORDER, the replanned playlist forecast shows IN and OUT on the matching track rows. The current live incoming track was replaced with EON BREAK. Native UI state and rendering evidence only; no listening or frame-time measurements. Controlled regression tests cover retained previews during execution-cache invalidation, obsolete worker results, delayed UI state and superseded transition edges."
+    },
+    "automix-preview-stability-replanned-best": {
+      "file": "automix-preview-stability/replanned-best.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:17:01.348227+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:12:25Z"
+      },
+      "binarySha256": "3ab973dedf227856a60ad849dacf45b84bba89499198e61992c1239075dbf912",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "After returning through SHUFFLE to BEST, the newly committed Ghost Voices to Platinum transition is running; its OUT and IN remain attached to the matching rows. AUTO was stopped and both decks paused after validation, with the original MUG playlist selected. Native UI state and rendering evidence only; no listening or frame-time measurements. Controlled regression tests cover retained previews during execution-cache invalidation, obsolete worker results, delayed UI state and superseded transition edges."
+    },
+    "library-export-menu": {
+      "file": "library-export/menu.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:37:11.825405+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:36:27Z"
+      },
+      "binarySha256": "fb83615d7295bcad23b027329c05d79536cba547918cad118a8ab7215c63a65e",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Library heading context menu opened by a native right-click; Enter opens the export dialog. Native rendering and interaction evidence; no listening or frame-time measurements. Save and update file choosers were opened and cancelled. Package serialization is covered by existing workspace tests; no user library package was written during UI validation."
+    },
+    "library-export-export-all": {
+      "file": "library-export/export-all.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:38:18.545425+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:36:27Z"
+      },
+      "binarySha256": "fb83615d7295bcad23b027329c05d79536cba547918cad118a8ab7215c63a65e",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Separate export dialog with the entire library selected and vector disclosure, source, checkbox and close controls. Native rendering and interaction evidence; no listening or frame-time measurements. Save and update file choosers were opened and cancelled. Package serialization is covered by existing workspace tests; no user library package was written during UI validation."
+    },
+    "library-export-empty-selection": {
+      "file": "library-export/empty-selection.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:37:23.998080+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:36:27Z"
+      },
+      "binarySha256": "fb83615d7295bcad23b027329c05d79536cba547918cad118a8ab7215c63a65e",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Tab navigation and a full native Space press/release deselect the entire library once. Export and update buttons are disabled with no selection. Native rendering and interaction evidence; no listening or frame-time measurements. Save and update file choosers were opened and cancelled. Package serialization is covered by existing workspace tests; no user library package was written during UI validation."
+    },
+    "library-export-partial-collapsed": {
+      "file": "library-export/partial-collapsed.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:37:52.348415+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:36:27Z"
+      },
+      "binarySha256": "fb83615d7295bcad23b027329c05d79536cba547918cad118a8ab7215c63a65e",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "One playlist excluded while other selections remain; root and playlist group are mixed, local folders collapsed. Native rendering and interaction evidence; no listening or frame-time measurements. Save and update file choosers were opened and cancelled. Package serialization is covered by existing workspace tests; no user library package was written during UI validation."
+    },
+    "library-export-import-only": {
+      "file": "library-export/import-only.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:38:16.471296+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:36:27Z"
+      },
+      "binarySha256": "fb83615d7295bcad23b027329c05d79536cba547918cad118a8ab7215c63a65e",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Import music dialog contains local audio, Spotify and portable package import; export selection and actions are absent. Native rendering and interaction evidence; no listening or frame-time measurements. Save and update file choosers were opened and cancelled. Package serialization is covered by existing workspace tests; no user library package was written during UI validation."
+    },
+    "popup-motion-master-mixer": {
+      "file": "popup-motion/master-mixer.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:49:44.252353+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:48:33Z"
+      },
+      "binarySha256": "17af2e386fb55b55f5abd02233d490d46073ffecf4e7591c2f058a9187bcd12f",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Master mixer with the entire help/reset footer removed. Opened from MASTER and dismissed with Escape. Native static rendering and interaction evidence. Shared popup timing, reversal, retained dismissal content, reduced-motion behavior and click shielding are covered by automated tests. No native frame-time or listening measurements; system file dialogs and standalone native window transitions remain OS managed."
+    },
+    "popup-motion-export": {
+      "file": "popup-motion/export.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T09:50:02.633036+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:48:33Z"
+      },
+      "binarySha256": "17af2e386fb55b55f5abd02233d490d46073ffecf4e7591c2f058a9187bcd12f",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Library context menu opens the independent export dialog; closed with its icon button, then Import music was opened and dismissed with Escape. Native static rendering and interaction evidence. Shared popup timing, reversal, retained dismissal content, reduced-motion behavior and click shielding are covered by automated tests. No native frame-time or listening measurements; system file dialogs and standalone native window transitions remain OS managed."
+    },
+    "popup-motion-preferences-confirm": {
+      "file": "popup-motion/preferences-confirm.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-17T09:51:08.011543+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:48:33Z"
+      },
+      "binarySha256": "17af2e386fb55b55f5abd02233d490d46073ffecf4e7591c2f058a9187bcd12f",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Preferences reset confirmation opened and cancelled without resetting settings. Native static rendering and interaction evidence. Shared popup timing, reversal, retained dismissal content, reduced-motion behavior and click shielding are covered by automated tests. No native frame-time or listening measurements; system file dialogs and standalone native window transitions remain OS managed."
+    },
+    "popup-motion-preferences-menu": {
+      "file": "popup-motion/preferences-menu.jpg",
+      "width": 1880,
+      "height": 1640,
+      "capturedAt": "2026-10-17T09:51:25.535457+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-7-g72b14ae-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T09:48:33Z"
+      },
+      "binarySha256": "17af2e386fb55b55f5abd02233d490d46073ffecf4e7591c2f058a9187bcd12f",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "External Headphones",
+      "scope": "Audio buffer dropdown stays anchored above its trigger and closes with Escape without applying changes. Native static rendering and interaction evidence. Shared popup timing, reversal, retained dismissal content, reduced-motion behavior and click shielding are covered by automated tests. No native frame-time or listening measurements; system file dialogs and standalone native window transitions remain OS managed."
     }
   }
 }

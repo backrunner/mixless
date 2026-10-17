@@ -141,6 +141,7 @@ impl Engine {
             xf_reverse: AtomicBool::new(false),
             master: AtomicU32::new(800),
             master_gain_centi: AtomicU32::new(1200),
+            master_chain: master::MasterShared::new(),
             master_level: std::array::from_fn(|_| AtomicU32::new(0)),
             recorder: recording::Recorder::default(),
             cue_mix: AtomicU32::new(0),

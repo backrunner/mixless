@@ -1,7 +1,7 @@
 //! Plan every adjacent pair of a playlist the way desktop AUTO does and
 //! summarize how often the result is a boundary cut or a played-out track.
 //! cargo run -p mixless-mixplan --features trace --example automix-audit -- ANALYSES.json [--stems] [--summary] [--best]
-use mixless_mixplan::{short_handoff, PlanContext, Planner, PlannerOptions};
+use mixless_mixplan::{PlanContext, Planner, PlannerOptions, short_handoff};
 use mixless_protocol::{MixPlan, PerformanceOffset, TrackAnalysis};
 use std::error::Error;
 
@@ -16,14 +16,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut tracks: Vec<TrackAnalysis> = serde_json::from_slice(&std::fs::read(path)?)?;
     if args.iter().any(|a| a == "--best") {
         let refs: Vec<_> = tracks.iter().collect();
-        let order = mixless_mixplan::order::best_order(&refs, Some(0));
+        let order = mixless_mixplan::order::best_cycle(
+            &refs,
+            &PlannerOptions {
+                harmonic_key_shift: true,
+                stem_playback: stems,
+                ..Default::default()
+            },
+        );
+        if let Ok(out) = std::env::var("AUDIT_ORDER_OUT") {
+            std::fs::write(out, serde_json::to_vec(&order)?)?;
+        }
         tracks = order.into_iter().map(|i| tracks[i].clone()).collect();
     }
     let (mut cuts, mut played_out, mut fallbacks, mut overlaps, mut bars) = (0, 0, 0, 0, 0u32);
     let mut offset = PerformanceOffset::identity();
     let mut entry = 0.;
+    // Like the app: a track cannot start leaving before its own entrance has
+    // finished, plus one second of staging.
+    let mut earliest = 0f32;
     let mut sites = std::collections::BTreeMap::<&str, u32>::new();
     let mut pair_data = Vec::new();
+    let mut plans = Vec::new();
     for (i, pair) in tracks.windows(2).enumerate() {
         let (a, b) = (&pair[0], &pair[1]);
         let ctx = PlanContext {
@@ -37,6 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let planner = Planner::with_options(PlannerOptions {
             harmonic_key_shift: true,
             outgoing_entry_sec: entry,
+            earliest_outgoing_sec: earliest,
             stem_playback: stems,
             ..Default::default()
         });
@@ -44,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let rejected = mixless_mixplan::trace::take();
         let fallback = plan.failure_reason.is_some();
         if fallback {
-            plan = short_handoff(&ctx, 0.);
+            plan = short_handoff(&ctx, earliest);
         }
         let summary = describe(&plan);
         // Reaching the last 8% (or 8 s) of A without a real overlap is playing
@@ -52,6 +67,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         let length = plan.summary.as_ref().map_or(0, |s| s.length_bars);
         let terminal =
             plan.t_out_a >= (a.duration_sec * 0.92).min(a.duration_sec - 8.) && length < 4;
+        // The engine accepts a zero-bar plan only as a boundary cut.
+        if plan.summary.as_ref().is_some_and(|s| {
+            s.length_bars == 0
+                && !matches!(
+                    s.strategy,
+                    mixless_protocol::StrategyId::DryCut | mixless_protocol::StrategyId::DropCut
+                )
+        }) {
+            eprintln!(
+                "pair {i}: zero-bar plan that is not a cut: {:?}",
+                plan.summary
+            );
+        }
+        plans.push(plan.clone());
         cuts += (length == 0) as u32;
         played_out += terminal as u32;
         fallbacks += fallback as u32;
@@ -73,6 +102,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if quiet {
             offset = plan.incoming_offset_end;
             entry = plan.t_in_b;
+            earliest = plan.t_end_b + plan.incoming_offset_end.rate;
             continue;
         }
         println!(
@@ -94,8 +124,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         offset = plan.incoming_offset_end;
         entry = plan.t_in_b;
+        earliest = plan.t_end_b + plan.incoming_offset_end.rate;
     }
 
+    if let Ok(out) = std::env::var("AUDIT_PLANS_OUT") {
+        std::fs::write(out, serde_json::to_vec(&plans)?)?;
+    }
     if json_out {
         let output = serde_json::json!({
             "pairs": pair_data,
@@ -127,9 +161,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn describe(plan: &MixPlan) -> String {
     match &plan.summary {
-        Some(s) => format!("{:?}/{:?}", plan.transition_mode, s.strategy)
-            .replace("Some(", "")
-            .replace(')', ""),
+        Some(s) => format!(
+            "{:?}/{:?}{}",
+            plan.transition_mode,
+            s.strategy,
+            plan.send_fx
+                .map_or(String::new(), |fx| format!("+{:?}", fx.kind))
+        )
+        .replace("Some(", "")
+        .replace(')', ""),
         None => plan.failure_reason.clone().unwrap_or_default(),
     }
 }

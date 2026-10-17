@@ -474,10 +474,11 @@ fn transcribed_progression_changes_matching_with_pitch_offset_and_rejects_corrup
     assert!(crate::progression::tension(&a, &b, &source, &source, 8., 1., 0.) < 0.01);
     b.stems.as_mut().unwrap().frames[3].rms[0] = f32::NAN;
     let plan = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
-    assert!(plan
-        .failure_reason
-        .as_deref()
-        .is_some_and(|e| e.contains("stem")));
+    assert!(
+        plan.failure_reason
+            .as_deref()
+            .is_some_and(|e| e.contains("stem"))
+    );
 }
 
 #[test]
@@ -611,4 +612,128 @@ fn a_vocal_stem_exchange_releases_the_incoming_mid_cut_only_with_stem_playback()
         vocal.sample(1.)
     );
     assert!(plan.requires_stems);
+}
+
+#[test]
+fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
+    let make = |vocal_a: f32| {
+        let mut a = with_stems(crate::tests::track(
+            1,
+            128.,
+            "8A",
+            SectionLabel::Outro,
+            64,
+            0.9,
+            0.3,
+        ));
+        let mut b = with_stems(crate::tests::track(
+            2,
+            128.,
+            "8A",
+            SectionLabel::Intro,
+            64,
+            0.9,
+            0.3,
+        ));
+        for f in &mut a.stems.as_mut().unwrap().frames {
+            f.vocal_activity = vocal_a;
+        }
+        for f in &mut b.stems.as_mut().unwrap().frames {
+            f.vocal_activity = 0.;
+        }
+        for bar in a.bars.iter_mut().chain(&mut b.bars) {
+            bar.vocal_presence = 0.1;
+        }
+        (a, b)
+    };
+    let planner = Planner::with_options(PlannerOptions {
+        stem_playback: true,
+        ..Default::default()
+    });
+    let (a, b) = make(0.);
+    let p = planner.plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    let summary = p.summary.as_ref().expect("plan");
+    assert_eq!(summary.strategy, StrategyId::StemSwap, "{:?}", p.stages);
+    let n = summary.length_bars as f32;
+    let stems = p.stem_mix.as_ref().unwrap();
+    let (d, ba) = (StemKind::Drums.index(), StemKind::Bass.index());
+    let handoff = p.handoff_bar.unwrap();
+    // One kit at a time apart from a one-bar join, one bass at a time.
+    let mut both_kits = 0;
+    for i in 0..=256 {
+        let u = n * i as f32 / 256.;
+        if stems.outgoing[d].sample(u) > 0.5 && stems.incoming[d].sample(u) > 0.5 {
+            both_kits += 1;
+        }
+        assert!(stems.outgoing[ba].sample(u) + stems.incoming[ba].sample(u) <= 1.01 + 0.5);
+    }
+    assert!(
+        (both_kits as f32) < 256. / n * 1.5,
+        "kits overlap {both_kits} steps"
+    );
+    assert!(stems.outgoing[ba].sample(handoff - 0.1) > 0.9);
+    assert!(stems.incoming[ba].sample(handoff + 0.3) > 0.9);
+    for stem in 0..4 {
+        assert_eq!(
+            stems.incoming[stem].nodes.last().unwrap().1,
+            1.,
+            "B ends complete"
+        );
+        // Stem gains hold after the plan, so every move lands inside it.
+        assert!(stems.incoming[stem].sample(n) > 0.99, "stem {stem} late in");
+        assert!(
+            stems.outgoing[stem].sample(n) < 0.01,
+            "stem {stem} late out"
+        );
+    }
+    assert!(p.requires_stems);
+
+    // A voice that never breathes is never cut by a swap.
+    let (a, b) = make(1.);
+    let p = planner.plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(!matches!(
+        p.summary.as_ref().map(|s| s.strategy),
+        Some(StrategyId::StemSwap | StrategyId::VocalRide)
+    ));
+
+    // A sung outro over a voiceless intro keeps the voice until its breath.
+    let (mut a, b) = make(1.);
+    let breath = 60. * 240. / 128.;
+    for f in &mut a.stems.as_mut().unwrap().frames {
+        if (f.start_sec - breath).abs() < 0.3 {
+            f.vocal_activity = 0.;
+        }
+    }
+    let p = planner.plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert_eq!(
+        p.summary.as_ref().map(|s| s.strategy),
+        Some(StrategyId::VocalRide)
+    );
+    {
+        let stems = p.stem_mix.as_ref().unwrap();
+        let v = StemKind::Vocals.index();
+        let n = p.summary.as_ref().unwrap().length_bars as f32;
+        let handoff = p.handoff_bar.unwrap();
+        // Over the incoming instrumental the outgoing voice is still up,
+        // the outgoing instruments are not, and the incoming voice waits.
+        let u = handoff + 2.5;
+        assert!(u < n - 1.);
+        {
+            assert!(stems.outgoing[v].sample(u) > 0.9);
+            assert!(stems.outgoing[StemKind::Instruments.index()].sample(u) < 0.1);
+            assert!(stems.incoming[v].sample(u) < 0.1);
+            assert!(p.lanes.gain_a.sample(u) > -1.);
+            assert!(p.lanes.gain_a.sample(n) <= -90., "the outgoing deck closes");
+            assert!(p.lanes.xfader.sample(u) < 0.6, "fader held for the voice");
+            assert!(
+                stems.outgoing[v].sample(n - 0.01) < 0.01,
+                "voice gone in time"
+            );
+            assert_eq!(
+                p.send_fx.map(|fx| fx.kind),
+                Some(mixless_protocol::FxKind::LowCutEcho),
+                "the last word is thrown"
+            );
+        }
+    }
 }

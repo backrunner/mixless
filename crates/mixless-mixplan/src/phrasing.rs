@@ -43,9 +43,11 @@ mod tests {
                     novelty,
                 }];
                 assert!(!exit_boundary(&t, interior));
-                assert!(!points(&t, &[], true, 0.)
-                    .iter()
-                    .any(|p| (Grid(&t).sec(*p) - interior).abs() < 0.08));
+                assert!(
+                    !points(&t, &[], true, 0.)
+                        .iter()
+                        .any(|p| (Grid(&t).sec(*p) - interior).abs() < 0.08)
+                );
             }
             for novelty in [0.16, 0.3, 0.8] {
                 t.phrase_boundaries[0].novelty = novelty;
@@ -56,6 +58,19 @@ mod tests {
             assert!(!exit_boundary(&t, interior));
         }
     }
+}
+
+/// A sung line that runs to a measured release is a musical ending. In the
+/// middle of a section it is still a place the voice finishes, so it is a
+/// legitimate exit and the point a long vocal carry hands the floor over on.
+pub(crate) fn vocal_release(t: &TrackAnalysis, sec: f32) -> bool {
+    let g = Grid(t);
+    // The end of the file stops a voice; it is not the voice finishing.
+    if sec >= t.duration_sec - 0.5 || !crate::continuity::voice_released(t, sec) {
+        return false;
+    }
+    let lookback = g.sec((g.beat(sec) - g.meter()).max(0.));
+    crate::continuity::voice_active(t, lookback) > 0.35
 }
 
 pub(crate) fn boundary_quality(t: &TrackAnalysis, sec: f32) -> f32 {
@@ -177,13 +192,33 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
     }
     let manual = crate::cue_policy::auto_anchors(t, cues, out);
     result.extend(&manual);
+    // Where a sung line finishes is a musical ending even inside a section.
+    // A long carry hands the floor over there, so it must be a candidate.
+    let mut vocal_ends = vec![];
+    if out && t.stems.is_some() {
+        for (_, phrase_end) in crate::vocals::phrases(t) {
+            // A phrase ends at the last bar that still had a voice, so that
+            // bar line is usually still mid-syllable and the release sits a
+            // little after it. Walk to the first downbeat the voice has
+            // actually let go on — where a long carry can take the floor.
+            let mut beat = g.ceil_bar(phrase_end);
+            let limit = beat + 4. * g.meter();
+            while beat < limit && !crate::continuity::voice_released(t, g.sec(beat)) {
+                beat += g.meter();
+            }
+            if g.sec(beat) >= earliest && g.sec(beat) <= audible_end + 0.001 {
+                vocal_ends.push(beat);
+                result.push(beat);
+            }
+        }
+    }
     result.retain(|b| {
         let is_manual = manual.iter().any(|m| (*m - *b).abs() < 0.01);
         let sec = g.sec(*b);
         b.is_finite()
             && sec >= 0.
             && sec <= audible_end + 0.001
-            && (!out || is_manual || exit_boundary(t, sec))
+            && (!out || is_manual || exit_boundary(t, sec) || vocal_release(t, sec))
             && if out {
                 sec + 0.001 >= earliest && (is_manual || sec >= (t.duration_sec * 0.25).min(60.))
             } else {
@@ -284,6 +319,14 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             .collect()
     };
     unique.truncate(8);
+    // A vocal release is exactly where the merit score is worst (a sounding
+    // voice is penalized), so keep it out of the truncation: it is the point
+    // a long carry hands over on, and it is not replaceable by a louder one.
+    for beat in vocal_ends {
+        if !unique.contains(&beat) {
+            unique.push(beat);
+        }
+    }
     for beat in window_points.into_iter().chain(rhythm_entries) {
         if (!out || exit_boundary(t, g.sec(beat))) && !unique.contains(&beat) {
             unique.push(beat);

@@ -27,9 +27,27 @@ impl UiState {
             })
             .child(
                 gpui::div()
-                    .text_size(px(7.))
-                    .text_color(theme::MUTED)
-                    .child("MASTER"),
+                    .id("master-mixer-open")
+                    .debug_selector(|| "master-mixer-open".into())
+                    .cursor_pointer()
+                    .py_2()
+                    .pr_1()
+                    .text_size(px(9.))
+                    .text_color(if self.master_mixer.open {
+                        theme::ACCENT
+                    } else {
+                        theme::TEXT
+                    })
+                    .child("MASTER")
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|s, _, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            s.open_master_mixer();
+                            cx.notify();
+                        }),
+                    ),
             );
         for (ctl, value, min, max, label, readout_width, readout) in [
             (

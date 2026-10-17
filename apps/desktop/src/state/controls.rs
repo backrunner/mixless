@@ -1,5 +1,6 @@
 //! Mixer control values, resets and drag gestures.
 use super::*;
+mod navigation;
 
 impl UiState {
     pub fn reset_knob(&mut self, ctl: KnobCtl) {
@@ -7,6 +8,7 @@ impl UiState {
             KnobCtl::Stem(_, _) => 1.,
             KnobCtl::Master => 0.8,
             KnobCtl::MasterGain => 0.0,
+            KnobCtl::MasterProcessor(p) => p.value(Default::default()),
             KnobCtl::Key(_) => 0.0,
             KnobCtl::Trim(_) | KnobCtl::Gain(_) => 0.0,
             KnobCtl::Balance(_) => 0.0,
@@ -19,6 +21,7 @@ impl UiState {
             }
         };
         self.set_knob_value(ctl, value);
+        self.save_master_chain();
     }
 
     pub fn reset_fader(&mut self, ctl: FaderCtl) {
@@ -74,8 +77,8 @@ impl UiState {
     }
 
     /// Begin a jog scrub. The platter bounds give the drag center; the
-    /// revolution rate (33⅓ rpm → 1.8 s per revolution) makes one full
-    /// circular gesture scrub exactly 1.8 s of audio, matching the marker.
+    /// default revolution rate is 33⅓ rpm (1.8 s per turn), scaled by
+    /// the saved mouse sensitivity. Hardware jogs retain their calibration.
     pub fn begin_jog(&mut self, deck: DeckId, x: f32, y: f32, bounds: Bounds<Pixels>) {
         self.end_drag();
         if self.deck(deck).frames == 0 {
@@ -112,7 +115,7 @@ impl UiState {
             last_angle,
             last_y: y,
             dead_radius,
-            frames_per_rev: sr as f64 * 1.8,
+            frames_per_rev: sr as f64 * 1.8 * self.core.settings.get().jog_sensitivity as f64,
         });
     }
 
@@ -137,6 +140,10 @@ impl UiState {
 
     pub fn drag_move(&mut self, x: f32, y: f32) {
         match self.drag.take() {
+            Some(DragCtl::MasterEq { band, bounds }) => {
+                self.drag_master_eq(band, bounds, x, y);
+                self.drag = Some(DragCtl::MasterEq { band, bounds });
+            }
             Some(DragCtl::Knob {
                 ctl,
                 start_y,
@@ -253,13 +260,23 @@ impl UiState {
                     last_pos,
                 });
             }
+            Some(DragCtl::Progress { deck, mut drag }) => {
+                let position = drag.update(x, y);
+                self.seek_progress(deck, position);
+                self.drag = Some(DragCtl::Progress { deck, drag });
+            }
             None => {}
         }
     }
 
     pub fn end_drag(&mut self) {
+        self.end_wheel_scrub();
+        self.save_master_chain();
         self.pending_drag = None;
-        if let Some(DragCtl::Jog { deck, .. } | DragCtl::Wave { deck, .. }) = self.drag.take() {
+        if let Some(
+            DragCtl::Jog { deck, .. } | DragCtl::Wave { deck, .. } | DragCtl::Progress { deck, .. },
+        ) = self.drag.take()
+        {
             self.dispatch(Command::SetJogTouch {
                 deck,
                 touching: false,
@@ -272,6 +289,7 @@ impl UiState {
             KnobCtl::Stem(d, stem) => self.deck(d).stem_gain[stem.index()],
             KnobCtl::Master => self.snapshot.master,
             KnobCtl::MasterGain => self.snapshot.master_gain_db,
+            KnobCtl::MasterProcessor(p) => p.value(self.snapshot.master_chain),
             KnobCtl::Key(d) => self.deck(d).pitch_semitones,
             KnobCtl::Trim(d) => self.deck(d).gain_db,
             KnobCtl::Gain(d) => self.deck(d).effective_limiter_gain_db(),
@@ -293,6 +311,7 @@ impl UiState {
             }),
             KnobCtl::Master => self.dispatch(Command::SetMaster { value: v }),
             KnobCtl::MasterGain => self.dispatch(Command::SetMasterGain { db: v }),
+            KnobCtl::MasterProcessor(p) => self.set_master_param(p, v),
             KnobCtl::Key(d) => self.dispatch(Command::SetPitchSemitones {
                 deck: d,
                 semitones: v,

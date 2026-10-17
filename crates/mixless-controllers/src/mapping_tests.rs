@@ -375,11 +375,13 @@ fn invalid_slots_and_relative_buttons_are_rejected() {
     ] {
         assert!(validate(&cc(target, MidiControlMode::Auto)).is_err());
     }
-    assert!(validate(&cc(
-        MidiTarget::Play { deck: DeckId::A },
-        MidiControlMode::RelativeSignedBit
-    ))
-    .is_err());
+    assert!(
+        validate(&cc(
+            MidiTarget::Play { deck: DeckId::A },
+            MidiControlMode::RelativeSignedBit
+        ))
+        .is_err()
+    );
 }
 
 #[test]
@@ -432,4 +434,27 @@ fn legacy_helper_respects_direction_and_does_not_alias_pitch_bend_to_cc() {
     );
     b.set_address(MidiAddress::PitchBend { channel: 2 });
     assert!(resolve(&[b], "port", &[0xb2, 0, 127]).is_none());
+}
+
+#[test]
+fn progress_ring_position_and_time_display_are_distinct_midi_targets() {
+    for deck in [DeckId::A, DeckId::B] {
+        assert!(MidiTarget::all().contains(&MidiTarget::Position { deck }));
+        assert!(MidiTarget::all().contains(&MidiTarget::TimeDisplay { deck }));
+        let mut snapshot = mixless_protocol::EngineSnapshot::default();
+        snapshot.decks[deck.index()].frames = 192_001;
+        for (value, frame) in [(0., 0), (0.25, 48_000), (1., 192_000)] {
+            assert!(
+                matches!(MidiAction { target: MidiTarget::Position { deck }, value: MidiValue::Normalized(value) }.command(&snapshot), Some(Command::Seek { frame: actual, .. }) if actual == frame)
+            );
+        }
+        assert!(
+            MidiAction {
+                target: MidiTarget::TimeDisplay { deck },
+                value: MidiValue::Press
+            }
+            .command(&snapshot)
+            .is_none()
+        );
+    }
 }

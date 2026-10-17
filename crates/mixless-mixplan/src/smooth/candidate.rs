@@ -10,9 +10,17 @@ pub(super) fn pair(
     length: u16,
     minimum_score: f32,
 ) -> Option<MixPlan> {
-    direct(ctx, options, out, input, mode, length, minimum_score).or_else(|| {
-        super::preparation::candidate(ctx, options, out, input, mode, length, minimum_score)
-    })
+    let plain =
+        direct(ctx, options, out, input, mode, length, minimum_score, false).or_else(|| {
+            super::preparation::candidate(ctx, options, out, input, mode, length, minimum_score)
+        });
+    // A vocal carry is judged as its own candidate over the same window, so
+    // a bed that cannot carry the voice still leaves the ordinary blend.
+    let floor = plain
+        .as_ref()
+        .and_then(|p| p.summary.as_ref())
+        .map_or(minimum_score, |s| s.score.max(minimum_score));
+    direct(ctx, options, out, input, mode, length, floor, true).or(plain)
 }
 
 pub(super) fn direct(
@@ -23,10 +31,12 @@ pub(super) fn direct(
     mode: TransitionMode,
     length: u16,
     minimum_score: f32,
+    ride: bool,
 ) -> Option<MixPlan> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
     let ga = Grid(a);
     let gb = Grid(b);
+    crate::trace::candidate(ga.sec(out), gb.sec(input), length, mode as u8);
     let outgoing_bpm = ga.bpm((out - 0.01).max(0.)) * ctx.offset_a.rate;
     let incoming_bpm = gb.bpm(input) * ctx.offset_b.rate;
     let ratio = outgoing_bpm / incoming_bpm;
@@ -57,7 +67,11 @@ pub(super) fn direct(
     if options.strategy == Some(S::DropCut) && (blend || loop_roll) {
         return miss!();
     }
-    if options.strategy == Some(S::Spinback) && (blend || loop_roll) {
+    let accent_strategy = matches!(
+        options.strategy,
+        Some(S::Spinback | S::TapeStop | S::BuildRoll)
+    );
+    if accent_strategy && (blend || loop_roll) {
         return miss!();
     }
     if options.strategy == Some(S::LoopOut) && !blend {
@@ -98,12 +112,36 @@ pub(super) fn direct(
     let start_beat = out - n * ga.meter();
     let start = ga.sec(start_beat);
     let end = ga.sec(out);
+    // A chopped vocal is rhythmic material: it may be cut through and
+    // entered over, unlike a sung line. Judged on measured note lengths.
+    let chop_a = crate::vocals::chops(a, start, end);
     // A short recovery need not fit the entire tempo migration. Keep A's
     // sounding clock and carry B's offset into the next pair instead of
     // rejecting a safe overlap until the outro. 1.875 is the maximum slope
     // of the quintic ease used by timing::prepare.
+    let explicit_out = user_range(ctx.cues_out, a.sample_rate).is_some();
+    // A vocal carry: the outgoing arrangement leaves but its sung line goes
+    // on over the incoming instrumental, and the fader comes down where the
+    // voice finishes. Both decks need aligned stems to separate the voice.
+    // The exit is the line's own release, so it may sit inside a section.
+    let carry = ride
+        && blend
+        && options.stem_playback
+        && options.strategy.is_none()
+        && a.stems.is_some()
+        && b.stems.is_some()
+        && !explicit_out
+        && n >= 8.
+        && crate::phrasing::vocal_release(a, end)
+        && crate::continuity::voice_active(a, (end - 8.).max(start)) > 0.35;
+    if ride && !carry {
+        return None;
+    }
     let hold = blend
         && (requested_hold
+            // The voice keeps the pulse it was sung to: A stays at its own
+            // tempo and B is matched underneath it.
+            || carry
             || options.strategy.is_none()
                 && crate::recovery::contains(a, start, end)
                 && 1.875 * correction.ln().abs() / ((end - start) / ctx.offset_a.rate).max(0.01)
@@ -191,11 +229,10 @@ pub(super) fn direct(
         false,
     ));
     let start_phrase = boundary_quality(a, start).max(crate::recovery::quality(a, start));
-    let explicit_out = user_range(ctx.cues_out, a.sample_rate).is_some();
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
     // Every technique finishes A at an evidenced phrase edge. Recovery
     // quality may authorize layering, never an internal exit, even with stems.
-    if !explicit_out && !crate::phrasing::exit_boundary(a, end) {
+    if !explicit_out && !carry && !crate::phrasing::exit_boundary(a, end) {
         return miss!();
     }
     // A recovery interval can support an overlap, but its internal downbeats
@@ -211,10 +248,21 @@ pub(super) fn direct(
     // A hard cut or FX bridge may only land where the outgoing voice has
     // released — singing up to the boundary is fine, sounding past it is not.
     // A user's own OUT cue stays authoritative.
-    if !blend && !loop_roll && !explicit_out && !crate::continuity::voice_released(a, end) {
+    // A chopped line needs no breath; only a sung one does.
+    if !blend
+        && !loop_roll
+        && !explicit_out
+        && !chop_a
+        && !crate::continuity::voice_released(a, end)
+    {
         return miss!();
     }
-    if !explicit_in && !crate::drops::entry_allowed(b, bin) {
+    // The incoming bed plays whole under a carried voice, so a carry may
+    // start inside a run the incoming track opens on, never a later peak.
+    if !explicit_in
+        && !crate::drops::entry_allowed(b, bin)
+        && !(carry && crate::drops::opening_peak(b, bin))
+    {
         return miss!();
     }
     if blend && explicit_out && (out - ga.floor_bar(end)).abs() > 0.01 {
@@ -222,17 +270,53 @@ pub(super) fn direct(
     }
     // A metrical downbeat is not automatically the beginning of a phrase.
     // Strong structural evidence takes precedence over the old fixed offsets.
-    if (!a.phrase_boundaries.is_empty() && !explicit_out && out_phrase < 0.5)
+    // A carry leaves A where its line ends, but B still starts its phrase.
+    if (!carry && !a.phrase_boundaries.is_empty() && !explicit_out && out_phrase < 0.5)
         || (!b.phrase_boundaries.is_empty() && !explicit_in && in_phrase < 0.5)
-        || (blend && !a.phrase_boundaries.is_empty() && !explicit_out && start_phrase < 0.5)
+        || (blend
+            && !carry
+            && !a.phrase_boundaries.is_empty()
+            && !explicit_out
+            && start_phrase < 0.5)
     {
         return miss!();
     }
+    // The outgoing side must still be sounding: leaving on A's own fade is a
+    // gap, not a transition, and the unmixed tail is what the gap sounds
+    // like. A quiet incoming intro is a legitimate entry, so only the
+    // outgoing bar is held to this floor.
+    // Compare against the track's usual level, not its average: a long quiet
+    // intro would drag an average down far enough to legalise ending the mix
+    // inside the outgoing track's own fade.
+    let floor = {
+        let mut levels: Vec<f32> = a
+            .bars
+            .iter()
+            .map(|bar| bar.rms)
+            .filter(|r| *r > 0.001)
+            .collect();
+        levels.sort_by(f32::total_cmp);
+        levels
+            .get((levels.len().saturating_sub(1)) * 4 / 5)
+            .copied()
+            .map_or(0., |usual| usual * 0.05)
+    };
     if feature(b, bin + 0.001).is_some_and(|bar| bar.rms <= 0.001)
         || feature(a, end - 0.001).is_some_and(|bar| bar.rms <= 0.001)
+        || (end < a.duration_sec - 0.5
+            && feature(a, end - 0.001).is_some_and(|bar| bar.rms < floor))
     {
         return miss!();
     }
+    // Exiting inside a measured silence is never a musical exit: the track
+    // has already stopped sounding, so anything after that point is a gap.
+    if end < a.duration_sec - 0.5
+        && feature(a, end - 0.001)
+            .is_some_and(|bar| bar.section == mixless_protocol::SectionLabel::Silence)
+    {
+        return miss!();
+    }
+
     if end > a.duration_sec + 0.001
         || (start < options.earliest_outgoing_sec && !boundary_only)
         || bin >= b.duration_sec
@@ -263,7 +347,46 @@ pub(super) fn direct(
         harmonic,
         explicit_in,
     )?;
-    let takeover = if blend || loop_roll { b_end } else { bin };
+    // The bed must carry the voice for the whole window, and the incoming
+    // voice must be able to come in on a breath where the line has gone.
+    let ride = if carry {
+        let fit = crate::ride::fit(a, b, &source_a, &source_b, n, harmonic).or_else(|| miss!())?;
+        let shape = crate::ride::shape(
+            a,
+            b,
+            &source_a,
+            &source_b,
+            n,
+            ((outgoing_bpm * factor) / incoming_bpm - 1.).abs() <= 0.08,
+        );
+        // The incoming voice comes back on a breath, or on a strong phrase
+        // line where it swells in rather than cutting in mid-word.
+        let back = source_b.sample(shape.voice_end.min(n));
+        if !crate::vocals::safe_entry(b, back) && boundary_quality(b, source_b.sample(n)) < 0.6 {
+            return miss!();
+        }
+        if !crate::drops::allows(
+            a,
+            start,
+            source_a.sample(shape.leave),
+            options.outgoing_entry_sec,
+            false,
+        ) {
+            return miss!();
+        }
+        Some((fit, shape))
+    } else {
+        None
+    };
+    // A bridge of several bars lets B establish itself underneath A, so the
+    // level that must carry on is B's where the bridge ends.
+    let takeover = if blend || loop_roll {
+        b_end
+    } else if n >= 2. {
+        gb.sec(input + n * gb.meter()).min(b.duration_sec - 0.1)
+    } else {
+        bin
+    };
     if !explicit_in && !crate::energy::handoff_supported(a, b, end, takeover) {
         return miss!();
     }
@@ -294,7 +417,8 @@ pub(super) fn direct(
     }
     // The incoming peak may resolve at the overlap's end or later; it must
     // never start underneath the blend and play filtered beneath A.
-    if (blend || loop_roll)
+    if !carry
+        && (blend || loop_roll)
         && !explicit_in
         && crate::drops::peaks(b)
             .iter()
@@ -368,6 +492,7 @@ pub(super) fn direct(
             < average_rms(a, start, end).unwrap_or(1.) * 0.6
             || feature(b, bin + 0.01).is_some_and(|f| f.kick_salience < 0.35));
     let filtered = blend
+        && !carry
         && !loop_out
         && (!harmonic || quiet_layer)
         && n >= 4.
@@ -380,6 +505,7 @@ pub(super) fn direct(
         return miss!();
     }
     let tonal_clash = blend
+        && !carry
         && !harmonic
         && !filtered
         && !percussion_only(a, start, end)
@@ -413,6 +539,7 @@ pub(super) fn direct(
     {
         return miss!();
     }
+    let chop_b = crate::vocals::chops(b, bin, b_end);
     let mut clash = 0.;
     let mut vocal_a = 0.;
     let mut vocal_b = 0.;
@@ -447,20 +574,17 @@ pub(super) fn direct(
             // Only compare the foregrounds at the actual bridge boundary.
             (end - (1. - t) * 60. / outgoing_bpm, bin + t * (b_end - bin))
         };
-        let va = feature(a, ta).map_or(1., |f| {
+        let level = |t: &TrackAnalysis, sec: f32| {
             if harmonic || filtered {
-                crate::vocals::risk(f)
+                feature(t, sec).map_or(1., crate::vocals::risk)
             } else {
-                f.vocal_presence
+                feature(t, sec).map_or(1., |f| f.vocal_presence)
             }
-        });
-        let vb = feature(b, tb).map_or(1., |f| {
-            if harmonic || filtered {
-                crate::vocals::risk(f)
-            } else {
-                f.vocal_presence
-            }
-        });
+        };
+        // A chop is foreground rhythm, not a lyric: it does not own the
+        // window the way a sung line does.
+        let va = if chop_a { 0. } else { level(a, ta) };
+        let vb = if chop_b { 0. } else { level(b, tb) };
         vocal_a += va / samples as f32;
         vocal_b += vb / samples as f32;
         if va > 0.5 && vb > 0.5 {
@@ -559,8 +683,21 @@ pub(super) fn direct(
             .any(|p| (p.0 - bin).abs() < 0.08)
         && feature(a, end - 0.01).is_some_and(|f| f.kick_salience >= 0.5 && f.vocal_presence < 0.5)
         && feature(b, bin + 0.01).is_some_and(|f| f.kick_salience >= 0.55)
-        && (options.strategy == Some(S::Spinback)
+        && (accent_strategy
             || (options.strategy.is_none() && options.live_moves == crate::LiveMoves::Active));
+    // A roll repeats the outgoing last bar's opening beat: it must be a
+    // driving, vocal-free beat inside a build or a drop.
+    let roll = spinback
+        && matches!(
+            sa,
+            mixless_protocol::SectionLabel::BuildUp | mixless_protocol::SectionLabel::Drop
+        )
+        && a.bars
+            .iter()
+            .filter(|bar| {
+                bar.end_sec > ga.sec(out - ga.meter()) + 0.01 && bar.start_sec < end - 0.01
+            })
+            .all(|bar| bar.kick_salience >= 0.55 && crate::vocals::risk(bar) < 0.35);
     if !explicit_out && crate::arrangement::breaks_build(a, end, b, if blend { b_end } else { bin })
     {
         return miss!();
@@ -635,6 +772,13 @@ pub(super) fn direct(
             scratch: scratch_cut,
             drop: drop_cut,
             spinback,
+            roll,
+            requested: match options.strategy {
+                Some(S::Spinback) => Some(Technique::Spinback),
+                Some(S::TapeStop) => Some(Technique::TapeStop),
+                Some(S::BuildRoll) => Some(Technique::BuildRoll),
+                _ => None,
+            },
             variety,
             grid_reliable: grid_reliable(a, start, end)
                 && grid_reliable(b, bin, (bin + 4. * 60. / incoming_bpm).min(b.duration_sec)),
@@ -648,18 +792,64 @@ pub(super) fn direct(
             outgoing_section: sa,
         })
     };
+    // A hard cut lands after the voice has rested, never on a word still
+    // sounding or just released, and never swaps one voice straight into
+    // another. A drop landing needs only a beat of rest; any other cut two.
+    let hard_cut = instant
+        || fx_decision.technique.accent()
+        || fx_decision.technique == Technique::DryCut && !blend;
+    // A cut into silence is a gap, not a cut.
+    if hard_cut && !explicit_in && crate::continuity::silent(b, bin, 0.5) {
+        return miss!();
+    }
+    // The song's own last moment is not a cut: nothing is left unsung.
+    if hard_cut && !explicit_out && end < a.duration_sec - 0.5 {
+        let beat = 60. / outgoing_bpm;
+        let rest = if fx_decision.technique.accent() {
+            beat
+        } else {
+            2. * beat
+        }
+        .max(0.5);
+        // Only measured voice evidence can time a breath; without it the
+        // coarse phrase rules above already decided.
+        let sung = |t: &TrackAnalysis, from: f32, to: f32| {
+            (t.stems.is_some() || !t.moments.is_empty())
+                && (0..=12)
+                    .map(|i| {
+                        crate::continuity::voice_active(t, from + (to - from) * i as f32 / 12.)
+                    })
+                    .fold(0., f32::max)
+                    > 0.35
+        };
+        if !chop_a && sung(a, end - rest, end - 0.1)
+            || (!fx_decision.technique.accent()
+                && sung(a, end - 2., end - 0.1)
+                && sung(b, bin + 0.02, bin + 1.))
+        {
+            return miss!();
+        }
+    }
     if !explicit_out
+        && !carry
         && !crate::drops::allows(
             a,
             start,
             end,
             options.outgoing_entry_sec,
-            filtered
-                || instant
-                || matches!(
-                    fx_decision.technique,
-                    Technique::DropCut | Technique::ScratchCut | Technique::Spinback
-                ),
+            filtered || instant || fx_decision.technique.accent(),
+        )
+    {
+        return miss!();
+    }
+    // Releasing A's build into B's drop only works on a shared beat; across
+    // a tempo gap the groove breaks at the moment of release. A transport
+    // accent stops A first, so the drop lands on silence instead.
+    if leaving_into_drop
+        && ((correction - 1.).abs() > 0.08 || ga.meter() != gb.meter())
+        && !matches!(
+            fx_decision.technique,
+            Technique::Spinback | Technique::TapeStop | Technique::ScratchCut
         )
     {
         return miss!();
@@ -669,15 +859,32 @@ pub(super) fn direct(
         || (options.strategy == Some(S::ScratchCut)
             && fx_decision.technique != Technique::ScratchCut)
         || (options.strategy == Some(S::Spinback) && fx_decision.technique != Technique::Spinback)
+        || (options.strategy == Some(S::TapeStop) && fx_decision.technique != Technique::TapeStop)
+        || (options.strategy == Some(S::BuildRoll) && fx_decision.technique != Technique::BuildRoll)
         || (options.strategy == Some(S::LoopOut) && !loop_out)
     {
         return miss!();
     }
-    let handoff = if filtered {
+    // An overlap that opens inside A's peak layers B underneath it, and the
+    // bass changes hands on the peak's last bar line, the way a DJ brings
+    // the next intro in over the last phrases of a drop. B must carry a beat
+    // there so the swap reveals a groove, not an empty intro.
+    let layered = (blend && !loop_out && !filtered && !explicit_out)
+        .then(|| peak_end_bar(a, &source_a, start, end, n))
+        .flatten()
+        .filter(|u| {
+            *u >= 2.
+                && feature(b, source_b.sample(*u) + 0.01).is_some_and(|f| f.kick_salience >= 0.35)
+        });
+    let handoff = if let Some((_, shape)) = &ride {
+        shape.leave
+    } else if filtered {
         n - 1.
     } else if blend {
         if loop_out {
             n / 2.
+        } else if let Some(u) = layered {
+            u
         } else {
             bass_handoff(a, b, &source_a, &source_b, n)?
         }
@@ -686,6 +893,19 @@ pub(super) fn direct(
     } else {
         start_b
     };
+    // Two tracks may share a peak, but the outgoing one keeps its weight
+    // until its own peak has finished: the bass changes hands after it.
+    // Nor does A open a new peak underneath B once it has handed over.
+    if (blend || loop_roll)
+        && !carry
+        && !explicit_out
+        && (crate::drops::inside_peak(a, source_a.sample(handoff))
+            || crate::drops::peaks(a)
+                .iter()
+                .any(|p| p.0 > source_a.sample(handoff) + 0.05 && p.0 < end - 0.05))
+    {
+        return miss!();
+    }
     let rms_a = if blend {
         average_rms(
             a,
@@ -729,7 +949,10 @@ pub(super) fn direct(
         clash,
         drop_cut,
         scratch_cut,
-        spinback: fx_decision.technique == Technique::Spinback,
+        spinback: matches!(
+            fx_decision.technique,
+            Technique::Spinback | Technique::TapeStop | Technique::BuildRoll
+        ),
         loop_out,
         stem_pair,
         fx_decision,
@@ -753,6 +976,9 @@ pub(super) fn direct(
         } else {
             0.
         };
+    // A carry lets the line finish instead of fading it under the next
+    // track, in proportion to how well the incoming bed carries it.
+    let score = score + ride.as_ref().map_or(0., |(fit, _)| 0.04 + 0.12 * fit);
     if score <= minimum_score {
         return miss!();
     }
@@ -813,6 +1039,7 @@ pub(super) fn direct(
             peak_bar,
             off_bar: n,
             accelerate: false,
+            brake: false,
         });
     }
     if fx_decision.technique == Technique::Spinback {
@@ -834,6 +1061,27 @@ pub(super) fn direct(
             peak_bar: n - 0.02,
             off_bar: n,
             accelerate: true,
+            brake: false,
+        });
+    }
+    if fx_decision.technique == Technique::TapeStop {
+        // The last half bar of A brakes evenly to a standstill just before
+        // B's downbeat; braking from unity covers half the normal distance.
+        let on_bar = (n - 0.5).max(0.);
+        let peak_bar = n - 0.02;
+        let start = source_a.sample(on_bar);
+        let travel = 0.5 * (source_a.sample(peak_bar) - start) * a.sample_rate as f32;
+        if travel <= 0. {
+            return miss!();
+        }
+        lanes.scratch_a = Some(ScratchOp {
+            start_src_frame: (start * a.sample_rate as f32).round().max(0.) as u64,
+            peak_delta_frames: travel.round() as i64,
+            on_bar,
+            peak_bar,
+            off_bar: n,
+            accelerate: false,
+            brake: true,
         });
     }
     // A never jumps on the first sample; B's pitch is set while inaudible and
@@ -867,6 +1115,8 @@ pub(super) fn direct(
                     Technique::ScratchCut => S::ScratchCut,
                     Technique::DropCut => S::DropCut,
                     Technique::Spinback => S::Spinback,
+                    Technique::TapeStop => S::TapeStop,
+                    Technique::BuildRoll => S::BuildRoll,
                     Technique::FilterBridge => S::FilterSweep,
                     _ => S::EchoOut,
                 }
@@ -874,10 +1124,7 @@ pub(super) fn direct(
             score,
             used_fallback: !blend
                 && !loop_roll
-                && !matches!(
-                    fx_decision.technique,
-                    Technique::DropCut | Technique::ScratchCut | Technique::Spinback
-                )
+                && !fx_decision.technique.accent()
                 && (fx_decision.technique != Technique::DryCut || fx_decision.confidence < 0.8),
             length_bars: n as u16,
         }),
@@ -903,7 +1150,29 @@ pub(super) fn direct(
         literal_half_double: false,
         failure_reason: None,
         requires_stems: false,
+        send_fx: None,
+        insert_a: None,
     };
+    // The shaped lanes hold the swap at unity per band; combined they can
+    // still dip or surge. Trim both decks so the master follows the level it
+    // starts and ends at, never by more than one clean boost.
+    crate::level::compensate(&mut plan, a, b);
+    // Two quiet sources under a full crossfade leave a hole no attenuation
+    // can fill, so a blend ending inside the outgoing track's own fade is
+    // only worth taking when some overlap really carries the level.
+    if (blend || loop_roll) && crate::level::worst_dip(&plan, a, b) > 9. {
+        return miss!();
+    }
+    crate::level::sanitize(&mut plan);
+    if fx_decision.technique == Technique::BuildRoll {
+        // Capture the first beat of A's last bar and roll it ever tighter
+        // into B's drop.
+        plan.insert_a = Some(mixless_protocol::InsertFx {
+            kind: mixless_protocol::FxKind::LoopRoll,
+            beats: 1.,
+            on_bar: (n - 1.).max(0.),
+        });
+    }
     if loop_out {
         plan.stages = vec![
             mixless_protocol::MixStage {
@@ -926,23 +1195,42 @@ pub(super) fn direct(
             crate::stem_mix::loop_out(&mut plan);
         }
     }
-    if mode == TransitionMode::PhraseBridge
-        && !instant
-        && !matches!(
-            fx_decision.technique,
-            Technique::DropCut | Technique::ScratchCut | Technique::Spinback
-        )
-    {
+    if mode == TransitionMode::PhraseBridge && !instant && !fx_decision.technique.accent() {
         crate::bridge::expand(&mut plan, ctx, fx_decision.technique, harmonic, stem_pair)
             .or_else(|| miss!())?;
     }
+    if let Some((_, shape)) = &ride {
+        let blend_plan = plan.clone();
+        crate::stem_mix::carry(&mut plan, shape, outgoing_bpm);
+        if !crate::stem_mix::swap_holds_level(&blend_plan, &plan, a, b, n) {
+            return miss!();
+        }
+        if let Some(summary) = plan.summary.as_mut() {
+            summary.strategy = S::VocalRide;
+        }
+    }
     if filtered {
         crate::filtered::arrange(&mut plan, a, b)?;
-    } else if !loop_out && !short_overlap && (blend || loop_roll || plan.incoming_start_bar == 0.) {
+    } else if !carry
+        && !loop_out
+        && !short_overlap
+        && (blend || loop_roll || plan.incoming_start_bar == 0.)
+    {
         crate::vocals::protect(&mut plan, a)?;
     }
+    // A cut away from an incoming drop may let the outgoing last beat ring
+    // out on a tail; that keeps its one-bar lead so the send can catch it.
+    let tail = instant
+        && !drop_cut
+        && plan.lanes.scratch_a.is_none()
+        && crate::send_fx::cut_tail(ctx, &mut plan, harmonic);
     // A scratch op needs its material: compacting would crop the pull bars.
-    if (instant || drop_cut) && plan.lanes.scratch_a.is_none() {
+    // Only a real cut is compacted; a bridge that ends on an incoming drop
+    // keeps its bars.
+    if (instant || fx_decision.technique == Technique::DropCut)
+        && plan.lanes.scratch_a.is_none()
+        && !tail
+    {
         crate::instant::compact(&mut plan);
     }
     if plan.t_in_a < options.earliest_outgoing_sec {
@@ -951,5 +1239,59 @@ pub(super) fn direct(
     if stem_layer && !loop_out {
         crate::stem_mix::layer(ctx, &mut plan, handoff);
     }
+    // With stems on a long harmonic blend, swap the parts on phrase lines
+    // instead of crossfading whole tracks: one kit, one bass, one voice.
+    if blend
+        && stem_pair
+        && harmonic
+        && !loop_out
+        && !filtered
+        && !stem_layer
+        && n >= 8.
+        && plan.stem_mix.is_none()
+    {
+        let drum_bar = crate::stem_mix::drum_bar(handoff)
+            .filter(|_| handoff + 2.25 <= n)
+            .filter(|bar| crate::stem_mix::swap_supported(&plan, a, b, *bar));
+        if let Some(drum_bar) = drum_bar {
+            let ride = crate::stem_mix::ride_supported(&plan, a, b, n)
+                .filter(|end| *end > handoff + 1. && *end <= n - 1.5);
+            let voice = crate::stem_mix::voice_points(&plan, a, b, ride.unwrap_or(handoff), n);
+            let swapped = voice.map(|voice| {
+                let mut swapped = plan.clone();
+                crate::stem_mix::swap(&mut swapped, handoff, drum_bar, voice, ride.is_some());
+                swapped
+            });
+            if let Some(swapped) =
+                swapped.filter(|swapped| crate::stem_mix::swap_holds_level(&plan, swapped, a, b, n))
+            {
+                plan = swapped;
+                if let Some(summary) = plan.summary.as_mut() {
+                    summary.strategy = if ride.is_some() {
+                        S::VocalRide
+                    } else {
+                        S::StemSwap
+                    };
+                }
+            }
+        }
+    }
     Some(plan)
+}
+
+/// The bar, within the overlap, on which an A peak that the overlap opens
+/// inside comes to its end.
+fn peak_end_bar(
+    a: &TrackAnalysis,
+    source_a: &Polyline,
+    start: f32,
+    end: f32,
+    n: f32,
+) -> Option<f32> {
+    let (_, peak_end) = crate::drops::peaks(a)
+        .into_iter()
+        .find(|p| p.0 < start - 0.05 && p.1 > start + 0.05 && p.1 <= end + 0.08)?;
+    (1..=n as usize)
+        .map(|bar| bar as f32)
+        .find(|u| (source_a.sample(*u) - peak_end).abs() < 0.08)
 }

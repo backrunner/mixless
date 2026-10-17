@@ -145,10 +145,13 @@ impl Evidence {
                     )));
         let position = (if recovery_overlap { 0.12 } else { 0. })
             - 0.03 * bin / b.duration_sec
+            // Each major peak skipped by a late entry is music never heard.
+            - 0.08 * crate::drops::skipped(b, bin) as f32
             - if explicit_out {
                 0.
             } else {
                 crate::drops::penalty(a, end, options.outgoing_entry_sec)
+                    + crate::drops::brief(a, end, options.outgoing_entry_sec)
             };
         // Phrase-compatible pairings are preferred even when BPM/key are equal.
         // The vocal rule is hard: a verse and a chorus with two foregrounds never
@@ -208,6 +211,34 @@ impl Evidence {
         } else {
             crate::energy::weakness(a, rms_a).min(crate::energy::weakness(b, rms_b))
         };
+        // A fading outgoing tail followed by an incoming track already at full
+        // level is an energy jump with no build to earn it. A cut that lands
+        // on an incoming drop, or a transport accent into one, has its build;
+        // every other handoff should meet the incoming track at a comparable
+        // intensity, so prefer an earlier or quieter entry.
+        let into_drop = drop_cut
+            || spinback
+            || crate::drops::peaks(b)
+                .iter()
+                .any(|p| (p.0 - bin).abs() < 0.08);
+        let surge = if blend || into_drop {
+            0.
+        } else {
+            let ga = crate::grid::Grid(a);
+            let earlier = crate::musical::average_rms(
+                a,
+                ga.sec((ga.beat(end) - 4. * ga.meter()).max(0.)),
+                ga.sec((ga.beat(end) - 2. * ga.meter()).max(0.)),
+            );
+            let falling = rms_a
+                .zip(earlier)
+                .is_some_and(|(late, early)| late < early * 0.6);
+            if falling {
+                crate::energy::weakness(a, rms_a) * (1. - crate::energy::weakness(b, rms_b))
+            } else {
+                0.
+            }
+        };
         let kick = match (feature(a, end - 0.01), feature(b, bin + 0.01)) {
             (Some(a), Some(b)) => 1. - (a.kick_salience - b.kick_salience).abs(),
             _ => 0.5,
@@ -228,6 +259,7 @@ impl Evidence {
             ((quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 + length_fit
                 - key_shift.abs() * 0.025
                 - quiet_pair * 0.25
+                - surge * 0.15
                 + if structural { 0.03 } else { 0. })
                 / 1.4)
                 .clamp(0., 1.);

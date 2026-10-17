@@ -40,12 +40,14 @@ fn limiter_gain_is_independent_of_trim_and_rejects_non_finite_values() {
     assert_eq!(snapshot.decks[1].limiter_gain_db, 0.0);
 
     for db in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-        assert!(engine
-            .dispatch(Command::SetDeckLimiterGain {
-                deck: DeckId::A,
-                db,
-            })
-            .is_err());
+        assert!(
+            engine
+                .dispatch(Command::SetDeckLimiterGain {
+                    deck: DeckId::A,
+                    db,
+                })
+                .is_err()
+        );
     }
     assert_eq!(engine.snapshot().decks[0].limiter_gain_db, 6.0);
     for (db, expected) in [(-100.0, -12.0), (100.0, 12.0)] {
@@ -220,4 +222,34 @@ fn replacing_source_clears_old_limiter_reduction_and_preserves_gain_setting() {
     for (replaced, fresh) in replaced[1024..].iter().zip(&fresh[1024..]) {
         assert!((replaced - fresh).abs() < 1e-5);
     }
+}
+
+#[test]
+fn master_chain_commands_are_atomic_and_meters_follow_actual_output() {
+    let engine = single_deck(0., 0., 1.);
+    let mut p = mixless_protocol::MasterChainSettings::default();
+    p.compressor.enabled = true;
+    p.compressor.threshold_db = -30.;
+    p.limiter.ceiling_db = -6.;
+    engine
+        .dispatch(Command::SetMasterChain { settings: p })
+        .unwrap();
+    engine.render_offline(48000);
+    let output = engine.render_offline(4096);
+    let snap = engine.snapshot();
+    assert_eq!(snap.master_chain, p);
+    assert!(snap.master_meters.compressor.reduction_db > 0.);
+    assert!(snap.master_meters.limiter.input[0] > 0.);
+    assert!(output.iter().all(|s| s.abs() <= 0.5011883));
+    let mut invalid = p;
+    invalid.eq[3].gain_db = f32::NAN;
+    assert!(
+        engine
+            .dispatch(Command::SetMasterChain { settings: invalid })
+            .is_err()
+    );
+    assert_eq!(engine.snapshot().master_chain, p);
+    // A busy host update must never block the callback.
+    let _settings = engine.shared.master_chain.settings.lock().unwrap();
+    assert!(engine.render_offline(256).iter().all(|v| v.is_finite()));
 }

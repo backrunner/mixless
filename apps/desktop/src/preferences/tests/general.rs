@@ -105,3 +105,37 @@ fn stem_storage_choices_fit_apply_and_persist(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+fn jog_sensitivity_fits_and_persists(cx: &mut TestAppContext) {
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, cx| {
+        s.tab = Tab::General;
+        cx.notify();
+    });
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let content = cx.debug_bounds("settings-content").unwrap();
+        let choice = cx.debug_bounds("jog-sensitivity-switcher").unwrap();
+        assert!(choice.left() >= content.left() && choice.right() <= content.right());
+        if choice.bottom() > content.bottom() {
+            scroll(
+                cx,
+                content.center(),
+                f32::from(content.bottom() - choice.bottom()) - 20.,
+            );
+        }
+        click(cx, "jog-sensitivity-3");
+        view.read_with(cx, |s, _| {
+            assert_eq!(s.core.settings.get().jog_sensitivity, 2.);
+            assert_eq!(
+                crate::settings::SettingsStore::load(s.core.settings.path.clone())
+                    .get()
+                    .jog_sensitivity,
+                2.
+            );
+        });
+        click(cx, "jog-sensitivity-2");
+    }
+}

@@ -6,6 +6,7 @@ use gpui::{IntoElement, Rgba, Styled, px};
 
 use crate::state::{UiState, WaveLayout};
 use crate::theme;
+mod automix;
 mod master;
 mod menu;
 pub(crate) use menu::BrandMenu;
@@ -58,8 +59,7 @@ fn led_chip(label: &str, on: bool, color: Rgba) -> gpui::Div {
 
 impl UiState {
     pub fn render_topbar(&self, width: f32, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
-        // Draggable titlebar filler on either side of the centered automix
-        // status; the chip itself never initiates a window drag.
+        // Keep the free titlebar area draggable and the AutoMix controls together.
         let drag_space = || {
             gpui::div()
                 .flex_1()
@@ -255,10 +255,6 @@ impl UiState {
                     .items_center()
                     .min_w_0()
                     .h_full()
-                    .child(drag_space())
-                    .when(self.automix_active, |el| {
-                        el.child(self.render_automix_chip())
-                    })
                     .child(drag_space()),
             )
             .child(
@@ -285,76 +281,26 @@ impl UiState {
                     })),
             )
             .child(
-                led_chip("AUTO", self.automix_active, theme::LED_GREEN)
-                    .id("automix-toggle")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        s.toggle_automix();
-                        cx.notify();
-                    })),
-            )
-            .child(
-                led_chip(
-                    if self
-                        .automix_shuffle
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
-                        "SHUFFLE ∞"
-                    } else if self.core.mix_preparation.best() {
-                        "BEST ∞"
-                    } else {
-                        "ORDER ∞"
-                    },
-                    self.automix_shuffle
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                        || self.core.mix_preparation.best(),
-                    theme::ACCENT,
-                )
-                .id("automix-order")
-                .cursor_pointer()
-                .on_click(cx.listener(|s, _, _, cx| {
-                    s.cycle_automix_order();
-                    cx.notify();
-                })),
-            )
-            .when(self.automix_active, |row| {
-                row.child(
-                    led_chip(
-                        if self.snapshot.automix_paused {
-                            "RESUME"
-                        } else {
-                            "PAUSE"
-                        },
-                        self.snapshot.automix_paused,
-                        theme::LED_GREEN,
+                gpui::div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        led_chip("AUTO", self.automix_active, theme::LED_GREEN)
+                            .id("automix-toggle")
+                            .debug_selector(|| "automix-toggle".into())
+                            .cursor_pointer()
+                            .on_click(cx.listener(|s, _, _, cx| {
+                                s.toggle_automix();
+                                cx.notify();
+                            })),
                     )
-                    .id("automix-pause")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        if !s.snapshot.automix_on {
-                            return;
-                        }
-                        s.dispatch(if s.snapshot.automix_paused {
-                            mixless_protocol::Command::ResumeAutomix
-                        } else {
-                            mixless_protocol::Command::PauseAutomix
-                        });
-                        cx.notify();
-                    })),
-                )
-                .child(
-                    led_chip("SKIP", false, theme::LED_GREEN)
-                        .id("automix-skip")
-                        .cursor_pointer()
-                        .on_click(cx.listener(|s, _, _, cx| {
-                            if !s.snapshot.automix_on {
-                                return;
-                            }
-                            s.dispatch(mixless_protocol::Command::SkipAutomix);
-                            cx.notify();
-                        })),
-                )
-            })
+                    .when(self.automix_active, |row| {
+                        row.child(self.render_automix_chip(width < 1280., cx))
+                            .child(self.render_automix_controls(cx))
+                    }),
+            )
             .child(divider())
             .child(layout_group)
             .child(fx_btn)

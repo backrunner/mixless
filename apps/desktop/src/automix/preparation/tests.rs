@@ -1,5 +1,94 @@
 use super::*;
 
+#[gpui::test]
+fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::state::UiState;
+    use gpui::{AppContext, IntoElement, Render, px};
+
+    struct Library(gpui::Entity<UiState>);
+    impl Render for Library {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            self.0.update(cx, |s, cx| s.render_library(cx, 160., false))
+        }
+    }
+
+    let (_dir, core, tracks) = super::super::tests::fixture();
+    let state = cx.new(|cx| {
+        let mut s = UiState::new(core.clone(), cx);
+        s.tracks = Arc::new(
+            tracks
+                .iter()
+                .map(|id| core.library.get_track(*id).unwrap())
+                .collect(),
+        );
+        s.automix_active = true;
+        for (i, id) in [tracks[0], tracks[2]].into_iter().enumerate() {
+            s.snapshot.decks[i].track_id = Some(id);
+            s.snapshot.decks[i].frames = 48_000 * 8;
+            s.presentation_frames[i] = 48_000. * (i + 1) as f64;
+        }
+        s
+    });
+    let (library, cx) = cx.add_window_view(|_, _| Library(state.clone()));
+    cx.simulate_resize(gpui::size(px(1440.), px(500.)));
+    cx.run_until_parked();
+    let before = state.read_with(cx, |s, _| s.library_render_key(1440., 2.));
+    state.read_with(cx, |s, _| {
+        assert_ne!(before, s.library_render_key(1920., 2.));
+        assert_ne!(before, s.library_render_key(1440., 1.));
+    });
+    let reordered = vec![tracks[2], tracks[1], tracks[0]];
+    core.mix_preparation.best.store(true, Ordering::Release);
+    *core.mix_preparation.arranged.lock().unwrap() =
+        Some((tracks.clone(), reordered.clone(), true));
+    state.read_with(cx, |s, _| {
+        assert_eq!(
+            s.shown_tracks().iter().map(|t| t.id).collect::<Vec<_>>(),
+            reordered
+        );
+        assert_ne!(
+            before,
+            s.library_render_key(1440., 2.),
+            "same paused positions still need a new table"
+        );
+        assert_eq!(
+            s.library_render_key(1440., 2.),
+            s.library_render_key(1440., 2.)
+        );
+    });
+    library.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    for (name, id) in [
+        ("library-playhead-a", tracks[0]),
+        ("library-playhead-b", tracks[2]),
+    ] {
+        let marker = cx.debug_bounds(name).expect("loaded deck marker");
+        let row = cx
+            .debug_bounds(Box::leak(format!("track-row-{}", id.0).into_boxed_str()))
+            .expect("track row");
+        assert!(
+            row.contains(&marker.center()),
+            "{name} must stay on track {}",
+            id.0
+        );
+    }
+    let best_key = state.read_with(cx, |s, _| s.library_render_key(1440., 2.));
+    core.mix_preparation.best.store(false, Ordering::Release);
+    state.read_with(cx, |s, _| {
+        assert_ne!(best_key, s.library_render_key(1440., 2.));
+        assert_eq!(
+            s.shown_tracks().iter().map(|t| t.id).collect::<Vec<_>>(),
+            tracks
+        );
+    });
+}
+
 #[test]
 fn sequence_carries_entries_and_offsets_and_reuses_the_published_decisions() {
     let (_dir, core, tracks) = super::super::tests::fixture();

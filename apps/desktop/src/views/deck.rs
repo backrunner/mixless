@@ -7,6 +7,7 @@ mod menu;
 mod performance;
 mod stems;
 mod tempo;
+mod time;
 mod wave;
 
 use gpui::{IntoElement, MouseButton, SharedString, prelude::*, px};
@@ -73,6 +74,7 @@ impl UiState {
                 color: dc,
                 initial,
                 artwork: self.deck_artwork[deck.index()].image.clone(),
+                dragging_progress: matches!(self.drag, Some(crate::state::DragCtl::Progress { deck: active, .. }) if active == deck),
                 end_warning: if d.frames > 0
                     && d.playing
                     && !d.loop_on

@@ -49,6 +49,22 @@ impl Preferences {
                     ),
                 ),
                 row(
+                    "Jog sensitivity",
+                    self.segmented(
+                        "jog-sensitivity",
+                        &[
+                            (0.25, "0.25×"),
+                            (0.5, "0.5×"),
+                            (1., "1×"),
+                            (2., "2×"),
+                            (4., "4×"),
+                        ],
+                        settings.jog_sensitivity,
+                        |s, value| s.save_general(|p| p.jog_sensitivity = value),
+                        cx,
+                    ),
+                ),
+                row(
                     "Vinyl mode",
                     self.toggle(
                         "vinyl",

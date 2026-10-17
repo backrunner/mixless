@@ -7,7 +7,10 @@ mod branding;
 mod controls;
 mod fader;
 mod fx;
+mod icons;
+mod master;
 mod menus;
+mod motion;
 mod performance;
 mod preferences;
 mod root;
@@ -89,7 +92,8 @@ fn main() {
     #[cfg(target_os = "macos")]
     self_install::relocate_from_disk_image();
 
-    Application::new().run(|cx: &mut App| {
+    let application = Application::new().with_assets(icons::Assets);
+    application.run(|cx: &mut App| {
         branding::set_dock_icon();
         let core = state::app_core();
         let shutdown_core = core.clone();

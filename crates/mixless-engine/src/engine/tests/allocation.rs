@@ -55,6 +55,35 @@ pub(super) fn measure(f: impl FnOnce()) -> [usize; 3] {
 }
 
 #[test]
+fn absolute_scrub_callback_does_not_allocate_during_repeated_jumps() {
+    use super::*;
+    let engine = test_engine(48_000);
+    let mut rt = engine.rt.lock().unwrap();
+    let mut out = [0.; 512];
+    engine.shared.process_block(&mut rt, &mut out, 2);
+    engine
+        .dispatch(Command::SetJogTouch {
+            deck: DeckId::A,
+            touching: true,
+        })
+        .unwrap();
+    for frame in [144_000, 24_000, 96_000, 48_000, 0] {
+        engine
+            .dispatch(Command::ScrubTo {
+                deck: DeckId::A,
+                frame,
+            })
+            .unwrap();
+        let counts = measure(|| engine.shared.process_block(&mut rt, &mut out, 2));
+        assert_eq!(
+            counts, [0; 3],
+            "alloc/dealloc/realloc in absolute scrub callback"
+        );
+        assert!(out.iter().all(|sample| *sample == 0.));
+    }
+}
+
+#[test]
 fn stem_callback_does_not_allocate_or_reclaim_pcm_on_seek_and_replacement() {
     use super::*;
     let engine = super::stems::stem_fixture(48000, false, true);
@@ -85,4 +114,32 @@ fn stem_callback_does_not_allocate_or_reclaim_pcm_on_seek_and_replacement() {
     engine.eject(DeckId::A);
     let counts = measure(|| engine.shared.process_block(&mut rt, &mut out, 2));
     assert_eq!(counts, [0; 3], "PCM destruction must remain on host");
+}
+
+#[test]
+fn master_processors_do_not_allocate_during_live_parameter_changes() {
+    use super::*;
+    let engine = test_engine(48000);
+    let mut settings = mixless_protocol::MasterChainSettings::default();
+    settings.eq_enabled = true;
+    settings.eq[2].gain_db = 6.;
+    settings.compressor.enabled = true;
+    settings.dynamics.enabled = true;
+    engine
+        .dispatch(Command::SetMasterChain { settings })
+        .unwrap();
+    let mut rt = engine.rt.lock().unwrap();
+    let mut out = [0.; 512];
+    settings.eq[2].frequency_hz = 400.;
+    settings.dynamics.gate = true;
+    settings.limiter.ceiling_db = -3.;
+    engine
+        .dispatch(Command::SetMasterChain { settings })
+        .unwrap();
+    let counts = measure(|| {
+        for _ in 0..400 {
+            engine.shared.process_block(&mut rt, &mut out, 2);
+        }
+    });
+    assert_eq!(counts, [0; 3], "master callback heap operations");
 }

@@ -1,4 +1,4 @@
-use crate::{grid::Grid, Candidate};
+use crate::{Candidate, grid::Grid};
 use mixless_protocol::{BarMap, Cue, CueKind, SectionLabel as S, StrategyId as Id, TrackAnalysis};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -290,7 +290,13 @@ pub(crate) fn score(
         Id::FilterSweep => c.key_score < 0.85,
         // Spinback and LoopOut are smooth-planner techniques only; the catalog
         // fallback path never proposes them.
-        Id::Spinback | Id::LoopOut | Id::FallbackSwapFilter => false,
+        Id::Spinback
+        | Id::LoopOut
+        | Id::FallbackSwapFilter
+        | Id::TapeStop
+        | Id::BuildRoll
+        | Id::StemSwap
+        | Id::VocalRide => false,
     };
     if !eligible {
         return None;

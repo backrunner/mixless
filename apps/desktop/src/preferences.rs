@@ -24,6 +24,7 @@ mod audio;
 mod controllers;
 mod general;
 mod midi;
+mod overlays;
 #[cfg(debug_assertions)]
 pub mod preview;
 mod select;
@@ -90,6 +91,7 @@ pub struct Preferences {
     tab: Tab,
     selector: Option<Selector>,
     select_ui: select::SelectState,
+    popup_motion: overlays::Popups,
     window_observers: Vec<gpui::Subscription>,
     audio: AudioConfig,
     controller_audio_draft: Option<controllers::ControllerAudioDraft>,
@@ -123,8 +125,8 @@ pub struct Preferences {
     controller_devices: Vec<mixless_controllers::ControllerDevice>,
     selected_preset: Option<String>,
     preset_dialog: Option<PresetDialog>,
-    import_preview: Option<mixless_controllers::ImportReport>,
-    import_batch: Option<mixless_controllers::ImportBatch>,
+    import_preview: Option<Arc<mixless_controllers::ImportReport>>,
+    import_batch: Option<Arc<mixless_controllers::ImportBatch>>,
 }
 
 impl Preferences {
@@ -137,6 +139,7 @@ impl Preferences {
             tab: Tab::General,
             selector: None,
             select_ui: Default::default(),
+            popup_motion: Default::default(),
             window_observers: Vec::new(),
             audio: settings.audio,
             controller_audio_draft: settings
@@ -281,7 +284,7 @@ impl Preferences {
                     Ok(report) => {
                         self.result(Ok(()), "");
                         self.import_batch = None;
-                        self.import_preview = Some(report);
+                        self.import_preview = Some(Arc::new(report));
                     }
                     Err(error) => self.result(Err(error), ""),
                 },
@@ -289,7 +292,7 @@ impl Preferences {
                     Ok(batch) => {
                         self.result(Ok(()), "");
                         self.import_preview = None;
-                        self.import_batch = Some(batch);
+                        self.import_batch = Some(Arc::new(batch));
                     }
                     Err(error) => self.result(Err(error), ""),
                 },
@@ -1183,7 +1186,8 @@ impl Render for Preferences {
             ),
             Tab::Storage => self.storage_page(cx),
         };
-        let mut root = div()
+        let (popups, closing_popup) = self.render_popups(window, cx);
+        let root = div()
             .id("preferences")
             .track_focus(&self.focus)
             .relative()
@@ -1194,6 +1198,18 @@ impl Render for Preferences {
             .text_color(theme::TEXT)
             .font_family(theme::FONT_UI)
             .text_size(px(12.))
+            .capture_key_down(move |_, window, cx| {
+                if closing_popup {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+            .capture_key_up(move |_, window, cx| {
+                if closing_popup {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
             .on_key_down(cx.listener(|s, ev: &gpui::KeyDownEvent, window, cx| {
                 if s.confirm_reset {
                     if ev.keystroke.key == "escape" {
@@ -1388,23 +1404,7 @@ impl Render for Preferences {
                             ),
                     ),
             );
-        if self.confirm_reset {
-            root = root.child(self.reset_dialog(cx));
-        }
-        if self.preset_dialog.is_some()
-            || self.import_preview.is_some()
-            || self.import_batch.is_some()
-        {
-            root = root.child(self.controller_dialog(
-                f32::from(window.viewport_size().height),
-                window,
-                cx,
-            ));
-        }
-        if let Some(selector) = self.selector {
-            root = root.child(self.select_menu(selector, window, cx));
-        }
-        root
+        root.children(popups)
     }
 }
 

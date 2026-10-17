@@ -10,6 +10,11 @@ impl Engine {
             config.cue_device = name.clone();
             return self.configure_audio(config);
         }
+        if let Command::SetMasterChain { settings } = &cmd {
+            if !settings.is_valid() {
+                return Err(EngineError::Protocol("invalid master processor parameters"));
+            }
+        }
         let finite = match &cmd {
             Command::Jog { delta_frames, .. } => delta_frames.is_finite(),
             Command::SetChannelFilter { amount, .. } => amount.is_finite(),
@@ -89,6 +94,16 @@ impl Engine {
             _ => {}
         }
         self.automation_command(&cmd);
+        // FX snapshots/restores run in the callback under the same lock with
+        // try_lock. A host edit must not race a planned effect's restoration.
+        let _fx_control =
+            matches!(cmd, Command::SetFx { .. } | Command::SetFxBypass { .. }).then(|| {
+                self.shared
+                    .automation
+                    .control
+                    .lock()
+                    .expect("automation control")
+            });
         // Mixer params are atomics — apply on the caller thread so a full
         // command ring cannot drop a play/fader/cue under jog spam.
         self.shared.apply_cmd(&cmd);
@@ -119,7 +134,9 @@ impl Engine {
 impl Shared {
     fn apply_cmd(&self, cmd: &Command) {
         match *cmd {
-            Command::SetJogTouch { touching: true, .. }
+            Command::Seek { .. }
+            | Command::ScrubTo { .. }
+            | Command::SetJogTouch { touching: true, .. }
             | Command::SetReverse { .. }
             | Command::SetBrake { on: true, .. } => self.clear_sync(),
             Command::Jog { deck, .. } | Command::SetRate { deck, .. } => {
@@ -153,6 +170,13 @@ impl Shared {
                 }
                 s.playing.store(next, Ordering::Relaxed);
             }
+            Command::Seek { deck, frame } => {
+                let slot = &self.decks[deck.index()];
+                if slot.frames.load(Ordering::Relaxed) > 0 {
+                    slot.preview_cue.store(0, Ordering::Release);
+                    slot.seek_cue(frame);
+                }
+            }
             Command::Jog { deck, delta_frames } => {
                 let s = &self.decks[deck.index()];
                 let maximum = s.frames.load(Ordering::Relaxed).saturating_sub(1) as f64;
@@ -176,23 +200,45 @@ impl Shared {
                         }
                     }
                 } else {
+                    // Wheel events may arrive several times before the next callback.
+                    // Accumulate against the pending destination instead of losing ticks.
+                    let base = if s.seek_pending.load(Ordering::Acquire) {
+                        s.seek_to.load(Ordering::Relaxed) as f64 / 65536.
+                    } else {
+                        s.playhead_frames()
+                    };
                     s.seek_to.store(
-                        ((s.playhead_frames() + delta_frames as f64).clamp(0.0, maximum) * 65536.0)
-                            as u64,
+                        ((base + delta_frames as f64).clamp(0.0, maximum) * 65536.0) as u64,
                         Ordering::Relaxed,
                     );
                     s.seek_pending.store(true, Ordering::Release);
                 }
             }
+            Command::ScrubTo { deck, frame } => {
+                let slot = &self.decks[deck.index()];
+                if slot.jog_touch.load(Ordering::Acquire) {
+                    slot.jog_absolute.store(true, Ordering::Relaxed);
+                    let frame = frame.min(slot.frames.load(Ordering::Relaxed).saturating_sub(1));
+                    slot.jog_target
+                        .store(frame.saturating_mul(65536), Ordering::Release);
+                }
+            }
             Command::SetJogTouch { deck, touching } => {
                 let slot = &self.decks[deck.index()];
                 if touching && !slot.jog_touch.load(Ordering::Acquire) {
-                    slot.jog_target
-                        .store(slot.playhead.load(Ordering::Relaxed), Ordering::Relaxed);
+                    slot.jog_absolute.store(false, Ordering::Relaxed);
+                    let target = if slot.seek_pending.load(Ordering::Acquire) {
+                        slot.seek_to.load(Ordering::Relaxed)
+                    } else {
+                        slot.playhead.load(Ordering::Relaxed)
+                    };
+                    slot.jog_target.store(target, Ordering::Relaxed);
                 }
                 if !touching
                     && slot.jog_touch.load(Ordering::Acquire)
-                    && !(slot.slip.load(Ordering::Relaxed) && slot.playing.load(Ordering::Relaxed))
+                    && !(slot.slip.load(Ordering::Relaxed)
+                        && slot.playing.load(Ordering::Relaxed)
+                        && !slot.jog_absolute.load(Ordering::Relaxed))
                 {
                     // Commit the last pointer target even if down/move/up all
                     // arrived between two callbacks or the scratch head lagged.
@@ -307,6 +353,9 @@ impl Shared {
                 self.xf_curve.store(v, Ordering::Relaxed);
             }
             Command::SetXfReverse { on } => self.xf_reverse.store(on, Ordering::Relaxed),
+            Command::SetMasterChain { settings } => {
+                *self.master_chain.settings.lock().expect("master settings") = settings;
+            }
             Command::SetMasterGain { db } => {
                 self.master_gain_centi.store(
                     ((db.clamp(-12.0, 12.0) + 12.0) * 100.0).round() as u32,
@@ -353,6 +402,7 @@ impl Shared {
                     &self.sends[if slot == FxSlot::SendReverb { 1 } else { 0 }]
                 };
                 effect.bypass.store(on, Ordering::Relaxed);
+                effect.revision.fetch_add(1, Ordering::Release);
             }
             Command::SetPfl { deck, on } => {
                 self.decks[deck.index()].pfl.store(on, Ordering::Relaxed);

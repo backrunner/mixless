@@ -1,6 +1,9 @@
 use super::*;
 use std::sync::atomic::AtomicBool;
 
+mod selection;
+pub(crate) use selection::{CheckState, PackageNode};
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum PackageAction {
     Import,
@@ -11,19 +14,31 @@ enum Message {
     Progress(String),
     Done(Result<mixless_pack::Report, String>),
 }
-#[derive(Default)]
 pub struct PackageUi {
     receiver: Option<Receiver<Message>>,
     cancel: Arc<AtomicBool>,
     pub status: String,
     pub all: bool,
     pub selected: std::collections::BTreeSet<i64>,
+    pub export_open: bool,
+    pub menu: Option<gpui::Point<gpui::Pixels>>,
+    pub expanded: [bool; 3],
+    pub focus: gpui::FocusHandle,
+    pub action: Option<PackageAction>,
 }
 impl PackageUi {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<UiState>) -> Self {
         Self {
             all: true,
-            ..Default::default()
+            receiver: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            status: String::new(),
+            selected: Default::default(),
+            export_open: false,
+            menu: None,
+            expanded: [true; 3],
+            focus: cx.focus_handle().tab_index(0).tab_stop(false),
+            action: None,
         }
     }
     pub fn busy(&self) -> bool {
@@ -32,6 +47,24 @@ impl PackageUi {
 }
 
 impl UiState {
+    pub fn open_package_export(&mut self, playlist: Option<i64>) {
+        if !self.package.busy() && !self.picker_open {
+            self.package.all = playlist.is_none();
+            self.package.selected = playlist.into_iter().collect();
+            self.package.expanded = [true; 3];
+            self.package.status.clear();
+            self.package.action = None;
+        }
+        self.show_import_modal = false;
+        self.package.export_open = true;
+        self.package.menu = None;
+        self.playlist_menu = None;
+        self.track_menu = None;
+        self.deck_menu = None;
+        self.brand_menu.open = false;
+        self.audio.open = false;
+    }
+
     pub fn cancel_package(&mut self) {
         self.package.cancel.store(true, Ordering::Release);
     }
@@ -58,7 +91,7 @@ impl UiState {
         self.flush_library_order();
         self.picker_open = true;
         cx.spawn(async move |this, cx| {
-            let dialog = rfd::AsyncFileDialog::new().add_filter("Mixless package", &["mixpack"]);
+            let dialog = rfd::AsyncFileDialog::new().add_filter("mixless package", &["mixpack"]);
             let file = match action {
                 PackageAction::Import => dialog.set_title("Import package").pick_file().await,
                 PackageAction::Append => {
@@ -96,6 +129,7 @@ impl UiState {
     ) {
         let (tx, rx) = channel();
         self.package.receiver = Some(rx);
+        self.package.action = Some(action);
         self.package.cancel = Arc::new(AtomicBool::new(false));
         self.package.status = "Preparing package…".into();
         self.error = "".into();
@@ -163,12 +197,19 @@ impl UiState {
                     match result {
                         Ok(report) => {
                             self.package.status = format!(
-                                "Done · {} playlists · {} tracks · {} with stems",
-                                report.playlists, report.tracks, report.stems
+                                "{} {} playlists, {} tracks ({} with stems)",
+                                match self.package.action {
+                                    Some(PackageAction::Import) => "Imported",
+                                    Some(PackageAction::Append) => "Updated",
+                                    _ => "Exported",
+                                },
+                                report.playlists,
+                                report.tracks,
+                                report.stems
                             );
                             if report.without_analysis > 0 || report.without_stems > 0 {
                                 self.package.status.push_str(&format!(
-                                    " · {} without analysis · {} without stems",
+                                    "\n{} without analysis, {} without stems",
                                     report.without_analysis, report.without_stems
                                 ));
                             }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{default_fx, CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve};
+use crate::{CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve, default_fx};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
@@ -203,6 +203,10 @@ pub struct EngineSnapshot {
     pub master: f32,
     #[serde(default)]
     pub master_gain_db: f32,
+    #[serde(default)]
+    pub master_chain: crate::MasterChainSettings,
+    #[serde(default)]
+    pub master_meters: crate::MasterChainMeters,
     /// Stereo peak hold after master gain, limiting and output level.
     #[serde(default)]
     pub master_level: [f32; 2],
@@ -233,6 +237,8 @@ impl Default for EngineSnapshot {
             xf_reverse: false,
             master: 0.8,
             master_gain_db: 0.0,
+            master_chain: Default::default(),
+            master_meters: Default::default(),
             master_level: [0.; 2],
             cue_mix: 0.,
             cue_gain: 0.8,

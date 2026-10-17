@@ -8,7 +8,7 @@ mod progression;
 #[cfg(test)]
 mod stem_regressions;
 pub use handoff::short_handoff;
-pub use performance::{performance_moves, LiveMoves, PerformanceLane, PerformanceMove};
+pub use performance::{LiveMoves, PerformanceLane, PerformanceMove, performance_moves};
 mod arrangement;
 mod bridge;
 mod candidates;
@@ -22,6 +22,7 @@ mod energy;
 mod eq;
 mod filtered;
 mod grid;
+mod level;
 mod lookahead;
 mod musical;
 pub mod order;
@@ -30,7 +31,9 @@ mod phrasing;
 mod policy;
 mod recovery;
 mod rhythm;
+mod ride;
 pub mod score;
+mod send_fx;
 mod smooth;
 mod spectrum;
 mod stem_mix;
@@ -159,6 +162,10 @@ impl Planner {
         let mut plan = self.plan_next_base(ctx);
         stem_mix::arrange(ctx, &mut plan, self.options.stem_playback);
         eq::arrange(ctx, &mut plan);
+        send_fx::arrange(ctx, &mut plan);
+        // Every path ends here, so every lane is clamped to the range the
+        // engine accepts before the plan is handed out.
+        level::sanitize(&mut plan);
         plan
     }
 
@@ -397,10 +404,14 @@ impl Planner {
                 ctx.offset_b.rate * correction.sqrt(),
             ),
         };
-        // Expanded tempo tolerance: 0.67-1.5x (was 0.5-2.0). This allows blending up to 1.3x BPM jumps
-        // with time-stretching, reducing dry cuts for medium tempo differences like 120→150 BPM.
-        // TODO: for 1.5-2.0x jumps, implement tempo ramping (gradual BPM transition over 4-8 bars).
-        if !(0.67..=1.5).contains(&rate_a) || !(0.67..=1.5).contains(&rate_b) {
+        // Stretching a deck past 1.5x (or under 0.67x) no longer sounds like
+        // the same record, so such a pair is not blended and no tempo ramp is
+        // attempted: a jump near 2x is mixed in half/double time through
+        // `BarMap::TwoToOne`, and the smooth planner bridges the remaining
+        // gaps at native rate. A literal half/double pairing plays one deck
+        // at 2x by design.
+        let rates = if literal { 0.5..=2.0 } else { 0.67..=1.5 };
+        if !rates.contains(&rate_a) || !rates.contains(&rate_b) {
             return None;
         }
         let out_sec = ga.sec(out_beat);

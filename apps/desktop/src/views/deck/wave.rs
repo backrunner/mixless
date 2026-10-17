@@ -3,7 +3,7 @@
 use gpui::{IntoElement, MouseButton, SharedString, prelude::*, px};
 use mixless_protocol::DeckId;
 
-use super::{deck_label, fmt_time};
+use super::deck_label;
 use crate::{state::UiState, theme};
 
 impl UiState {
@@ -22,16 +22,6 @@ impl UiState {
         let device_sr = self.snapshot.sample_rate;
         let dc = theme::deck_color(deck);
         let loaded = d.frames > 0;
-        let sr = if d.src_sample_rate > 0 {
-            d.src_sample_rate
-        } else {
-            device_sr
-        };
-        let remain = if loaded && sr > 0 {
-            format!("-{}", fmt_time(d.frames.saturating_sub(d.frame), sr))
-        } else {
-            "-0:00".into()
-        };
         let initial = (d.title.as_deref().unwrap_or("♪"))
             .trim()
             .chars()
@@ -132,7 +122,7 @@ impl UiState {
                                     .unwrap_or_default(),
                             ),
                     )
-                    .child(remain),
+                    .child(self.deck_time(deck, "strip", cx)),
             );
 
         gpui::div()
@@ -176,17 +166,7 @@ impl UiState {
         let wave = self.wave_cache[deck.index()].clone();
         let device_sr = self.snapshot.sample_rate;
         let dc = theme::deck_color(deck);
-        let sr = if d.src_sample_rate > 0 {
-            d.src_sample_rate
-        } else {
-            device_sr
-        };
         let loaded = d.frames > 0;
-        let remain = if loaded && sr > 0 {
-            format!("-{}", fmt_time(d.frames.saturating_sub(d.frame), sr))
-        } else {
-            "-0:00".into()
-        };
 
         gpui::div()
             .id(SharedString::from(format!("vertical-wave-menu-{deck:?}")))
@@ -225,11 +205,10 @@ impl UiState {
                 .into_any_element(),
             )
             .child(
-                gpui::div()
+                self.deck_time(deck, "vertical", cx)
                     .text_size(px(10.))
                     .text_color(theme::MUTED)
-                    .min_h(px(12.))
-                    .child(remain),
+                    .min_h(px(12.)),
             )
             .into_any_element()
     }

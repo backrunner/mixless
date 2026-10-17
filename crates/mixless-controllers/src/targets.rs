@@ -93,6 +93,14 @@ pub enum MidiTarget {
         deck: DeckId,
         index: u8,
     },
+    /// Absolute position represented by the platter progress ring. Hardware
+    /// position events seek directly; mouse drags also acquire audible jog touch.
+    Position {
+        deck: DeckId,
+    },
+    TimeDisplay {
+        deck: DeckId,
+    },
     Jog {
         deck: DeckId,
     },
@@ -208,6 +216,8 @@ impl MidiTarget {
                 Self::Slip { deck },
                 Self::Reverse { deck },
                 Self::Brake { deck },
+                Self::TimeDisplay { deck },
+                Self::Position { deck },
                 Self::Jog { deck },
                 Self::JogTouch { deck },
                 Self::Tempo { deck },
@@ -285,6 +295,8 @@ impl MidiTarget {
             | TemporaryCue { deck }
             | Cue { deck, .. }
             | ClearCue { deck, .. }
+            | Position { deck }
+            | TimeDisplay { deck }
             | Jog { deck }
             | JogTouch { deck }
             | Sync { deck }
@@ -350,6 +362,7 @@ impl MidiTarget {
             | Resonance { .. }
             | Tempo { .. }
             | Pitch { .. }
+            | Position { .. }
             | Stem { .. }
             | FxMix { .. }
             | FxSend { .. } => ControlKind::Continuous,
@@ -386,6 +399,8 @@ impl MidiTarget {
             TemporaryCue { .. } => "Temporary cue".into(),
             Cue { index, .. } => format!("Hot cue {}", index + 1),
             ClearCue { index, .. } => format!("Clear hot cue {}", index + 1),
+            Position { .. } => "Track position".into(),
+            TimeDisplay { .. } => "Elapsed / remaining time".into(),
             Jog { .. } => "Jog rotation".into(),
             JogTouch { .. } => "Jog touch (hold)".into(),
             Sync { .. } => "Sync".into(),

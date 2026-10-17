@@ -1,5 +1,7 @@
 //! Root layout and global input dispatch (drag tracking, keyboard shortcuts).
 
+pub(crate) mod overlays;
+
 use gpui::prelude::*;
 use gpui::{
     DispatchPhase, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, Render, Styled, Window,
@@ -22,6 +24,9 @@ impl Render for UiState {
             || (!self.show_import_modal && self.url_focus.is_focused(window))
         {
             self.keyboard_focus.focus(window);
+        }
+        if self.package.export_open && !self.package.focus.contains_focused(window, cx) {
+            self.package.focus.focus(window);
         }
         if self.needs_continuous_repaint() {
             window.request_animation_frame();
@@ -116,34 +121,7 @@ impl Render for UiState {
                 .child(b)
         });
 
-        let library_key = (
-            std::sync::Arc::as_ptr(&self.tracks) as usize,
-            std::sync::Arc::as_ptr(&self.playlists) as usize,
-            self.playlist_sel,
-            self.track_sel,
-            self.focus,
-            self.snapshot.decks.each_ref().map(|d| d.track_id),
-            // Overview markers only invalidate the cached table after moving a
-            // pixel. Deck waveforms still animate at display refresh rate.
-            crate::wave::preview::positions(&self.snapshot.decks, self.presentation_frames)
-                .map(|p| p.map(|p| (p * viewport_width.max(1.)).round() as u32)),
-            (
-                self.analysis_revision,
-                self.automix_active,
-                self.automix_shuffle
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                self.core
-                    .mix_preparation
-                    .preview_revision
-                    .load(std::sync::atomic::Ordering::Acquire),
-                self.automix_plan
-                    .as_ref()
-                    .map_or(0, |(_, p)| std::sync::Arc::as_ptr(p) as usize),
-            ),
-            self.busy,
-            self.picker_open,
-            self.import_status(),
-        );
+        let library_key = self.library_render_key(viewport_width, window.scale_factor());
         if self.library_key.as_ref() != Some(&library_key) {
             self.library_key = Some(library_key);
             self.library_view.update(cx, |_, cx| cx.notify());
@@ -156,18 +134,8 @@ impl Render for UiState {
                 .style()
                 .clone(),
         );
-        let import_modal = self.render_import_modal(window, cx);
         let fxbar = self.show_fx.then(|| self.render_fxbar(cx, mixer_width));
-        let shortcuts = self.show_shortcuts.then(|| self.render_shortcuts(cx));
-        let fx_editor = self
-            .fx_editor
-            .map(|(deck, slot)| self.render_fx_editor(deck, slot, cx));
-        let audio_menu = self.render_audio_menu(cx);
-        let track_menu = self.render_track_menu(window, cx);
-        let playlist_menu = self.render_playlist_menu(window, cx);
-        let deck_menu = self.render_deck_menu(window, cx);
-        let brand_menu = self.render_brand_menu(window, cx);
-        let remove_playlist_confirm = self.render_remove_playlist_confirm(cx);
+        let (popups, closing_popup) = self.render_popups(window, cx);
         let error = self.error.clone();
         let update_notice = self.update_notice.clone();
 
@@ -183,7 +151,58 @@ impl Render for UiState {
             .bg(theme::BG)
             .font_family(theme::FONT_UI)
             .text_color(theme::TEXT)
+            .capture_key_down(move |_, window, cx| {
+                if closing_popup {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+            .capture_key_up(move |_, window, cx| {
+                if closing_popup {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
             .on_key_down(cx.listener(|s, ev: &gpui::KeyDownEvent, window, cx| {
+                if s.package.export_open {
+                    if !s.picker_open {
+                        match ev.keystroke.key.as_str() {
+                            "escape" => {
+                                s.package.export_open = false;
+                                s.keyboard_focus.focus(window);
+                                cx.notify();
+                            }
+                            "tab" => {
+                                if ev.keystroke.modifiers.shift {
+                                    window.focus_prev();
+                                } else {
+                                    window.focus_next();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.package.menu.is_some() {
+                    match ev.keystroke.key.as_str() {
+                        "escape" | "tab" => s.package.menu = None,
+                        "enter" | "space" => s.open_package_export(None),
+                        _ => {}
+                    }
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                if s.master_mixer.open {
+                    if ev.keystroke.key == "escape" {
+                        s.close_master_mixer();
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if s.brand_menu.open {
                     s.brand_menu_key(&ev.keystroke, window, cx);
                     cx.stop_propagation();
@@ -315,15 +334,7 @@ impl Render for UiState {
                         .child(update_notice),
                 )
             })
-            .when_some(audio_menu, |el, menu| el.child(menu))
-            .when_some(track_menu, |el, menu| el.child(menu))
-            .when_some(playlist_menu, |el, menu| el.child(menu))
-            .when_some(deck_menu, |el, menu| el.child(menu))
-            .when_some(brand_menu, |el, menu| el.child(menu))
-            .when_some(remove_playlist_confirm, |el, modal| el.child(modal))
-            .when_some(import_modal, |el, modal| el.child(modal))
-            .when_some(shortcuts, |el, modal| el.child(modal))
-            .when_some(fx_editor, |el, modal| el.child(modal))
+            .children(popups)
             .when(draw_started.is_some(), |el| {
                 el.child(
                     canvas(

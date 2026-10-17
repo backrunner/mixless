@@ -9,6 +9,7 @@ mod output;
 mod performance;
 mod pitch;
 mod recording;
+mod scrubbing;
 mod stems;
 mod transport;
 

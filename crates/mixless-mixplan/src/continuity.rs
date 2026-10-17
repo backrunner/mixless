@@ -38,6 +38,28 @@ pub(crate) fn gap(t: &TrackAnalysis, sec: f32) -> bool {
         .all(|m| m.rms < 0.001 || m.band_db[1] < peak - 12.)
 }
 
+/// Nothing sounds from `sec` for `span` seconds, by the finest measured
+/// evidence: stem frames, then moments, then bars.
+pub(crate) fn silent(t: &TrackAnalysis, sec: f32, span: f32) -> bool {
+    let probe = |level: &dyn Fn(f32) -> Option<f32>, floor: f32| {
+        (0..8)
+            .filter_map(|i| level(sec + span * (i as f32 + 0.5) / 8.))
+            .fold(None, |max: Option<f32>, v| {
+                Some(max.map_or(v, |m| m.max(v)))
+            })
+            .map(|loudest| loudest < floor)
+    };
+    if let Some(stems) = &t.stems {
+        if let Some(quiet) = probe(&|at| stems.frame_at(at).map(|f| f.rms.iter().sum()), 0.002) {
+            return quiet;
+        }
+    }
+    if let Some(quiet) = probe(&|at| moment(t, at).map(|m| m.rms), 0.002) {
+        return quiet;
+    }
+    crate::musical::average_rms(t, sec, sec + span).is_none_or(|rms| rms < 0.002)
+}
+
 pub(crate) fn voice_active(t: &TrackAnalysis, sec: f32) -> f32 {
     if let Some(frame) = t.stems.as_ref().and_then(|s| s.frame_at(sec)) {
         return frame.vocal_activity;

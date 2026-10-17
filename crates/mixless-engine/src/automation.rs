@@ -6,6 +6,8 @@ use mixless_protocol::{LaneId, MixPlan, MixPlanSummary, Polyline};
 mod gain;
 
 const STEP: usize = 32;
+/// The outgoing deck's last insert slot carries a planned roll.
+const INSERT: usize = 3;
 const XF: u32 = 1;
 fn bit(index: usize, lane: usize) -> u32 {
     1 << (1 + index * 11 + lane)
@@ -49,6 +51,17 @@ pub(super) struct AutomationRt {
     pub(super) tempo: Option<f32>,
     incoming_started: bool,
     resume_playing: [bool; 2],
+    send_restore: Option<SendRestore>,
+    /// The outgoing deck's insert, held while a planned roll plays.
+    insert_restore: Option<(usize, super::fx::SavedFx)>,
+}
+/// The user's sends, held while a planned tail effect rings out.
+struct SendRestore {
+    saved: [super::fx::SavedFx; 2],
+    kind: u32,
+    tail_frames: usize,
+    /// Counting down once the plan has ended or been cancelled.
+    remaining: Option<usize>,
 }
 #[derive(Clone, Copy)]
 struct DeckPoint {
@@ -82,6 +95,7 @@ struct DensePlan {
     incoming_start_frames: usize,
     overlap_frames: usize,
     handoff_frame: Option<usize>,
+    insert_frame: Option<usize>,
     total_frames: usize,
     sample_rate: u32,
     points: Vec<Point>,
@@ -245,6 +259,15 @@ impl DensePlan {
                 return Err(invalid());
             }
         }
+        if plan.send_fx.is_some_and(|fx| !fx.valid()) {
+            return Err(invalid());
+        }
+        if plan
+            .insert_a
+            .is_some_and(|fx| !fx.valid() || fx.on_bar > summary.length_bars as f32)
+        {
+            return Err(invalid());
+        }
         for line in [
             &lanes.filter_a.lp_hz,
             &lanes.filter_a.hp_hz,
@@ -291,8 +314,8 @@ impl DensePlan {
             }
         }
         let [a, b] = slots;
-        if a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
+        if a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
         {
             return Err(EngineError::Protocol("automix tracks changed"));
         }
@@ -436,6 +459,15 @@ impl DensePlan {
                             if op.accelerate && u <= op.peak_bar {
                                 phase = phase.clamp(0.0, 1.0).powi(2);
                             }
+                            // A tape stop decelerates evenly from unity speed
+                            // and then holds the stopped position.
+                            if op.brake {
+                                phase = if u <= op.peak_bar {
+                                    1.0 - (1.0 - phase.clamp(0.0, 1.0)).powi(2)
+                                } else {
+                                    1.0
+                                };
+                            }
                             (op.start_src_frame as i128
                                 + (op.peak_delta_frames as f32 * phase.clamp(0.0, 1.0)) as i128)
                                 .max(0) as u64
@@ -492,6 +524,9 @@ impl DensePlan {
             handoff_frame: plan
                 .handoff_bar
                 .map(|bar| (plan.clock.sample(bar) * sr as f32).round() as usize),
+            insert_frame: plan
+                .insert_a
+                .map(|fx| (plan.clock.sample(fx.on_bar) * sr as f32).round() as usize),
             total_frames,
             sample_rate: sr,
             plan,
@@ -517,9 +552,7 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?
             .pair;
-        candidate
-            .track_id
-            .store(pair.1 .0 as u64, Ordering::Relaxed);
+        candidate.track_id.store(pair.1.0 as u64, Ordering::Relaxed);
         candidate.frames.store(audio.frames, Ordering::Relaxed);
         candidate.src_sr.store(audio.sample_rate, Ordering::Relaxed);
         *candidate.buffer.lock().unwrap() = Some(audio.clone());
@@ -559,7 +592,7 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?;
         let outgoing =
-            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0 .0 as u64 {
+            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0.0 as u64 {
                 DeckId::A
             } else {
                 DeckId::B
@@ -605,8 +638,8 @@ impl Engine {
                 "automix start passed before publication; replan",
             ));
         }
-        if a.track_id.load(Ordering::Relaxed) != pair.0 .0 as u64
-            || b.track_id.load(Ordering::Relaxed) != pair.1 .0 as u64
+        if a.track_id.load(Ordering::Relaxed) != pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != pair.1.0 as u64
             || b.playing.load(Ordering::Relaxed)
             || dense.sample_rate != self.shared.sample_rate.load(Ordering::Relaxed)
         {
@@ -705,8 +738,8 @@ impl Engine {
             || f32::from_bits(auto.progress.load(Ordering::Acquire)) > 0.
             || plan.outgoing != outgoing.index()
             || plan.plan.summary.as_ref().map(|s| s.pair) != Some(pair)
-            || a.track_id.load(Ordering::Acquire) != pair.0 .0 as u64
-            || b.track_id.load(Ordering::Acquire) != pair.1 .0 as u64
+            || a.track_id.load(Ordering::Acquire) != pair.0.0 as u64
+            || b.track_id.load(Ordering::Acquire) != pair.1.0 as u64
             || !a.playing.load(Ordering::Acquire)
             || b.playing.load(Ordering::Acquire)
             || a.playhead_frames() + margin >= plan.start_frame
@@ -804,6 +837,8 @@ impl Engine {
                 | Command::SetReverse { .. }
                 | Command::SetJogTouch { touching: true, .. }
                 | Command::Jog { .. }
+                | Command::Seek { .. }
+                | Command::ScrubTo { .. }
                 | Command::SetFx { .. }
                 | Command::SetFxBypass { .. }
                 | Command::SetFxSend { .. }
@@ -850,6 +885,8 @@ impl Engine {
             }
             Command::StopAutomix
             | Command::PlayPause { .. }
+            | Command::Seek { .. }
+            | Command::ScrubTo { .. }
             | Command::JumpCue { .. }
             | Command::TriggerTemporaryCue { .. }
             | Command::BeginCuePreview { .. }
@@ -913,8 +950,8 @@ impl Shared {
         let b = &self.decks[1 - plan.outgoing];
         let summary = plan.plan.summary.as_ref().unwrap();
         if plan.sample_rate != self.sample_rate.load(Ordering::Relaxed)
-            || a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
+            || a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
         {
             auto.enabled.store(false, Ordering::Release);
             return false;
@@ -947,7 +984,25 @@ impl Shared {
                 return false;
             }
             rt.started = true;
-            if plan
+            if let Some((deck, saved)) = rt.insert_restore.take() {
+                self.decks[deck].inserts[INSERT].restore(&saved);
+            }
+            // A previous tail is long over by the next transition.
+            if let Some(restore) = rt.send_restore.take() {
+                self.restore_sends(&restore);
+            }
+            if let Some(fx) = &plan.plan.send_fx {
+                let saved = [self.sends[0].save(), self.sends[1].save()];
+                self.sends[0].apply_send(fx);
+                // Only the planned tail may colour the transition.
+                self.sends[1].bypass.store(true, Ordering::Release);
+                rt.send_restore = Some(SendRestore {
+                    saved,
+                    kind: fx.kind as u32,
+                    tail_frames: (fx.tail_seconds * plan.sample_rate as f32) as usize,
+                    remaining: None,
+                });
+            } else if plan
                 .plan
                 .lanes
                 .fx_send_a
@@ -986,6 +1041,14 @@ impl Shared {
             && rt.elapsed < plan.overlap_frames
         {
             rt.elapsed = plan.overlap_frames;
+        }
+        if let (Some(fx), Some(frame)) = (&plan.plan.insert_a, plan.insert_frame) {
+            if rt.insert_restore.is_none() && rt.elapsed >= frame && rt.elapsed < plan.total_frames
+            {
+                let insert = &self.decks[plan.outgoing].inserts[INSERT];
+                rt.insert_restore = Some((plan.outgoing, insert.save()));
+                insert.apply(fx.kind, fx.beats, 0.35, 1.6);
+            }
         }
         if !rt.incoming_started && rt.elapsed >= plan.incoming_start_frames {
             b.seek_to
@@ -1099,6 +1162,9 @@ impl Shared {
             Ordering::Relaxed,
         );
         if rt.elapsed >= plan.total_frames {
+            if let Some(restore) = rt.send_restore.as_mut() {
+                restore.remaining.get_or_insert(restore.tail_frames);
+            }
             if plan.plan.lanes.scratch_a.is_some() {
                 a.jog_touch.store(false, Ordering::Release);
                 a.slip.store(false, Ordering::Relaxed);
@@ -1117,7 +1183,41 @@ impl Shared {
             b.playing.load(Ordering::Relaxed)
         }
     }
+    /// Hand the sends back once a planned tail has rung out. A send whose
+    /// effect the user changed meanwhile stays theirs.
+    fn count_send_restore(&self, rt: &mut AutomationRt, frames: usize) {
+        let Ok(_control) = self.automation.control.try_lock() else {
+            return;
+        };
+        // The roll ends with the plan; the outgoing deck is silent by then.
+        if !self.automation.enabled.load(Ordering::Acquire) {
+            if let Some((deck, saved)) = rt.insert_restore.take() {
+                self.decks[deck].inserts[INSERT].restore(&saved);
+            }
+        }
+        let Some(restore) = rt.send_restore.as_mut() else {
+            return;
+        };
+        if restore.remaining.is_none() && !self.automation.enabled.load(Ordering::Acquire) {
+            restore.remaining = Some(restore.tail_frames);
+        }
+        let Some(remaining) = restore.remaining.as_mut() else {
+            return;
+        };
+        *remaining = remaining.saturating_sub(frames);
+        if *remaining == 0 {
+            let restore = rt.send_restore.take().unwrap();
+            self.restore_sends(&restore);
+        }
+    }
+    fn restore_sends(&self, restore: &SendRestore) {
+        if self.sends[0].kind.load(Ordering::Acquire) == restore.kind {
+            self.sends[0].restore(&restore.saved[0]);
+        }
+        self.sends[1].restore(&restore.saved[1]);
+    }
     pub(super) fn process_block(&self, rt: &mut AudioRt, out: &mut [f32], channels: usize) {
+        self.count_send_restore(&mut rt.automation, out.len() / channels.max(1));
         if !self.automation.enabled.load(Ordering::Acquire) && !rt.automation.paused {
             self.process_audio_block(rt, out, channels);
             return;
@@ -1261,6 +1361,127 @@ mod tests {
     }
 
     #[test]
+    fn a_planned_send_tail_is_applied_then_returns_the_user_sends() {
+        let (engine, mut plan) = setup(DeckId::A);
+        let send = &engine.shared.sends[0];
+        send.beats.store(0.25f32.to_bits(), Ordering::Relaxed);
+        engine.shared.sends[1]
+            .bypass
+            .store(false, Ordering::Relaxed);
+        let user = send.kind.load(Ordering::Relaxed);
+        let mut invalid = plan.clone();
+        invalid.send_fx = Some(mixless_protocol::SendFx {
+            kind: mixless_protocol::FxKind::EchoOut,
+            beats: 1.,
+            feedback: 0.4,
+            decay_seconds: 2.,
+            tail_seconds: 1.,
+        });
+        assert!(engine.load_plan(invalid).is_err());
+        plan.send_fx = Some(mixless_protocol::SendFx {
+            kind: mixless_protocol::FxKind::Space,
+            beats: 1.,
+            feedback: 0.4,
+            decay_seconds: 3.,
+            tail_seconds: 1.,
+        });
+        engine.load_plan(plan).unwrap();
+        let mut applied = false;
+        for _ in 0..2000 {
+            engine.render_offline(480);
+            if !engine.snapshot().automix_on {
+                break;
+            }
+            applied |= send.kind.load(Ordering::Relaxed) == mixless_protocol::FxKind::Space as u32
+                && engine.shared.sends[1].bypass.load(Ordering::Relaxed);
+        }
+        assert!(applied, "the planned tail never reached the send");
+        assert!(!engine.snapshot().automix_on);
+        // Still ringing just after the plan, then handed back.
+        assert_eq!(
+            send.kind.load(Ordering::Relaxed),
+            mixless_protocol::FxKind::Space as u32
+        );
+        engine.render_offline(48000 + 960);
+        assert_eq!(send.kind.load(Ordering::Relaxed), user);
+        assert_eq!(f32::from_bits(send.beats.load(Ordering::Relaxed)), 0.25);
+        assert!(!engine.shared.sends[1].bypass.load(Ordering::Relaxed));
+    }
+    #[test]
+    fn manual_fx_edits_survive_planned_tail_and_roll_restoration() {
+        let (engine, mut plan) = setup(DeckId::A);
+        plan.send_fx = Some(mixless_protocol::SendFx {
+            kind: mixless_protocol::FxKind::Echo,
+            beats: 1.,
+            feedback: 0.4,
+            decay_seconds: 2.,
+            tail_seconds: 0.1,
+        });
+        plan.insert_a = Some(mixless_protocol::InsertFx {
+            kind: mixless_protocol::FxKind::LoopRoll,
+            beats: 1.,
+            on_bar: 0.,
+        });
+        engine.load_plan(plan).unwrap();
+        for _ in 0..2000 {
+            engine.render_offline(480);
+            if engine.shared.decks[0].inserts[INSERT]
+                .kind
+                .load(Ordering::Acquire)
+                == mixless_protocol::FxKind::LoopRoll as u32
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            engine.shared.decks[0].inserts[INSERT]
+                .kind
+                .load(Ordering::Acquire),
+            mixless_protocol::FxKind::LoopRoll as u32
+        );
+        for slot in [
+            FxSlot::SendEcho,
+            FxSlot::SendReverb,
+            FxSlot::INSERTS[INSERT],
+        ] {
+            engine
+                .dispatch(Command::SetFx {
+                    deck: Some(DeckId::A),
+                    slot,
+                    params: mixless_protocol::FxParams {
+                        mix: 0.23,
+                        feedback: Some(0.17),
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+            engine
+                .dispatch(Command::SetFxBypass {
+                    deck: DeckId::A,
+                    slot,
+                    on: false,
+                })
+                .unwrap();
+        }
+        let expected = [
+            engine.shared.sends[0].save(),
+            engine.shared.sends[1].save(),
+            engine.shared.decks[0].inserts[INSERT].save(),
+        ];
+        engine.dispatch(Command::StopAutomix).unwrap();
+        engine.render_offline(48_000);
+        let actual = [
+            engine.shared.sends[0].save(),
+            engine.shared.sends[1].save(),
+            engine.shared.decks[0].inserts[INSERT].save(),
+        ];
+        for (a, b) in actual.iter().zip(expected) {
+            assert_eq!(a.words, b.words);
+            assert_eq!(a.bypass, b.bypass);
+        }
+    }
+
+    #[test]
     fn only_cue_play_and_explicit_stop_cancel_the_auto_session() {
         for cmd in [
             Command::SetJogTouch {
@@ -1374,11 +1595,13 @@ mod tests {
             manual.decks.each_ref().map(|d| d.fader),
             playing.decks.each_ref().map(|d| d.fader)
         );
-        assert!(manual
-            .decks
-            .iter()
-            .zip(&playing.decks)
-            .all(|(a, b)| a.frame > b.frame));
+        assert!(
+            manual
+                .decks
+                .iter()
+                .zip(&playing.decks)
+                .all(|(a, b)| a.frame > b.frame)
+        );
     }
     #[test]
     fn automix_pause_resume_and_single_lane_takeover() {
@@ -1426,9 +1649,11 @@ mod tests {
                         source.samples.iter().map(|s| s * 0.2).collect(),
                     )
                     .unwrap();
-                    assert!(engine
-                        .attach_stems(deck, id, &source, Arc::new(audio))
-                        .unwrap());
+                    assert!(
+                        engine
+                            .attach_stems(deck, id, &source, Arc::new(audio))
+                            .unwrap()
+                    );
                 }
             }
             plan.stem_mix = Some(StemMix {
@@ -1576,7 +1801,9 @@ mod tests {
             let boundary = ((plan.t_in_a + plan.clock.sample(plan.incoming_start_bar)) * 48000.)
                 .round() as usize;
             assert!(plan.summary.is_some(), "{:?}", plan.failure_reason);
-            assert_eq!(plan.incoming_start_bar, 0.);
+            // 120 against 97 BPM never runs together: B launches for the
+            // last outgoing beat only.
+            assert!(plan.incoming_start_bar > 0. && plan.incoming_start_bar < 1.);
             engine.load_plan_on(plan, outgoing).unwrap();
             engine.render_offline(boundary);
             assert!(!engine.snapshot().decks[1 - outgoing.index()].playing);
@@ -1795,8 +2022,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_accelerated_spinback_pulls_the_outgoing_source_backwards() {
+    /// Two sine decks and a four-bar bridge plan at 120 BPM: A until bar 4,
+    /// then B. Transport tests add their own outgoing operation.
+    fn transport_fixture() -> (Engine, MixPlan) {
         let engine = super::super::tests::test_engine(48000);
         for (index, hz) in [440.0f32, 550.].into_iter().enumerate() {
             let frames = 16 * 48000usize;
@@ -1841,16 +2069,6 @@ mod tests {
         lanes.eq_b.low = Polyline::constant(0.);
         lanes.eq_b.mid = Polyline::constant(0.);
         lanes.eq_b.high = Polyline::constant(0.);
-        // The last half bar of A is pulled backwards, easing in then whipping
-        // back fastest just before the release onto B's downbeat.
-        lanes.scratch_a = Some(mixless_protocol::ScratchOp {
-            start_src_frame: 276_000, // outgoing source frame at bar 3.5
-            peak_delta_frames: -91_200,
-            on_bar: 3.5,
-            peak_bar: 3.98,
-            off_bar: 4.,
-            accelerate: true,
-        });
         let plan = MixPlan {
             summary: Some(MixPlanSummary {
                 pair: (TrackId(1), TrackId(2)),
@@ -1874,6 +2092,23 @@ mod tests {
             handoff_bar: Some(4.),
             ..Default::default()
         };
+        (engine, plan)
+    }
+
+    #[test]
+    fn an_accelerated_spinback_pulls_the_outgoing_source_backwards() {
+        let (engine, mut plan) = transport_fixture();
+        // The last half bar of A is pulled backwards, easing in then whipping
+        // back fastest just before the release onto B's downbeat.
+        plan.lanes.scratch_a = Some(mixless_protocol::ScratchOp {
+            start_src_frame: 276_000, // outgoing source frame at bar 3.5
+            peak_delta_frames: -91_200,
+            on_bar: 3.5,
+            peak_bar: 3.98,
+            off_bar: 4.,
+            accelerate: true,
+            brake: false,
+        });
         let prepared = engine.prepare_plan_on(plan, DeckId::A).unwrap();
         let dense = prepared.0.clone();
         let sr = dense.sample_rate as f32;
@@ -1945,6 +2180,102 @@ mod tests {
     }
 
     #[test]
+    fn a_tape_stop_decelerates_forward_and_holds_until_the_handoff() {
+        let (engine, mut plan) = transport_fixture();
+        // The fixture clock runs 0.5 s per bar: the 0.45-bar stop lasts
+        // 10 800 frames, and braking evenly from unity travels half of that.
+        plan.lanes.scratch_a = Some(mixless_protocol::ScratchOp {
+            start_src_frame: 276_000,
+            peak_delta_frames: 5_400,
+            on_bar: 3.5,
+            peak_bar: 3.95,
+            off_bar: 4.,
+            accelerate: false,
+            brake: true,
+        });
+        let dense = engine.prepare_plan_on(plan, DeckId::A).unwrap().0.clone();
+        let sr = dense.sample_rate as f32;
+        let leg: Vec<u64> = dense
+            .points
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| {
+                let u = bar_at(&dense.plan.clock, (j * STEP) as f32 / sr);
+                (3.5..4.).contains(&u)
+            })
+            .map(|(_, p)| p.decks[0].scratch_target)
+            .collect();
+        assert!(leg.len() > 8);
+        let steps: Vec<i64> = leg.windows(2).map(|w| w[1] as i64 - w[0] as i64).collect();
+        assert!(
+            steps.iter().all(|d| *d >= 0),
+            "a tape stop never runs backwards"
+        );
+        let n = steps.len();
+        assert!(
+            steps[..n / 4].iter().sum::<i64>() > steps[n / 2..3 * n / 4].iter().sum::<i64>() * 2,
+            "speed must fall: {steps:?}"
+        );
+        assert_eq!(
+            *leg.last().unwrap(),
+            276_000 + 5_400,
+            "holds where it stopped"
+        );
+        // The first steps run at about unity speed: no jump at the touch.
+        let first = steps[1] as f32 / STEP as f32;
+        assert!((0.8..1.2).contains(&first), "initial speed {first}");
+    }
+
+    #[test]
+    fn a_planned_roll_engages_the_outgoing_insert_then_returns_it() {
+        let (engine, mut plan) = transport_fixture();
+        plan.insert_a = Some(mixless_protocol::InsertFx {
+            kind: mixless_protocol::FxKind::LoopRoll,
+            beats: 1.,
+            on_bar: 3.,
+        });
+        let insert = &engine.shared.decks[0].inserts[INSERT];
+        let user = insert.save();
+        let mut bad = plan.clone();
+        bad.insert_a = Some(mixless_protocol::InsertFx {
+            kind: mixless_protocol::FxKind::Echo,
+            beats: 1.,
+            on_bar: 3.,
+        });
+        assert!(engine.prepare_plan_on(bad, DeckId::A).is_err());
+        engine
+            .cue_loaded_track(DeckId::A, TrackId(1), 4 * 48000)
+            .unwrap();
+        engine
+            .dispatch(Command::PlayPause { deck: DeckId::A })
+            .unwrap();
+        let prepared = engine.prepare_plan_on(plan, DeckId::A).unwrap();
+        engine.commit_plan(prepared).unwrap();
+        let roll = mixless_protocol::FxKind::LoopRoll as u32;
+        let mut before = false;
+        let mut during = false;
+        for _ in 0..400 {
+            engine.render_offline(512);
+            let on = insert.kind.load(Ordering::Acquire) == roll
+                && !insert.bypass.load(Ordering::Acquire);
+            let progress = engine.snapshot().automix_progress;
+            // Bar 3 of a 4.25-bar clock is 1.5 s of 2.25 s.
+            if progress > 0. && progress < 0.6 {
+                before |= on;
+            }
+            during |= on;
+            if !engine.snapshot().automix_on {
+                break;
+            }
+        }
+        assert!(!before, "the roll waits for its bar");
+        assert!(during, "the roll never engaged");
+        engine.render_offline(512);
+        let after = insert.save();
+        assert!(after.words == user.words && after.bypass == user.bypass);
+    }
+
+    #[test]
     fn a_live_gesture_does_not_read_as_plan_takeover() {
         let (engine, plan) = setup(DeckId::A);
         engine.load_plan(plan).unwrap();
@@ -1982,14 +2313,18 @@ mod tests {
         assert_ne!(auto.cancelled.load(Ordering::Acquire) & bit(0, 2), 0);
         assert!(auto.gain_cancelled.load(Ordering::Acquire));
         // Only the two gesture commands are accepted.
-        assert!(engine
-            .perform(Command::PlayPause { deck: DeckId::A })
-            .is_err());
-        assert!(engine
-            .perform(Command::SetChannelFilter {
-                deck: DeckId::A,
-                amount: f32::NAN,
-            })
-            .is_err());
+        assert!(
+            engine
+                .perform(Command::PlayPause { deck: DeckId::A })
+                .is_err()
+        );
+        assert!(
+            engine
+                .perform(Command::SetChannelFilter {
+                    deck: DeckId::A,
+                    amount: f32::NAN,
+                })
+                .is_err()
+        );
     }
 }

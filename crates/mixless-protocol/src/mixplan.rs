@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{DeckId, TrackId};
+use crate::{DeckId, FxKind, TrackId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,13 +18,22 @@ pub enum StrategyId {
     BreakToIntro,
     EnergyHold,
     FallbackSwapFilter,
+    TapeStop,
+    BuildRoll,
+    StemSwap,
+    VocalRide,
 }
 
 impl StrategyId {
     pub fn default_bars(self) -> u16 {
         match self {
             Self::PhraseBlend | Self::BreakToIntro => 32,
-            Self::DryCut | Self::DropCut | Self::ScratchCut | Self::Spinback => 4,
+            Self::DryCut
+            | Self::DropCut
+            | Self::ScratchCut
+            | Self::Spinback
+            | Self::TapeStop
+            | Self::BuildRoll => 4,
             Self::EchoOut | Self::LoopOut => 8,
             _ => 16,
         }
@@ -159,6 +168,11 @@ pub struct ScratchOp {
     /// before release); a steady jog stays linear.
     #[serde(default)]
     pub accelerate: bool,
+    /// Tape stop: the platter decelerates evenly from normal speed to a
+    /// standstill at `peak_bar` and holds there; `peak_delta_frames` is the
+    /// distance travelled, half the distance at constant speed.
+    #[serde(default)]
+    pub brake: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -263,6 +277,57 @@ pub struct MixPlan {
     /// clash; without aligned stem PCM on both decks the engine must refuse them.
     #[serde(default)]
     pub requires_stems: bool,
+    /// Effect on the echo send for this transition. The engine applies it as
+    /// the transition starts and restores the user's sends once its tail has
+    /// rung out; without it the send keeps the user's effect.
+    #[serde(default)]
+    pub send_fx: Option<SendFx>,
+    /// A beat-repeat effect on the outgoing deck from `on_bar` until the end
+    /// of the plan, e.g. a roll that tightens into the incoming drop.
+    #[serde(default)]
+    pub insert_a: Option<InsertFx>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct InsertFx {
+    pub kind: FxKind,
+    /// Captured length; a roll then repeats it in ever shorter divisions.
+    pub beats: f32,
+    pub on_bar: f32,
+}
+
+impl InsertFx {
+    pub fn valid(&self) -> bool {
+        matches!(self.kind, FxKind::LoopRoll | FxKind::Roll)
+            && (0.0625..=4.0).contains(&self.beats)
+            && self.on_bar.is_finite()
+            && self.on_bar >= 0.0
+    }
+}
+
+/// A tail effect for the transition's FX send lanes. Only delay and reverb
+/// kinds are valid: the send is wet only, so an effect that replaces the dry
+/// signal cannot be expressed here.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SendFx {
+    pub kind: FxKind,
+    pub beats: f32,
+    pub feedback: f32,
+    pub decay_seconds: f32,
+    /// Seconds the tail keeps ringing after the plan ends.
+    pub tail_seconds: f32,
+}
+
+impl SendFx {
+    pub fn valid(&self) -> bool {
+        let tail = (self.kind.is_delay()
+            && !matches!(self.kind, FxKind::EchoOut | FxKind::ReverseDelay))
+            || matches!(self.kind, FxKind::Reverb | FxKind::Space);
+        tail && (0.0625..=4.0).contains(&self.beats)
+            && (0.0..=0.88).contains(&self.feedback)
+            && (0.1..=20.0).contains(&self.decay_seconds)
+            && (0.0..=30.0).contains(&self.tail_seconds)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

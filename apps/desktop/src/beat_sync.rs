@@ -65,6 +65,8 @@ pub(crate) fn cancellation_mask(command: &Command) -> u8 {
         | Command::SetReverse { .. }
         | Command::SetJogTouch { touching: true, .. }
         | Command::Jog { .. }
+        | Command::Seek { .. }
+        | Command::ScrubTo { .. }
         | Command::StartAutomix { .. }
         | Command::TriggerTemporaryCue { .. }
         | Command::SetBrake { on: true, .. } => 3,

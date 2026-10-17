@@ -37,6 +37,7 @@ impl DeckSlot {
             resonance_milli: AtomicU32::new(350),
             resonance_enabled: AtomicBool::new(true),
             jog_touch: AtomicBool::new(false),
+            jog_absolute: AtomicBool::new(false),
             jog_target: AtomicU64::new(0),
             inserts: mixless_protocol::default_fx().map(|state| {
                 let fx = AtomicFx::new();
@@ -120,6 +121,8 @@ impl Shared {
             xf_reverse: self.xf_reverse.load(Ordering::Relaxed),
             master: self.master.load(Ordering::Relaxed) as f32 / 1000.0,
             master_gain_db: self.master_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
+            master_chain: *self.master_chain.settings.lock().expect("master settings"),
+            master_meters: self.master_chain.read(),
             master_level: std::array::from_fn(|i| {
                 f32::from_bits(self.master_level[i].load(Ordering::Relaxed))
             }),
@@ -185,11 +188,7 @@ impl Shared {
                 sounding_bpm: {
                     let bpm = bpm.unwrap_or(s.bpm_milli.load(Ordering::Relaxed) as f32 / 100.0);
                     let rate = s.rate_micro.load(Ordering::Relaxed) as f32 / 1_000_000.0;
-                    if bpm <= 0.0 {
-                        0.0
-                    } else {
-                        bpm * rate
-                    }
+                    if bpm <= 0.0 { 0.0 } else { bpm * rate }
                 },
                 eq_db: [
                     s.eq_db[0].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,

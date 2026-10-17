@@ -28,6 +28,7 @@ impl UiState {
             self.stop_automix();
         }
         let mut changed = self.poll_transport_press();
+        changed |= self.poll_wheel_scrub();
         let preview_revision = self
             .core
             .mix_preparation
@@ -76,6 +77,7 @@ impl UiState {
             let settings = self.core.settings.get();
             self.wave_layout = settings.wave_layout;
             self.show_fx = settings.show_fx;
+            self.deck_elapsed = settings.deck_elapsed;
             self.settings_revision = revision;
             changed = true;
         }
@@ -101,6 +103,7 @@ impl UiState {
         changed |= snapshot != self.snapshot;
         self.fx = std::array::from_fn(|index| snapshot.decks[index].fx);
         self.snapshot = snapshot;
+        self.master_mixer.sample(self.snapshot.master_meters);
         self.presentation_frames = self.core.engine.presentation_frames(&self.snapshot);
 
         for index in 0..2 {

@@ -1,5 +1,8 @@
 //! Compact hardware-style platter: fixed artwork, a rotating position marker
 //! and a separate track-progress ring. Geometry also defines scratch gestures.
+mod geometry;
+pub(crate) use geometry::{PlatterGeometry, ProgressDrag};
+
 use super::*;
 use gpui::{ClickEvent, RenderImage, linear_color_stop, linear_gradient, rgb};
 use mixless_protocol::DeckId;
@@ -15,10 +18,11 @@ pub struct JogSpec {
     pub initial: char,
     pub artwork: Option<Arc<RenderImage>>,
     pub end_warning: Option<f32>,
+    pub dragging_progress: bool,
 }
 
-/// One revolution is 1.8 s of audio (33⅓ rpm). The artwork has no independent
-/// mouse handlers, so scratching and double-click transport work across it.
+/// The marker turns at 33⅓ rpm. The outer ring seeks through the track;
+/// artwork and the inner platter share scratch and double-click transport.
 pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
     let deck = spec.deck;
     let initial = spec.initial;
@@ -26,24 +30,38 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
     let end_warning = spec.end_warning;
     let cell = Arc::new(Mutex::new(Bounds::<Pixels>::default()));
     let cell_paint = cell.clone();
+    let cell_click = cell.clone();
+    let cell_hover = cell.clone();
     let down = cx.listener(move |s: &mut UiState, ev: &MouseDownEvent, window, cx| {
         window.prevent_default();
         cx.stop_propagation();
         let bounds = *cell.lock().unwrap();
-        s.begin_jog(deck, ev.position.x.into(), ev.position.y.into(), bounds);
+        let geometry = PlatterGeometry::new(bounds);
+        let (x, y) = (ev.position.x.into(), ev.position.y.into());
+        if geometry.on_progress(x, y) {
+            s.begin_progress(deck, x, y, geometry);
+        } else if geometry.distance(x, y) < geometry.radius {
+            s.begin_jog(deck, x, y, bounds);
+        }
         cx.notify();
     });
     let dbl = cx.listener(move |s: &mut UiState, ev: &ClickEvent, _, cx| {
         if let ClickEvent::Mouse(mouse) = ev
             && mouse.up.click_count >= 2
         {
-            s.play_pause(deck);
+            let geometry = PlatterGeometry::new(*cell_click.lock().unwrap());
+            let (x, y) = (mouse.up.position.x.into(), mouse.up.position.y.into());
+            if geometry.distance(x, y) < geometry.radius && !geometry.on_progress(x, y) {
+                s.play_pause(deck);
+            }
             cx.notify();
         }
     });
 
     div()
         .id(ElementId::Name(SharedString::from(format!("jog-{deck:?}"))))
+        .debug_selector(move || format!("jog-{deck:?}"))
+        .cursor(gpui::CursorStyle::OpenHand)
         .flex()
         .flex_1()
         .min_h_0()
@@ -51,6 +69,20 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
         .relative()
         .on_mouse_down(MouseButton::Left, down)
         .on_click(dbl)
+        .on_mouse_move(cx.listener(move |s, ev: &gpui::MouseMoveEvent, _, cx| {
+            let geometry = PlatterGeometry::new(*cell_hover.lock().unwrap());
+            let hovered = geometry.on_progress(ev.position.x.into(), ev.position.y.into());
+            if s.progress_hover[deck.index()] != hovered {
+                s.progress_hover[deck.index()] = hovered;
+                cx.notify();
+            }
+        }))
+        .on_hover(cx.listener(move |s, hovered: &bool, _, cx| {
+            if !hovered && s.progress_hover[deck.index()] {
+                s.progress_hover[deck.index()] = false;
+                cx.notify();
+            }
+        }))
         .child(
             canvas(
                 move |_, _, _| {},
@@ -99,9 +131,7 @@ pub fn jog(spec: JogSpec, cx: &mut Context<UiState>) -> impl IntoElement {
 }
 
 fn paint_jog(window: &mut Window, bounds: Bounds<Pixels>, spec: &JogSpec) {
-    let cx = pf(bounds.origin.x) + pf(bounds.size.width) / 2.;
-    let cy = pf(bounds.origin.y) + pf(bounds.size.height) / 2.;
-    let r = (pf(bounds.size.width).min(pf(bounds.size.height)) / 2. - 6.).max(8.);
+    let PlatterGeometry { cx, cy, radius: r } = PlatterGeometry::new(bounds);
     let color = spec.color;
 
     // Native rounded quads keep the circular surfaces smooth at Retina scale;
@@ -166,6 +196,21 @@ fn paint_jog(window: &mut Window, bounds: Bounds<Pixels>, spec: &JogSpec) {
             progress * 360.,
             2.2,
             theme::with_alpha(color, if spec.playing { 1. } else { 0.65 }),
+        );
+    }
+    // Read the current hit geometry at paint time too: opening Preferences or
+    // changing layouts must not leave a stale hover thumb on a paused deck.
+    let pointer = window.mouse_position();
+    let hovering_progress = window.is_window_hovered()
+        && PlatterGeometry::new(bounds).on_progress(pointer.x.into(), pointer.y.into());
+    if spec.frames > 0 && (spec.dragging_progress || hovering_progress) {
+        let angle = progress * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+        disc(
+            window,
+            cx + angle.cos() * r * 0.95,
+            cy + angle.sin() * r * 0.95,
+            3.5,
+            color,
         );
     }
     // A stationary zero marker makes remaining progress easy to read.

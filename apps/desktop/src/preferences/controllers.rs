@@ -21,6 +21,7 @@ pub(super) enum PresetOperation {
     Delete,
     Feature,
 }
+#[derive(Clone)]
 pub(super) struct PresetDialog {
     operation: PresetOperation,
     text: String,
@@ -411,10 +412,10 @@ impl Preferences {
             return;
         }
         if let Some(report) = self.import_preview.clone() {
-            match self
-                .hub()
-                .and_then(|h| h.accept_import(report).map_err(|e| e.to_string()))
-            {
+            match self.hub().and_then(|h| {
+                h.accept_import(Arc::unwrap_or_clone(report))
+                    .map_err(|e| e.to_string())
+            }) {
                 Ok(id) => {
                     self.selected_preset = Some(id);
                     self.import_preview = None;
@@ -427,16 +428,21 @@ impl Preferences {
 
     pub(super) fn controller_dialog(
         &self,
+        dialog: &overlays::ControllerPopup,
         height: f32,
         window: &Window,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
-        if let Some(report) = &self.import_preview {
-            return Self::controller_dialog_overlay(
-                self.preset_import_panel(report, height, window, cx),
-            );
+        if let overlays::ControllerPopup::Import { report, from_batch } = dialog {
+            return Self::controller_dialog_overlay(self.preset_import_panel(
+                report,
+                *from_batch,
+                height,
+                window,
+                cx,
+            ));
         }
-        if let Some(batch) = &self.import_batch {
+        if let overlays::ControllerPopup::Batch(batch) = dialog {
             return Self::controller_dialog_overlay(
                 self.preset_batch_panel(batch, height, window, cx),
             );
@@ -457,7 +463,7 @@ impl Preferences {
             .rounded(px(6.))
             .shadow_lg()
             .max_h(px((height - 100.).min(650.)));
-        if let Some(d) = &self.preset_dialog {
+        if let overlays::ControllerPopup::Preset(d) = dialog {
             let title = match d.operation {
                 PresetOperation::New => "New preset",
                 PresetOperation::Rename => "Rename preset",

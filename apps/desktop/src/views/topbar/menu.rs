@@ -179,9 +179,6 @@ impl UiState {
         window: &Window,
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        if !self.brand_menu.open {
-            return None;
-        }
         let anchor = self.brand_menu.anchor.get()?;
         let viewport = window.viewport_size();
         let edge = px(8.);

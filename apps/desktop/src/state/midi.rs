@@ -58,6 +58,7 @@ impl UiState {
                 self.midi_load_selected(self.focus);
             }
             Focus { deck } => self.focus = deck,
+            TimeDisplay { deck } => self.toggle_deck_time(deck),
             _ => {
                 if let Some(command) = action.command(&snapshot) {
                     self.dispatch(command);
@@ -67,26 +68,27 @@ impl UiState {
     }
 
     fn midi_browse_tracks(&mut self, steps: i16) {
+        // Browse the rows as shown, including AUTO's BEST order.
+        let tracks = self.shown_tracks();
         let current = self
             .midi_track_cursor
             .filter(|(index, id)| {
                 self.track_sel == Some(id.0)
-                    && self.tracks.get(*index).is_some_and(|track| track.id == *id)
+                    && tracks.get(*index).is_some_and(|track| track.id == *id)
             })
             .map(|(index, _)| index)
             .or_else(|| {
-                self.tracks
+                tracks
                     .iter()
                     .position(|track| Some(track.id.0) == self.track_sel)
             });
-        let Some(index) = stepped_index(current, self.tracks.len(), steps) else {
+        let Some(index) = stepped_index(current, tracks.len(), steps) else {
             return;
         };
         self.track_menu = None;
-        self.track_sel = Some(self.tracks[index].id.0);
-        self.midi_track_cursor = Some((index, self.tracks[index].id));
-        let rows =
-            crate::views::library::import_rows::rows(self.tracks.len(), &self.playlist_imports);
+        self.track_sel = Some(tracks[index].id.0);
+        self.midi_track_cursor = Some((index, tracks[index].id));
+        let rows = crate::views::library::import_rows::rows(tracks.len(), &self.playlist_imports);
         let row = rows
             .iter()
             .position(|row| *row == crate::views::library::import_rows::Row::Track(index))

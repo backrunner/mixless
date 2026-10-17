@@ -53,7 +53,9 @@ imageType: image/png
 
 ## 便携包
 
-点击资料库的 **+**，使用 **Portable package**。勾选 **Entire library** 导出所有曲目和歌单；取消勾选后可以选择多个歌单。也可右键歌单，选择 **Export package…**。
+右键 **LIBRARY** 标题，选择 **Export package…** 打开独立导出窗口。可以勾选 **Entire library** 导出整个曲库，也可以展开文件夹和歌单分组，选择要导出的内容。部分选中的分组会显示半选复选框。右键某个歌单并选择 **Export package…**，会打开同一个窗口并预选该歌单。
+
+导入包时，点击资料库的 **+**，再点击 **Portable package** 旁的 **Import…**。
 
 - **Export…** 创建 `.mixpack` 文件，包含原始音频、元数据、歌单顺序、Cue、封面，以及已有的分析、波形和 stems。共享的音频块只存一份。
 - **Update existing…** 在同一文件内更新选中的歌单，保留包内其他歌单。整库更新会替换该来源曲库在包中的快照。只追加新增或变化的数据块；更新中断后仍能读取上一次完整提交。

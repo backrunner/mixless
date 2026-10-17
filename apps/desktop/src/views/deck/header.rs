@@ -5,7 +5,7 @@ use mixless_protocol::{DeckId, DeckSnapshot};
 
 use crate::{state::UiState, theme};
 
-use super::{deck_label, fmt_time};
+use super::deck_label;
 
 impl UiState {
     pub(super) fn render_deck_header(
@@ -16,21 +16,10 @@ impl UiState {
     ) -> gpui::AnyElement {
         let dc = theme::deck_color(deck);
         let loading = self.deck_loading[deck.index()].as_ref();
-        let sr = if d.src_sample_rate > 0 {
-            d.src_sample_rate
-        } else {
-            self.snapshot.sample_rate
-        };
         let track = d
             .track_id
             .and_then(|id| self.tracks.iter().find(|t| t.id == id));
         let key = track.and_then(|t| t.camelot.clone().or_else(|| t.key.clone()));
-
-        let remain = if d.frames > 0 && sr > 0 {
-            format!("-{}", fmt_time(d.frames.saturating_sub(d.frame), sr))
-        } else {
-            "-0:00".into()
-        };
 
         let focus_btn = {
             let el = gpui::div()
@@ -64,14 +53,13 @@ impl UiState {
             .items_center()
             .gap_3()
             .child(
-                gpui::div()
+                self.deck_time(deck, "deck", cx)
                     .text_size(px(15.))
                     .font_weight(gpui::FontWeight::BOLD)
                     .text_color(if d.frames > 0 { dc } else { theme::MUTED })
                     .min_w(px(52.))
                     .flex()
-                    .justify_end()
-                    .child(remain),
+                    .justify_end(),
             )
             .child(
                 gpui::div()
@@ -125,6 +113,8 @@ impl UiState {
             .when(self.automix_active && d.automix_cue_frame.is_some(), |el| {
                 el.child(
                     gpui::div()
+                        .flex_none()
+                        .whitespace_nowrap()
                         .text_size(px(8.))
                         .text_color(theme::WARN)
                         .child(if d.playing { "AUTO" } else { "AUTO CUE" }),
@@ -142,7 +132,7 @@ impl UiState {
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
-                            .overflow_hidden()
+                            .truncate()
                             .child(
                                 loading
                                     .cloned()
@@ -158,15 +148,15 @@ impl UiState {
                             } else {
                                 theme::MUTED
                             })
-                            .overflow_hidden()
+                            .truncate()
                             .child(if loading.is_some() {
                                 if self.pending_play[deck.index()] {
-                                    "Loading audio… · will play".into()
+                                    "Loading audio… will play".into()
                                 } else {
                                     "Loading audio…".into()
                                 }
                             } else if self.grid_pending(deck) {
-                                "Ready to play · analyzing beats & phrases…".into()
+                                "Ready to play, analyzing beats & phrases…".into()
                             } else {
                                 d.artist.clone().unwrap_or_default()
                             }),

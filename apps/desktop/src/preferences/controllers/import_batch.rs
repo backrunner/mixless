@@ -131,7 +131,8 @@ impl Preferences {
                                 .as_ref()
                                 .and_then(|b| b.entries.get(index))
                                 .and_then(|e| e.result.as_ref().ok())
-                                .cloned();
+                                .cloned()
+                                .map(Arc::new);
                         },
                         cx,
                     ))

@@ -57,6 +57,16 @@ fn audio_callback_budget() {
         (192_000, 256, false, false),
     ] {
         let engine = test_engine(sample_rate);
+        // Include every master processor in the full deck/FX callback budget.
+        let mut master = mixless_protocol::MasterChainSettings::default();
+        master.eq_enabled = true;
+        master.eq[2].gain_db = 6.;
+        master.compressor.enabled = true;
+        master.dynamics.enabled = true;
+        engine
+            .dispatch(Command::SetMasterChain { settings: master })
+            .unwrap();
+
         for deck in [DeckId::A, DeckId::B] {
             engine.dispatch(Command::PlayPause { deck }).unwrap();
             engine
@@ -174,9 +184,16 @@ fn audio_callback_budget() {
             if scratch && block % 1024 < 512 && block % 8 == 0 {
                 for deck in [DeckId::A, DeckId::B] {
                     engine
-                        .dispatch(Command::Jog {
-                            deck,
-                            delta_frames: if block % 128 < 64 { 4096.0 } else { -4096.0 },
+                        .dispatch(if deck == DeckId::B && block % 64 == 0 {
+                            Command::ScrubTo {
+                                deck,
+                                frame: if block % 128 == 0 { 24_000 } else { 144_000 },
+                            }
+                        } else {
+                            Command::Jog {
+                                deck,
+                                delta_frames: if block % 128 < 64 { 4096.0 } else { -4096.0 },
+                            }
                         })
                         .unwrap();
                 }
@@ -184,9 +201,11 @@ fn audio_callback_budget() {
             let start = std::time::Instant::now();
             engine.shared.process_block(&mut rt, &mut output, 2);
             timings.push(start.elapsed().as_secs_f64());
-            assert!(output
-                .iter()
-                .all(|sample| sample.is_finite() && sample.abs() <= 1.0));
+            assert!(
+                output
+                    .iter()
+                    .all(|sample| sample.is_finite() && sample.abs() <= 1.0)
+            );
         }
         if brake {
             assert!(engine.snapshot().decks.iter().all(|d| d.playing && d.brake));

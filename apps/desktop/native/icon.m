@@ -1,5 +1,9 @@
 #import <AppKit/AppKit.h>
 
+int mixless_reduce_motion(void) {
+    return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion ? 1 : 0;
+}
+
 // GPUI invokes this on the main thread after creating NSApplication. Embedding
 // the image also gives cargo-run/dev.sh builds the same Dock icon as the bundle.
 void mixless_set_app_icon(const unsigned char *bytes, unsigned long length) {

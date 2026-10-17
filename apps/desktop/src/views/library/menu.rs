@@ -13,10 +13,10 @@ pub struct TrackMenu {
 impl UiState {
     pub fn render_track_menu(
         &self,
+        menu: TrackMenu,
         window: &Window,
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
-        let menu = self.track_menu.clone()?;
         let missing = matches!(
             self.core.analysis.statuses().get(&menu.track),
             Some(crate::analysis::Status::MissingFile(_))

@@ -57,18 +57,36 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
             .map(|beat| g.sec(beat))
             .collect();
         entries.push(input);
-        let Some(safe) = entries
+        let usable: Vec<f32> = entries
             .into_iter()
             .filter(|sec| {
                 crate::vocals::safe_entry(b, *sec)
                     && crate::energy::handoff_supported(a, b, out, *sec)
             })
-            .max_by(|left, right| {
-                crate::energy::entry_score(a, b, out, *left)
-                    .total_cmp(&crate::energy::entry_score(a, b, out, *right))
-                    .then_with(|| right.total_cmp(left))
+            .collect();
+        // Even the emergency handoff starts B outside a peak with its main
+        // peak ahead, and does not answer a sung ending with a sung entry.
+        let sung = |t: &TrackAnalysis, from: f32, to: f32| {
+            (0..=8).any(|i| {
+                crate::continuity::voice_active(t, from + (to - from) * i as f32 / 8.) > 0.35
             })
-        else {
+        };
+        let sung_end = sung(a, out - 2., out - 0.1);
+        let preferred = |sec: &f32| {
+            crate::drops::entry_allowed(b, *sec)
+                && !(sung_end && sung(b, *sec + 0.02, *sec + 1.))
+                && !crate::continuity::silent(b, *sec, 0.5)
+        };
+        let pool: Vec<f32> = if usable.iter().any(preferred) {
+            usable.into_iter().filter(preferred).collect()
+        } else {
+            usable
+        };
+        let Some(safe) = pool.into_iter().max_by(|left, right| {
+            crate::energy::entry_score(a, b, out, *left)
+                .total_cmp(&crate::energy::entry_score(a, b, out, *right))
+                .then_with(|| right.total_cmp(left))
+        }) else {
             return fail();
         };
         input = safe;
@@ -79,6 +97,19 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
     let seconds = ((out - earliest.max(0.)) / ctx.offset_a.rate)
         .min((b.duration_sec - input) / ctx.offset_b.rate * 0.5)
         .min(4.);
+    // Two unsynchronized kits must not run together: unless the sounding
+    // tempi already agree, B launches for only the last outgoing beat while
+    // A's filter closes over the whole handoff.
+    let ga = crate::grid::Grid(a);
+    let gb = crate::grid::Grid(b);
+    let bpm_a = ga.bpm(ga.beat(out)) * ctx.offset_a.rate;
+    let ratio = bpm_a / (gb.bpm(gb.beat(input)) * ctx.offset_b.rate);
+    let locked = [1., 2., 0.5].iter().any(|f| (ratio / f - 1.).abs() <= 0.02);
+    let lead = if locked {
+        0.
+    } else {
+        (1. - 60. / bpm_a / seconds.max(0.01)).max(0.)
+    };
     let start = out - seconds * ctx.offset_a.rate;
     if seconds < 0.01
         || out > a.duration_sec
@@ -124,18 +155,27 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         t_in_a: start,
         t_out_a: start + seconds * ctx.offset_a.rate,
         t_in_b: input,
-        t_end_b: input + seconds * ctx.offset_b.rate,
+        t_end_b: input + (1. - lead) * seconds * ctx.offset_b.rate,
+        incoming_start_bar: lead,
+        incoming_source: line(&[
+            (lead, input),
+            (1., input + (1. - lead) * seconds * ctx.offset_b.rate),
+        ]),
         clock: line(&[(0., 0.), (1., seconds)]),
         master_bpm: Polyline::constant((a.tempo.global_bpm * ctx.offset_a.rate).clamp(20., 400.)),
         transition_mode: Some(TransitionMode::PhraseBridge),
         lanes: AutomationLanes {
-            xfader: line(&[
-                (0., -1.),
-                (0.25, -0.6875),
-                (0.5, 0.),
-                (0.75, 0.6875),
-                (1., 1.),
-            ]),
+            xfader: if lead > 0. {
+                line(&[(0., -1.), (lead, -1.), ((1. + lead) * 0.5, 0.), (1., 1.)])
+            } else {
+                line(&[
+                    (0., -1.),
+                    (0.25, -0.6875),
+                    (0.5, 0.),
+                    (0.75, 0.6875),
+                    (1., 1.),
+                ])
+            },
             gain_a: zero.clone(),
             gain_b: zero.clone(),
             eq_a: eq.clone(),

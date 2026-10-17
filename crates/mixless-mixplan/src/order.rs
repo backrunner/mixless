@@ -1,52 +1,188 @@
-//! Playlist order for the smoothest set: an open path through every track
-//! that keeps each neighbour within reach of a beat blend, harmonically close
-//! and without abrupt level changes. Pure and deterministic.
+//! Playlist order for the smoothest set: one loop through every track, chosen
+//! by planning the real transition between each pair and keeping the cycle
+//! whose transitions score best. Pure and deterministic; computed once per
+//! playlist, then played round and round in that order.
+use crate::{Planner, PlannerOptions};
 use mixless_protocol::TrackAnalysis;
 
-/// Cost of mixing `a` into `b`; 0 is an ideal pair, about 1 needs a
-/// native-rate handoff, and each part only grows with the musical distance.
+/// Rough cost of mixing `a` into `b` from tempo, key and level alone; 0 is
+/// an ideal pair, about 1 needs a native-rate handoff. It breaks ties
+/// between planned transitions and picks which pairs are worth planning.
 pub fn transition_cost(a: &TrackAnalysis, b: &TrackAnalysis) -> f32 {
-    tempo_cost(a, b) + key_cost(a, b) + energy_cost(a, b)
+    tempo_cost(a, b)
+        + key_cost(a, b)
+        + energy_cost(a, b)
+        + if same_recording(a, b) { 3. } else { 0. }
 }
 
-/// Every index once, starting at `first` when given. Tracks without a
-/// measured tempo keep their relative order at the end.
-pub fn best_order(tracks: &[&TrackAnalysis], first: Option<usize>) -> Vec<usize> {
-    let measured: Vec<usize> = (0..tracks.len())
-        .filter(|i| Some(*i) == first || tracks[*i].tempo.global_bpm > 0.)
-        .collect();
-    let rest: Vec<usize> = (0..tracks.len())
-        .filter(|i| !measured.contains(i))
-        .collect();
-    let n = measured.len();
-    if n < 3 {
-        return measured.into_iter().chain(rest).collect();
+/// Two playlist entries of one recording (a duplicate import) mix
+/// "perfectly" into each other, which would play the song twice in a row.
+fn same_recording(a: &TrackAnalysis, b: &TrackAnalysis) -> bool {
+    (a.duration_sec - b.duration_sec).abs() < 1.
+        && (a.tempo.global_bpm - b.tempo.global_bpm).abs() < 0.5
+        && a.camelot == b.camelot
+        && a.bars.len().abs_diff(b.bars.len()) <= 1
+}
+
+/// Cost of the transition the planner would actually make from `a` into
+/// `b`, entering `a` at its start: the inverse of its score, so a long
+/// safe blend beats an emergency handoff.
+fn planned_cost(planner: &Planner, a: &TrackAnalysis, b: &TrackAnalysis) -> f32 {
+    let plan = planner.plan_pair(a, b, &[], &[], Default::default(), Default::default());
+    let rough = 0.15 * transition_cost(a, b);
+    match &plan.summary {
+        Some(summary) if plan.failure_reason.is_none() && !same_recording(a, b) => {
+            // Reaching A's last stretch with no real overlap plays it out:
+            // a pair that can only do that is a worse neighbour than its
+            // score alone says.
+            let played_out = plan.t_out_a >= (a.duration_sec * 0.92).min(a.duration_sec - 8.)
+                && summary.length_bars < 4;
+            (1. - summary.score).max(0.) + rough + if played_out { 0.15 } else { 0. }
+        }
+        _ => 1.5 + rough,
     }
-    let cost: Vec<Vec<f32>> = measured
+}
+
+/// Each track keeps this many of its roughly closest successors in a large
+/// playlist; every pair is planned in a small one.
+const PLANNED_SUCCESSORS: usize = 12;
+/// Beyond this many tracks a full library is ordered on the rough cost
+/// alone; planning thousands of pairs would keep AUTO waiting.
+const PLANNED_TRACKS: usize = 200;
+
+/// Every index once, as a loop: playing on from the last entry returns to
+/// the first. The loop is opened after its weakest transition.
+pub fn best_cycle(tracks: &[&TrackAnalysis], options: &PlannerOptions) -> Vec<usize> {
+    best_cycle_with_progress(tracks, options, |_, _| {})
+}
+
+/// Reports completed work units, not elapsed-time estimates. Pair evaluations
+/// run in parallel, so observers must accept reports arriving out of order.
+pub fn best_cycle_with_progress(
+    tracks: &[&TrackAnalysis],
+    options: &PlannerOptions,
+    progress: impl Fn(usize, usize) + Sync,
+) -> Vec<usize> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let n = tracks.len();
+    if n < 3 {
+        progress(1, 1);
+        return (0..n).collect();
+    }
+    let successors = if n <= 40 { n - 1 } else { PLANNED_SUCCESSORS };
+    let pair_count = if n > PLANNED_TRACKS {
+        0
+    } else {
+        n * successors
+    };
+    let total = n + pair_count + order_starts(n) + 1;
+    let done = AtomicUsize::new(0);
+    let advance = || progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+    progress(0, total);
+    let rough: Vec<Vec<f32>> = tracks
         .iter()
-        .map(|&i| {
-            measured
-                .iter()
-                .map(|&j| transition_cost(tracks[i], tracks[j]))
-                .collect()
+        .map(|a| {
+            let row = tracks.iter().map(|b| transition_cost(a, b)).collect();
+            advance();
+            row
         })
         .collect();
-    let length = |path: &[usize]| path.windows(2).map(|w| cost[w[0]][w[1]]).sum::<f32>();
-    let starts: Vec<usize> = match first.and_then(|f| measured.iter().position(|i| *i == f)) {
-        Some(start) => vec![start],
-        None => (0..n).collect(),
+    if n > PLANNED_TRACKS {
+        let order = order_by_with_progress(&rough, &advance);
+        advance();
+        return order;
+    }
+    let mut pairs = Vec::new();
+    for (i, row) in rough.iter().enumerate() {
+        let mut next: Vec<usize> = (0..n).filter(|j| *j != i).collect();
+        next.sort_by(|x, y| row[*x].total_cmp(&row[*y]).then(x.cmp(y)));
+        pairs.extend(next.into_iter().take(successors).map(|j| (i, j)));
+    }
+    let planner = Planner::with_options(PlannerOptions {
+        earliest_outgoing_sec: 0.,
+        outgoing_entry_sec: 0.,
+        strategy: None,
+        ..options.clone()
+    });
+    let threads = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(pairs.len());
+    let costs: Vec<f32> = std::thread::scope(|scope| {
+        let chunks: Vec<_> = pairs
+            .chunks(pairs.len().div_ceil(threads.max(1)))
+            .map(|chunk| {
+                let planner = &planner;
+                let advance = &advance;
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|&(i, j)| {
+                            let cost = planned_cost(planner, tracks[i], tracks[j]);
+                            advance();
+                            cost
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        chunks
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    });
+    let mut cost: Vec<Vec<f32>> = rough
+        .iter()
+        .map(|row| row.iter().map(|r| 2. + r).collect())
+        .collect();
+    for (&(i, j), c) in pairs.iter().zip(costs) {
+        cost[i][j] = c;
+    }
+    let order = order_by_with_progress(&cost, &advance);
+    advance();
+    order
+}
+
+fn order_starts(n: usize) -> usize {
+    if n > PLANNED_TRACKS { 1 } else { n.min(16) }
+}
+
+/// The cheapest loop under `cost[from][to]`, opened after its most
+/// expensive edge so a listener starting at the top hears every good
+/// transition before the one forced by closing the loop.
+#[cfg(test)]
+fn order_by(cost: &[Vec<f32>]) -> Vec<usize> {
+    order_by_with_progress(cost, &|| {})
+}
+
+fn order_by_with_progress(cost: &[Vec<f32>], advance: &impl Fn()) -> Vec<usize> {
+    let n = cost.len();
+    let total = |tour: &[usize]| {
+        (0..n)
+            .map(|k| cost[tour[k]][tour[(k + 1) % n]])
+            .sum::<f32>()
     };
     let mut best: Option<(f32, Vec<usize>)> = None;
-    for start in starts {
-        let mut path = nearest_neighbour(&cost, start);
-        improve(&cost, &mut path);
-        let total = length(&path);
-        if best.as_ref().is_none_or(|(b, _)| total < *b - 1e-6) {
-            best = Some((total, path));
+    // A large playlist tries a spread of starts instead of every one.
+    let starts = order_starts(n);
+    for start in (0..starts).map(|k| k * n / starts) {
+        let mut tour = nearest_neighbour(cost, start);
+        improve(cost, &mut tour);
+        let length = total(&tour);
+        if best.as_ref().is_none_or(|(b, _)| length < *b - 1e-6) {
+            best = Some((length, tour));
         }
+        advance();
     }
-    let path = best.map(|(_, p)| p).unwrap_or_default();
-    path.into_iter().map(|i| measured[i]).chain(rest).collect()
+    let mut tour = best.map(|(_, t)| t).unwrap_or_default();
+    let worst = (0..n)
+        .max_by(|x, y| {
+            cost[tour[*x]][tour[(*x + 1) % n]]
+                .total_cmp(&cost[tour[*y]][tour[(*y + 1) % n]])
+                .then(y.cmp(x))
+        })
+        .unwrap_or(n - 1);
+    tour.rotate_left((worst + 1) % n);
+    tour
 }
 
 fn nearest_neighbour(cost: &[Vec<f32>], start: usize) -> Vec<usize> {
@@ -66,60 +202,42 @@ fn nearest_neighbour(cost: &[Vec<f32>], start: usize) -> Vec<usize> {
     path
 }
 
-/// 2-opt with the first track fixed, then single-track relocation, until no
-/// move shortens the path. Costs are symmetric, so a reversal keeps pairs.
-fn improve(cost: &[Vec<f32>], path: &mut Vec<usize>) {
-    let n = path.len();
-    let edge = |p: &[usize], i: usize| {
-        if i + 1 < p.len() {
-            cost[p[i]][p[i + 1]]
-        } else {
-            0.
-        }
-    };
-    for _ in 0..64 {
+/// Or-opt on the loop: move runs of one to three tracks to a better place,
+/// keeping their direction because a transition is not symmetric.
+fn improve(cost: &[Vec<f32>], tour: &mut Vec<usize>) {
+    let n = tour.len();
+    // Each pass is quadratic; a long list settles for fewer passes.
+    for _ in 0..(64 * 100 / n.max(100)).max(2) {
         let mut changed = false;
-        for i in 1..n - 1 {
-            for j in i + 1..n {
-                let before = cost[path[i - 1]][path[i]] + edge(path, j);
-                let after = cost[path[i - 1]][path[j]]
-                    + if j + 1 < n {
-                        cost[path[i]][path[j + 1]]
-                    } else {
-                        0.
-                    };
-                if after < before - 1e-6 {
-                    path[i..=j].reverse();
+        for run in 1..=3.min(n - 2) {
+            for from in 0..n {
+                // Cut the run out of the loop, then try every other gap.
+                let at = |k: usize| tour[k % n];
+                let (before, first, last, after) = (
+                    at(from + n - 1),
+                    at(from),
+                    at(from + run - 1),
+                    at(from + run),
+                );
+                let saved = cost[before][first] + cost[last][after] - cost[before][after];
+                let mut best = (1e-6f32, None);
+                for gap in 0..n - run {
+                    let (u, v) = (at(from + run + gap), at(from + run + gap + 1));
+                    if v == first {
+                        continue;
+                    }
+                    let gain = saved - (cost[u][first] + cost[last][v] - cost[u][v]);
+                    if gain > best.0 {
+                        best = (gain, Some(gap));
+                    }
+                }
+                if let Some(gap) = best.1 {
+                    let mut rest: Vec<usize> = (0..n).map(|k| at(from + k)).collect();
+                    let moved: Vec<usize> = rest.drain(..run).collect();
+                    rest.splice(gap + 1..gap + 1, moved);
+                    *tour = rest;
                     changed = true;
                 }
-            }
-        }
-        for from in 1..n {
-            let track = path[from];
-            let removed_gain = cost[path[from - 1]][track] + edge(path, from)
-                - if from + 1 < n {
-                    cost[path[from - 1]][path[from + 1]]
-                } else {
-                    0.
-                };
-            let mut rest = path.clone();
-            rest.remove(from);
-            let mut best = (0f32, from);
-            for to in 1..=rest.len() {
-                let added = cost[rest[to - 1]][track]
-                    + if to < rest.len() {
-                        cost[track][rest[to]] - cost[rest[to - 1]][rest[to]]
-                    } else {
-                        0.
-                    };
-                if removed_gain - added > best.0 + 1e-6 {
-                    best = (removed_gain - added, to);
-                }
-            }
-            if best.0 > 0. {
-                rest.insert(best.1, track);
-                *path = rest;
-                changed = true;
             }
         }
         if !changed {
@@ -186,6 +304,13 @@ mod tests {
         crate::tests::track(id, bpm, key, L::Drop, 32, 0.9, 0.2)
     }
 
+    fn rough(tracks: &[TrackAnalysis]) -> Vec<Vec<f32>> {
+        tracks
+            .iter()
+            .map(|a| tracks.iter().map(|b| transition_cost(a, b)).collect())
+            .collect()
+    }
+
     #[test]
     fn tempo_islands_are_joined_once_and_keys_chain() {
         let tracks = [
@@ -196,12 +321,12 @@ mod tests {
             track(5, 172., "8A"),
             track(6, 124., "10A"),
         ];
-        let refs: Vec<_> = tracks.iter().collect();
-        let order = best_order(&refs, Some(0));
-        assert_eq!(order[0], 0);
+        let order = order_by(&rough(&tracks));
         let mut sorted = order.clone();
         sorted.sort();
         assert_eq!(sorted, (0..6).collect::<Vec<_>>());
+        // The loop crosses between the islands twice; opened after the
+        // worse crossing, the playlist reads with a single jump.
         let jumps = order
             .windows(2)
             .filter(|w| tempo_cost(&tracks[w[0]], &tracks[w[1]]) >= 1.)
@@ -216,13 +341,69 @@ mod tests {
     }
 
     #[test]
-    fn order_is_deterministic_without_a_fixed_start() {
+    fn the_planned_loop_is_fixed_and_visits_every_track_once() {
         let tracks: Vec<_> = [128., 140., 126., 174., 130., 172.]
             .iter()
             .enumerate()
             .map(|(i, bpm)| track(i as i64, *bpm, "5A"))
             .collect();
         let refs: Vec<_> = tracks.iter().collect();
-        assert_eq!(best_order(&refs, None), best_order(&refs, None));
+        let options = PlannerOptions::default();
+        let order = best_cycle(&refs, &options);
+        let reports = std::sync::Mutex::new(Vec::new());
+        assert_eq!(
+            order,
+            best_cycle_with_progress(&refs, &options, |done, total| {
+                reports.lock().unwrap().push((done, total));
+            })
+        );
+        let mut reports = reports.into_inner().unwrap();
+        let total = reports[0].1;
+        assert_eq!(reports.first(), Some(&(0, total)));
+        assert_eq!(reports.last(), Some(&(total, total)));
+        assert!(
+            reports
+                .iter()
+                .all(|&(done, count)| done <= count && count == total)
+        );
+        reports.sort_unstable();
+        assert_eq!(
+            reports,
+            (0..=total).map(|done| (done, total)).collect::<Vec<_>>()
+        );
+        let mut sorted = order.clone();
+        sorted.sort();
+        assert_eq!(sorted, (0..6).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn progress_finishes_for_short_and_rough_only_playlists() {
+        for count in [0, 1, 2, PLANNED_TRACKS + 1] {
+            let tracks: Vec<_> = (0..count).map(|i| track(i as i64, 128., "5A")).collect();
+            let refs: Vec<_> = tracks.iter().collect();
+            let last = std::sync::Mutex::new((0, 0));
+            let order =
+                best_cycle_with_progress(&refs, &PlannerOptions::default(), |done, total| {
+                    *last.lock().unwrap() = (done, total);
+                });
+            assert_eq!(order.len(), count);
+            let (done, total) = last.into_inner().unwrap();
+            assert!(total > 0);
+            assert_eq!(done, total);
+        }
+    }
+
+    #[test]
+    fn a_duplicate_import_never_follows_itself() {
+        let mut tracks: Vec<_> = [128., 128., 127., 129.]
+            .iter()
+            .enumerate()
+            .map(|(i, bpm)| track(i as i64, *bpm, "5A"))
+            .collect();
+        tracks[1].duration_sec = tracks[0].duration_sec;
+        let order = order_by(&rough(&tracks));
+        let at = |i| order.iter().position(|x| *x == i).unwrap();
+        assert_ne!((at(0) as i32 - at(1) as i32).rem_euclid(4), 1);
+        assert_ne!((at(1) as i32 - at(0) as i32).rem_euclid(4), 1);
     }
 }

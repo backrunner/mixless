@@ -15,10 +15,10 @@ pub struct PlaylistMenu {
 impl UiState {
     pub fn render_playlist_menu(
         &self,
+        menu: PlaylistMenu,
         window: &Window,
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
-        let menu = self.playlist_menu.clone()?;
         let failed = self
             .playlists
             .iter()
@@ -92,6 +92,9 @@ impl UiState {
             panel = panel.child(
                 div()
                     .id(("playlist-menu-action", action as usize))
+                    .when(action == 4, |el| {
+                        el.debug_selector(|| "playlist-menu-export".into())
+                    })
                     .h(px(theme::MENU_ROW_HEIGHT))
                     .flex_shrink_0()
                     .px(px(7.))
@@ -120,11 +123,7 @@ impl UiState {
                         s.playlist_menu = None;
                         match action {
                             0 => s.duplicate_playlist(id),
-                            4 => {
-                                s.package.all = false;
-                                s.package.selected = [id].into_iter().collect();
-                                s.show_import_modal = true;
-                            }
+                            4 => s.open_package_export(Some(id)),
                             2 => s.retry_failed_imports(id),
                             3 => s.refresh_spotify_playlist(id),
                             _ => s.confirm_remove_playlist = Some((id, name.clone())),
@@ -166,9 +165,9 @@ impl UiState {
 
     pub fn render_remove_playlist_confirm(
         &self,
+        (id, name): (i64, String),
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let (id, name) = self.confirm_remove_playlist.clone()?;
         let folder = self
             .playlists
             .iter()

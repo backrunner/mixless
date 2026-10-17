@@ -352,10 +352,23 @@ pub fn wave_lane(
     }
     let cell = wave_drag_cell();
     let cell_paint = cell.clone();
-    let down = wave_drag_handler(cell, deck, vertical, cx);
+    let down = wave_drag_handler(cell.clone(), deck, vertical, cx);
+    let scroll = cx.listener(move |s: &mut UiState, ev: &gpui::ScrollWheelEvent, _, cx| {
+        let delta = ev.delta.pixel_delta(px(40.));
+        let pixels = if vertical || delta.y.abs() >= delta.x.abs() {
+            delta.y
+        } else {
+            delta.x
+        };
+        let (_, fpp) = *cell.lock().unwrap();
+        s.scroll_wave(deck, f32::from(pixels), fpp);
+        cx.stop_propagation();
+        cx.notify();
+    });
 
     div()
         .id(id)
+        .debug_selector(move || format!("wave-lane-{deck:?}"))
         .flex_1()
         .min_h_0()
         .min_w_0()
@@ -371,6 +384,7 @@ pub fn wave_lane(
             gpui::CursorStyle::OpenHand
         })
         .on_mouse_down(MouseButton::Left, down)
+        .on_scroll_wheel(scroll)
         .child(
             canvas(
                 move |_, _, _| {},

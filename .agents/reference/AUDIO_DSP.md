@@ -23,8 +23,10 @@ protect their respective sums. These are sample-peak, not true-peak limiters.
 
 Post-fader/crossfader sends feed shared wet-only Echo and Reverb returns. Those
 returns keep processing after the send is closed, allowing the tail to decay.
-The summed bus passes through master GAIN (-12 to +12 dB), a stereo-linked
-sample-peak limiter, then master LEVEL (0 to 100%). LEVEL cannot drive the
+The summed bus passes through master GAIN (-12 to +12 dB), five optional
+parametric bell EQ bands, an optional stereo-linked soft-knee compressor, an
+optional expander/gate, an always-active stereo-linked sample-peak limiter, then
+master LEVEL (0 to 100%). LEVEL cannot drive the
 limiter or undo attenuation: 25% output remains bounded by 0.245 even with
 positive master GAIN. Signals below the limiter ceiling are not continuously
 waveshaped. PFL remains independent of both master controls.
@@ -91,8 +93,16 @@ listening quality or inter-sample true-peak protection.
 - `SetJogTouch` acquires/releases the platter. `Jog` updates a bounded target;
   the audio thread follows it using a damped velocity controller instead of
   discontinuously writing the audible playhead from mouse events.
-- Moving a paused deck is audible; holding it still decays to silence. Release
-  preserves the transport state. Slip advances a separate background timeline.
+- Platter and waveform grabs, waveform wheel bursts and progress-ring drags
+  use the same bidirectional scratch renderer. Paused audition is automatically
+  sent pre-fader to monitor only, including release and insert tails, without
+  changing PFL selection. Playing gestures retain normal master/PFL routing.
+  No monitor device means no paused audition fallback to master.
+- Holding still decays to silence; release preserves transport state. Wheel
+  bursts release after 120 ms without events. Slip advances a background timeline
+  for relative scrubbing. `ScrubTo` gives the progress ring an absolute target,
+  auditions near distant destinations with the existing 6 ms crossfade, and
+  commits the final position on release even with Slip enabled.
 - Cubic interpolation handles slow/reverse motion. A precomputed 48-tap,
   fractional-phase low-pass kernel bank reduces aliasing above normal speed.
   Rate and phase interpolation avoid hard switching between kernel banks.
@@ -258,3 +268,33 @@ inserts and master sends use the same policy, without callback allocation, I/O
 or locks. Effect-type changes fade the previous type out before its DSP reset.
 
 Validation and musical-analysis limits are recorded in [AutoMix continuity](../history/2026-09-13-automix.md).
+
+
+## Master mixer processors
+
+`master/` owns preallocated stereo DSP. The EQ uses RBJ peaking coefficients
+([W3C Audio EQ Cookbook](https://www.w3.org/TR/audio-eq-cookbook/)); its editor
+calls the same coefficient response calculation. Frequency, gain and Q ramp over
+20 ms; coefficients refresh every 32 samples. Bypasses and makeup crossfade over
+10 ms. Filters use f64 state and flush denormals. Frequencies are capped at 45%
+of the current sample rate in DSP.
+
+Compression uses a linked sample-peak detector, a soft-knee transfer and
+attack/release gain smoothing. The downward expander has bounded attenuation;
+gate mode adds 3 dB closing hysteresis and a hold timer. All stages share gain
+between channels. Limiting retains the previous default 0.98 ceiling and 80 ms
+release; lowering the ceiling takes effect immediately, raising it ramps. There
+is no lookahead delay, oversampling or inter-sample true-peak claim.
+
+Host parameter writes are validated as complete typed settings. The callback
+copies them via `try_lock` at block start and retains its prior settings when
+busy; processing allocates nothing and never waits on that lock. Block peaks,
+RMS and reduction are published as atomics. The desktop keeps a bounded history
+only while the mixer is open. Preferences are written on gesture release, not
+on every pointer move. Cue remains pre-master; recording remains post-master.
+
+Tests cover default limiter compatibility, measured EQ response at 8–192 kHz,
+compression ratio/makeup, expander range, gate hold, non-finite recovery, live
+extreme edits, ceiling enforcement, settings rejection and busy-host fallback.
+The full audio callback budget includes all three optional master processors.
+Automated measurements do not establish subjective listening quality.

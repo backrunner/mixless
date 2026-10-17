@@ -19,11 +19,13 @@ mod sync;
 mod commands;
 mod fx;
 mod host;
+mod master;
 mod presentation;
 mod recording;
 mod render;
 pub use recording::RecordingStatus;
 mod runtime;
+mod scrub;
 mod state;
 mod stems;
 
@@ -32,10 +34,10 @@ mod tests;
 
 use fx::insert_index;
 
-use crate::decode::{decode_file, AudioBuffer};
+use crate::decode::{AudioBuffer, decode_file};
 use crate::device;
 use crate::dsp::{
-    db_to_lin, xfader_gains, ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue,
+    ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue, db_to_lin, xfader_gains,
 };
 use crate::effects::{Effect, EffectKind, EffectParams};
 use crate::resample::Resampler;
@@ -96,6 +98,8 @@ struct DeckRt {
     stem_gain: [SmoothValue; 4],
     stem_values: [f32; 4],
     touching: bool,
+    /// Retained through the release/insert tail so paused audition never reaches master.
+    monitor_scrub: bool,
     scratch_speed: f64,
     slip_position: f64,
     amplitude: SmoothValue,
@@ -155,11 +159,13 @@ pub(crate) struct AudioRt {
     cross: [SmoothValue; 2],
     sends: [Effect; 2],
     send_levels: [SmoothValue; 2],
-    limiter: MasterLimiter,
+    master_chain: crate::master::MasterChain,
     automation: automation::AutomationRt,
 }
 
 struct AtomicFx {
+    /// Host edits invalidate an AutoMix restore, even if the kind is unchanged.
+    revision: AtomicU64,
     kind: AtomicU32,
     mix: AtomicU32,
     bypass: AtomicBool,
@@ -198,6 +204,7 @@ struct DeckSlot {
     resonance_milli: AtomicU32,
     resonance_enabled: AtomicBool,
     jog_touch: AtomicBool,
+    jog_absolute: AtomicBool,
     jog_target: AtomicU64,
     inserts: [AtomicFx; FxSlot::INSERTS.len()],
     send_milli: AtomicU32,
@@ -249,6 +256,7 @@ pub struct Shared {
     xf_reverse: AtomicBool,
     master: AtomicU32,
     master_gain_centi: AtomicU32,
+    master_chain: master::MasterShared,
     master_level: [AtomicU32; 2],
     recorder: recording::Recorder,
     cue_mix: AtomicU32,

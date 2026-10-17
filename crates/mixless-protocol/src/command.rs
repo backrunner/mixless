@@ -15,6 +15,17 @@ pub enum Command {
     PlayPause {
         deck: DeckId,
     },
+    /// Absolute source-frame seek, without changing playback state.
+    Seek {
+        deck: DeckId,
+        frame: u64,
+    },
+    /// Audible absolute navigation while jog touch is held. Release commits the
+    /// destination even in slip mode; paused audio goes only to the monitor bus.
+    ScrubTo {
+        deck: DeckId,
+        frame: u64,
+    },
     Jog {
         deck: DeckId,
         delta_frames: f32,
@@ -159,7 +170,11 @@ pub enum Command {
     SetMaster {
         value: f32,
     },
-    /// Master input gain in dB, before the master limiter and output level.
+    /// Validated complete settings for the master bus processors.
+    SetMasterChain {
+        settings: crate::MasterChainSettings,
+    },
+    /// Master input gain in dB, before processing and output level.
     SetMasterGain {
         db: f32,
     },

@@ -30,6 +30,7 @@ impl DeckRt {
             stem_gain: std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15)),
             stem_values: [1.; 4],
             touching: false,
+            monitor_scrub: false,
             scratch_speed: 0.0,
             slip_position: 0.0,
             amplitude: SmoothValue::new(0.0, sr, 0.001),
@@ -128,7 +129,7 @@ impl AudioRt {
             }),
             sends: std::array::from_fn(|_| Effect::new(sample_rate)),
             send_levels: std::array::from_fn(|_| SmoothValue::new(0.0, sample_rate, 0.005)),
-            limiter: MasterLimiter::new(sample_rate),
+            master_chain: crate::master::MasterChain::new(sample_rate),
             automation: automation::AutomationRt::default(),
         }
     }

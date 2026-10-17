@@ -117,6 +117,8 @@ impl AppCore {
         let manual_takeover = matches!(
             command,
             Command::PlayPause { .. }
+                | Command::Seek { .. }
+                | Command::ScrubTo { .. }
                 | Command::JumpCue { .. }
                 | Command::TriggerTemporaryCue { .. }
                 | Command::BeginCuePreview { .. }

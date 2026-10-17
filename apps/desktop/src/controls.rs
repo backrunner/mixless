@@ -14,6 +14,7 @@ use crate::theme;
 
 mod jog;
 pub use jog::{JogSpec, jog};
+pub(crate) use jog::{PlatterGeometry, ProgressDrag};
 
 /// Pixels → f32 (the field is private in gpui 0.2).
 pub fn pf(p: Pixels) -> f32 {

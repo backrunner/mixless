@@ -175,24 +175,29 @@ fn recovery_overlap_preserves_both_halves_of_drop_and_adapts_to_available_phrase
         let (a, b) = structured(bars);
         let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
         let summary = p.summary.as_ref().expect("recovery blend");
-        // The overlap may sit inside the break between the drops or ride a
-        // drop's tail to its measured end; it must never throw away the next
-        // drop's opening downbeat.
+        // The bass changes hands only after the track's main drop has
+        // played whole, and never inside any drop; with a short break the
+        // second drop is the main one and the mix waits for the outro.
+        let handoff = p.outgoing_source.sample(p.handoff_bar.unwrap());
+        let owed = crate::drops::owed_peak(&a, 0.).unwrap();
+        assert!(
+            handoff >= owed.1 - 0.05,
+            "{summary:?} hands over at {handoff}"
+        );
+        assert!(!crate::drops::inside_peak(&a, handoff));
         let in_break =
             p.t_in_a + 0.01 >= a.sections[2].end_sec && p.t_out_a <= a.sections[3].end_sec + 0.01;
-        let on_peak_end = crate::drops::peaks(&a)
-            .iter()
-            .any(|&(_, end)| (p.t_out_a - end).abs() < 0.05);
-        assert!(
-            in_break || on_peak_end,
-            "{summary:?}, window {}-{}",
-            p.t_in_a,
-            p.t_out_a
+        assert_eq!(
+            in_break,
+            owed.1 <= a.sections[2].end_sec + 0.05,
+            "{summary:?}"
         );
         // Finishing on a matching incoming phrase may use part of the break.
-        // Require a real overlap, bounded by the available recovery interval.
+        // Require a real overlap, bounded by the recovery interval it uses:
+        // the break, or the 16-bar outro after the main drop.
+        let room = if in_break { bars } else { 16 };
         assert!(
-            (4..=bars as u16).contains(&summary.length_bars),
+            (4..=room as u16).contains(&summary.length_bars),
             "{summary:?}"
         );
         lengths.insert(summary.length_bars);
@@ -207,14 +212,25 @@ fn recovery_overlap_preserves_both_halves_of_drop_and_adapts_to_available_phrase
 #[test]
 fn later_or_partially_entered_drop_cannot_be_faded_halfway_through() {
     let (a, _) = structured(16);
+    let bar = 240. / 174.;
     assert!(!crate::drops::allows(&a, 24., 42., 0., false));
-    assert!(crate::drops::allows(
+    // A 32-bar first drop is a preview of the 48-bar main drop: leaving
+    // after it skips the main drop, so it is allowed only once that plays.
+    assert!(!crate::drops::allows(
         &a,
-        48. * 240. / 174. - 8.,
-        48. * 240. / 174.,
+        48. * bar - 8.,
+        48. * bar,
         0.,
         false
     ));
+    assert!(crate::drops::allows(
+        &a,
+        112. * bar - 8.,
+        112. * bar,
+        0.,
+        false
+    ));
+
     assert!(!crate::drops::allows(&a, 90., 110., 0., false));
     assert!(!crate::drops::allows(&a, 80., 90., 30., true));
 }
@@ -689,4 +705,85 @@ fn technique_variety_is_deterministic() {
         strategies.contains(&StrategyId::Spinback),
         "spinback never fired: {strategies:?}"
     );
+}
+
+#[test]
+fn tape_stop_brakes_forward_into_the_drop_and_build_roll_tightens_into_it() {
+    let (a, b) = spinback_pair(1, 2, Some(32));
+    for (strategy, check) in [(StrategyId::TapeStop, 0), (StrategyId::BuildRoll, 1)] {
+        let p = Planner::with_options(PlannerOptions {
+            strategy: Some(strategy),
+            ..Default::default()
+        })
+        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        let summary = p
+            .summary
+            .as_ref()
+            .unwrap_or_else(|| panic!("{strategy:?}: {:?}", p.failure_reason));
+        assert_eq!(summary.strategy, strategy);
+        let n = summary.length_bars as f32;
+        // Both land on B's drop downbeat with A fully gone.
+        close(p.t_in_b, 32. * 240. / 128.);
+        close(p.incoming_start_bar, n);
+        close(p.lanes.gain_a.sample(n), -96.);
+        assert!(p.send_fx.is_none(), "an accent carries no tail");
+        if check == 0 {
+            let op = p.lanes.scratch_a.as_ref().expect("brake op");
+            assert!(op.brake && !op.accelerate && op.peak_delta_frames > 0);
+            // Half a bar braked evenly from unity travels a quarter bar.
+            let quarter_bar = 60. / 128. * 48000.;
+            assert!((op.peak_delta_frames as f32 / quarter_bar - 1.).abs() < 0.05);
+            assert!(p.insert_a.is_none());
+        } else {
+            let fx = p.insert_a.expect("roll insert");
+            assert_eq!(fx.kind, mixless_protocol::FxKind::LoopRoll);
+            close(fx.on_bar, n - 1.);
+            assert!(p.lanes.scratch_a.is_none());
+            assert!(p.lanes.filter_a.hp_hz.sample(n - 0.1) > 300.);
+            assert!(p.lanes.filter_a.hp_hz.sample(n - 1.5) < 25.);
+        }
+    }
+    // A sung last bar is never rolled.
+    let (mut sung, b) = spinback_pair(1, 2, Some(32));
+    for bar in &mut sung.bars {
+        bar.vocal_confidence = Some(0.9);
+    }
+    let p = Planner::with_options(PlannerOptions {
+        strategy: Some(StrategyId::BuildRoll),
+        ..Default::default()
+    })
+    .plan_pair(&sung, &b, &[], &[], Default::default(), Default::default());
+    assert!(p.summary.is_none());
+}
+
+#[test]
+fn a_drop_running_to_the_end_layers_the_next_intro_and_swaps_on_its_last_bar() {
+    let bar = 240. / 128.;
+    let mut a = track(1, 128., "8A", S::Drop, 64, 0.9, 0.3);
+    a.sections = [
+        (0., 16., S::Intro),
+        (16., 32., S::Breakdown),
+        (32., 64., S::Drop),
+    ]
+    .into_iter()
+    .map(|(start, end, label)| Section {
+        start_sec: start * bar,
+        end_sec: end * bar,
+        label,
+    })
+    .collect();
+    let b = track(2, 128., "8A", S::Intro, 64, 0.8, 0.2);
+    let p = Planner::with_options(PlannerOptions {
+        earliest_outgoing_sec: 34. * bar,
+        outgoing_entry_sec: 0.,
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    let summary = p.summary.as_ref().expect("a plan");
+    assert!(p.failure_reason.is_none());
+    assert!(summary.length_bars >= 8, "{summary:?}");
+    // B joins inside the drop; the bass changes hands as the drop ends.
+    assert!(p.t_in_a < 64. * bar - 1.);
+    let handoff = p.outgoing_source.sample(p.handoff_bar.unwrap());
+    assert!((handoff - 64. * bar).abs() < 0.1, "handoff at {handoff}");
 }

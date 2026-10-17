@@ -24,6 +24,7 @@ pub struct Settings {
     pub midi: MidiConfig,
     pub wave_layout: WaveLayout,
     pub show_fx: bool,
+    pub master_chain: mixless_protocol::MasterChainSettings,
     pub last_playlist: Option<i64>,
     pub library_selection_saved: bool,
     pub fx_auto_fade: bool,
@@ -37,6 +38,9 @@ pub struct Settings {
     pub cue_gain: f32,
     pub keylock: bool,
     pub vinyl: bool,
+    /// Multiplier for mouse platter gestures; hardware jogs keep per-binding calibration.
+    pub jog_sensitivity: f32,
+    pub deck_elapsed: [bool; 2],
     pub slip: bool,
     /// Filter/stem gestures on the playing deck before each AutoMix transition.
     pub live_moves: LiveMoves,
@@ -54,6 +58,7 @@ impl Default for Settings {
             midi: MidiConfig::default(),
             wave_layout: WaveLayout::Top,
             show_fx: true,
+            master_chain: Default::default(),
             last_playlist: None,
             library_selection_saved: false,
             fx_auto_fade: true,
@@ -67,6 +72,8 @@ impl Default for Settings {
             cue_gain: 0.8,
             keylock: true,
             vinyl: false,
+            jog_sensitivity: 1.,
+            deck_elapsed: [false; 2],
             slip: false,
             live_moves: LiveMoves::Subtle,
             automix_follow_playlist: true,
@@ -77,6 +84,12 @@ impl Default for Settings {
 
 impl Settings {
     fn validate(&self) -> Result<(), String> {
+        if !self.master_chain.is_valid() {
+            return Err("Invalid master processor parameters.".into());
+        }
+        if !self.jog_sensitivity.is_finite() || !(0.25..=4.).contains(&self.jog_sensitivity) {
+            return Err("Jog sensitivity must be between 0.25× and 4×.".into());
+        }
         if !self.cue_mix.is_finite() || !(0.0..=1.0).contains(&self.cue_mix) {
             return Err("Headphone mix must be between Cue and Master.".into());
         }
@@ -117,6 +130,9 @@ impl Settings {
 
     pub fn apply_playback(&self, engine: &mixless_engine::Engine) {
         for command in [
+            Command::SetMasterChain {
+                settings: self.master_chain,
+            },
             Command::SetQuantize { on: self.quantize },
             Command::SetFxAutoFade {
                 on: self.fx_auto_fade,
@@ -223,6 +239,8 @@ mod tests {
             serde_json::from_str(r#"{"show_fx":false,"audio":{"master_device":"USB"}}"#).unwrap();
         assert!(!settings.show_fx);
         assert!(settings.quantize);
+        assert_eq!(settings.jog_sensitivity, 1.);
+        assert_eq!(settings.deck_elapsed, [false; 2]);
         assert_eq!(settings.stem_storage, mixless_stems::StorageFormat::Wav);
         assert_eq!(settings.cue_mix, 0.);
         assert!(settings.fx_auto_fade);
@@ -251,7 +269,14 @@ mod tests {
         let store = SettingsStore::load(path.clone());
         store
             .update(|s| {
+                s.master_chain.eq_enabled = true;
+                s.master_chain.eq[1].gain_db = -3.;
+                s.master_chain.compressor.enabled = true;
+                s.master_chain.dynamics.gate = true;
+                s.master_chain.limiter.ceiling_db = -1.;
                 s.cue_mix = 0.5;
+                s.jog_sensitivity = 2.;
+                s.deck_elapsed = [true, false];
                 s.show_fx = false;
                 s.fx_auto_fade = false;
                 s.automix_follow_playlist = false;
@@ -263,7 +288,23 @@ mod tests {
             })
             .unwrap();
         let saved = SettingsStore::load(path).get();
+        assert!(saved.master_chain.eq_enabled && saved.master_chain.compressor.enabled);
+        assert_eq!(saved.master_chain.eq[1].gain_db, -3.);
+        assert!(saved.master_chain.dynamics.gate);
+        assert_eq!(saved.master_chain.limiter.ceiling_db, -1.);
         assert_eq!(saved.cue_mix, 0.5);
+        assert_eq!(saved.jog_sensitivity, 2.);
+        assert_eq!(saved.deck_elapsed, [true, false]);
+        for invalid in [0., 4.1, f32::NAN, f32::INFINITY] {
+            assert!(
+                Settings {
+                    jog_sensitivity: invalid,
+                    ..Settings::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
         assert!(!saved.midi.enabled);
         assert!(!saved.fx_auto_fade);
         assert!(!saved.automix_follow_playlist);

@@ -6,13 +6,13 @@ use tempo::tempo;
 use mixless_protocol::{
     BarFeature, SectionLabel as S, TempoMap, TempoSegment, TrackAnalysis, TrackId,
 };
-use rustfft::{num_complex::Complex, FftPlanner};
+use rustfft::{FftPlanner, num_complex::Complex};
 const SR: f32 = 22050.;
 const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 19;
+pub const ANALYSIS_VERSION: u32 = 20;
 
 #[derive(Default, Clone)]
 struct Frame {

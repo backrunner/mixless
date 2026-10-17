@@ -363,7 +363,7 @@ fn community_adapter_import_is_explicit_and_mapping_inspector_is_read_only(
         .collect();
     large.conflicts = vec!["A preset with this name already exists".into()];
     view.update(cx, |s, cx| {
-        s.import_preview = Some(large);
+        s.import_preview = Some(Arc::new(large));
         s.error = true;
         s.status = "Unable to save the preset. Check folder permissions. ".repeat(8);
         cx.notify();
@@ -392,7 +392,7 @@ fn community_adapter_import_is_explicit_and_mapping_inspector_is_read_only(
         assert_eq!(cx.debug_bounds("accept-preset-import").unwrap(), accept);
     }
     view.update(cx, |s, cx| {
-        s.import_preview = Some(report.clone());
+        s.import_preview = Some(Arc::new(report.clone()));
         s.error = false;
         s.status.clear();
         cx.notify();
@@ -414,7 +414,7 @@ fn community_adapter_import_is_explicit_and_mapping_inspector_is_read_only(
         )
     });
     view.update(cx, |s, cx| {
-        s.import_preview = Some(report);
+        s.import_preview = Some(Arc::new(report));
         cx.notify();
     });
     cx.run_until_parked();
@@ -454,7 +454,7 @@ fn preset_action(view: &gpui::Entity<Preferences>, cx: &mut VisualTestContext, v
 
 #[gpui::test]
 fn controller_diagram_preserves_deck_geometry_when_resized(cx: &mut TestAppContext) {
-    let (_temp, _view, cx) = fixture(cx);
+    let (_temp, view, cx) = fixture(cx);
     for (width, height) in [(940., 820.), (720., 540.), (1200., 900.)] {
         cx.simulate_resize(size(px(width), px(height)));
         cx.run_until_parked();
@@ -465,6 +465,29 @@ fn controller_diagram_preserves_deck_geometry_when_resized(cx: &mut TestAppConte
         assert!(a.size.width > px(20.), "{a:?}");
         assert!(b.left() > a.right() + px(250.), "{a:?} {b:?}");
         assert!(a.left() >= diagram.left() && b.right() <= diagram.right());
+        let ring = cx.debug_bounds("diagram-Position { deck: A }").unwrap();
+        let jog = cx.debug_bounds("diagram-Jog { deck: A }").unwrap();
+        assert!(ring.contains(&jog.center()));
+        assert!(ring.size.width > jog.size.width);
+        cx.simulate_click(
+            gpui::point(ring.center().x, ring.top() + px(4.)),
+            Default::default(),
+        );
+        cx.run_until_parked();
+        view.read_with(cx, |s, _| {
+            assert_eq!(s.binding.target, MidiTarget::Position { deck: DeckId::A })
+        });
+        click(cx, "diagram-Jog { deck: A }");
+        view.read_with(cx, |s, _| {
+            assert_eq!(s.binding.target, MidiTarget::Jog { deck: DeckId::A })
+        });
+        click(cx, "diagram-TimeDisplay { deck: A }");
+        view.read_with(cx, |s, _| {
+            assert_eq!(
+                s.binding.target,
+                MidiTarget::TimeDisplay { deck: DeckId::A }
+            )
+        });
     }
 }
 

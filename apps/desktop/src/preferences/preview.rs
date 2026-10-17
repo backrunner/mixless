@@ -167,7 +167,7 @@ pub fn run() -> bool {
                             let hub = state.hub().expect("preview controllers");
                             let report = hub.preview_import(&path).expect("valid preview package");
                             if scene == "adapter-import" {
-                                state.import_preview = Some(report);
+                                state.import_preview = Some(Arc::new(report));
                             } else {
                                 state.selected_preset = Some(
                                     hub.accept_import(report).expect("import preview package"),
@@ -186,7 +186,8 @@ pub fn run() -> bool {
                                     .hub()
                                     .expect("preview controllers")
                                     .preview_imports(&paths)
-                                    .expect("preview batch"),
+                                    .expect("preview batch")
+                                    .into(),
                             );
                         }
                         if scene == "controller-calibration" {

@@ -1,5 +1,10 @@
 //! Prepare one continuous set and publish its dependent decisions together.
+mod ordering;
+mod preview;
 use super::*;
+use ordering::{OrderingJob, arrange};
+pub use ordering::{arranged, order_ready};
+use preview::Sequence;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
     Mutex, OnceLock,
@@ -12,15 +17,6 @@ pub(super) struct ScheduledPair {
     pub plan: Arc<mixless_protocol::MixPlan>,
 }
 
-#[derive(Default)]
-struct Sequence {
-    pairs: Vec<Option<ScheduledPair>>,
-    // The engine owns this decision. New evidence may only change its suffix.
-    anchor: Option<Arc<mixless_protocol::MixPlan>>,
-    following: Option<Vec<TrackId>>,
-}
-
-#[derive(Default)]
 pub struct Preparation {
     playlist: Mutex<Vec<TrackId>>,
     revision: AtomicU64,
@@ -31,20 +27,35 @@ pub struct Preparation {
     sequence: Mutex<Sequence>,
     pub preview_revision: AtomicU64,
     best: std::sync::atomic::AtomicBool,
-    /// Last arranged set: (playlist order, best mixing order).
-    arranged: Mutex<Option<(Vec<TrackId>, Vec<TrackId>)>>,
+    /// Last arranged set: (playlist order, best mixing order, whether every
+    /// track was analysed and separated when it was measured).
+    arranged: Mutex<Option<(Vec<TrackId>, Vec<TrackId>, bool)>>,
+    /// The playlist a worker is arranging now, so it is measured only once.
+    arranging: Mutex<Option<Arc<OrderingJob>>>,
+    /// The user has picked an order; AUTO leaves it alone from then on.
+    chosen: std::sync::atomic::AtomicBool,
+}
+
+impl Default for Preparation {
+    fn default() -> Self {
+        Self {
+            playlist: Mutex::default(),
+            revision: AtomicU64::default(),
+            input_revision: AtomicU64::default(),
+            sender: OnceLock::default(),
+            plans: Mutex::default(),
+            order: Mutex::default(),
+            sequence: Mutex::default(),
+            preview_revision: AtomicU64::default(),
+            best: std::sync::atomic::AtomicBool::new(false),
+            chosen: std::sync::atomic::AtomicBool::new(false),
+            arranged: Mutex::default(),
+            arranging: Mutex::default(),
+        }
+    }
 }
 
 impl Preparation {
-    pub fn previews(&self) -> Vec<Option<Arc<mixless_protocol::MixPlan>>> {
-        self.sequence
-            .lock()
-            .expect("set plan")
-            .pairs
-            .iter()
-            .map(|pair| pair.as_ref().map(|p| p.plan.clone()))
-            .collect()
-    }
     pub(super) fn scheduled(&self, key: &str, earliest: f32) -> Option<ScheduledPair> {
         self.sequence
             .lock()
@@ -98,71 +109,29 @@ impl Preparation {
     pub fn best(&self) -> bool {
         self.best.load(Ordering::Acquire)
     }
+    /// The user has picked an order; AUTO leaves it alone from then on.
+    pub fn order_chosen(&self) -> bool {
+        self.chosen.load(Ordering::Acquire)
+    }
 }
 
 /// Switch the set between playlist order and best mixing order. `playlist`
 /// is the order the user sees; the arranged order replaces it for AUTO only.
 pub fn set_best(core: &Arc<AppCore>, on: bool, playlist: Vec<TrackId>) {
     core.mix_preparation.best.store(on, Ordering::Release);
+    core.mix_preparation.chosen.store(true, Ordering::Release);
     prepare_playlist(core, playlist);
 }
 
-/// The best order when it is known for this playlist; otherwise the playlist
-/// itself while a worker measures it and republishes the set when done.
-fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackId> {
-    if !core.mix_preparation.best() || playlist.len() < 3 {
-        return playlist;
+/// AUTO plays the smoothest order unless the user has picked one: the first
+/// automatic start turns it on, and an explicit ORDER, BEST or SHUFFLE
+/// choice sticks from then on.
+pub fn default_to_best(core: &Arc<AppCore>, playlist: Vec<TrackId>) {
+    if core.mix_preparation.order_chosen() || playlist.len() < 3 {
+        return;
     }
-    if let Some((input, arranged)) = core
-        .mix_preparation
-        .arranged
-        .lock()
-        .expect("arranged")
-        .as_ref()
-        && *input == playlist
-    {
-        return arranged.clone();
-    }
-    let weak = Arc::downgrade(core);
-    let input = playlist.clone();
-    std::thread::spawn(move || {
-        let Some(core) = weak.upgrade() else { return };
-        let prepared: Vec<_> = input
-            .iter()
-            .map(|id| crate::analysis::prepare(&core, *id).ok())
-            .collect();
-        let known: Vec<usize> = (0..input.len())
-            .filter(|i| prepared[*i].is_some())
-            .collect();
-        let analyses: Vec<_> = known
-            .iter()
-            .map(|i| prepared[*i].as_ref().unwrap().analysis.as_ref())
-            .collect();
-        // Keep the track already on air first, so switching never jumps.
-        let snapshot = core.engine.snapshot();
-        let on_air = [DeckId::A, DeckId::B]
-            .into_iter()
-            .map(|deck| snapshot.deck(deck))
-            .find(|d| d.playing)
-            .and_then(|d| d.track_id);
-        let first = on_air.and_then(|id| known.iter().position(|i| input[*i] == id));
-        let mut arranged: Vec<TrackId> = mixless_mixplan::order::best_order(&analyses, first)
-            .into_iter()
-            .map(|k| input[known[k]])
-            .collect();
-        // Tracks still being analyzed keep their playlist position order at the end.
-        arranged.extend(
-            (0..input.len())
-                .filter(|i| prepared[*i].is_none())
-                .map(|i| input[i]),
-        );
-        *core.mix_preparation.arranged.lock().expect("arranged") = Some((input.clone(), arranged));
-        let current = core.mix_preparation.tracks();
-        if core.mix_preparation.best() && current == input {
-            prepare_playlist(&core, input);
-        }
-    });
-    playlist
+    core.mix_preparation.best.store(true, Ordering::Release);
+    prepare_playlist(core, playlist);
 }
 
 pub fn refresh_previews(core: &Arc<AppCore>) {
@@ -173,6 +142,12 @@ pub(super) fn reset_session(core: &Arc<AppCore>) {
     let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
     sequence.following = None;
     let changed = sequence.anchor.take().is_some();
+    if changed {
+        core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel);
+        core.mix_preparation
+            .preview_revision
+            .fetch_add(1, Ordering::Release);
+    }
     drop(sequence);
     if changed {
         prepare(core, core.mix_preparation.tracks(), true, false);
@@ -186,35 +161,7 @@ pub(super) fn committed(core: &Arc<AppCore>, plan: Arc<mixless_protocol::MixPlan
         return;
     }
     let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
-    let pair = plan.summary.as_ref().map(|s| s.pair);
-    let index = adjacent_index(&tracks, pair);
-    // Reuse the still-valid forecast, but never combine a changed entrance
-    // with an old exit. The worker replaces the entire suffix atomically.
-    if let Some(i) = index {
-        let unchanged = sequence
-            .pairs
-            .get(i)
-            .and_then(Option::as_ref)
-            .is_some_and(|old| Arc::ptr_eq(&old.plan, &plan));
-        if !unchanged {
-            sequence.pairs = vec![None; tracks.len()];
-        }
-        if sequence.pairs.len() != tracks.len() {
-            sequence.pairs.resize(tracks.len(), None);
-        }
-        let key = sequence.pairs[i]
-            .as_ref()
-            .map_or(String::new(), |p| p.key.clone());
-        sequence.pairs[i] = Some(ScheduledPair {
-            key,
-            plan: plan.clone(),
-        });
-    } else {
-        // Shuffle has no honest ordered-set forecast. Its committed pair is
-        // shown by the active overlay until a concrete order is available.
-        sequence.pairs = vec![None; tracks.len()];
-    }
-    sequence.anchor = Some(plan);
+    sequence.commit(&tracks, plan);
     core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel);
     core.mix_preparation
         .preview_revision
@@ -253,8 +200,7 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool, input: bool) 
     let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
     let revision = core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel) + 1;
     if changed {
-        sequence.following = None;
-        sequence.pairs = vec![None; tracks.len()];
+        sequence.select(&tracks);
         core.mix_preparation
             .preview_revision
             .fetch_add(1, Ordering::Release);
@@ -277,15 +223,9 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool, input: bool) 
                 let Some(pairs) = plan_sequence(&core, &tracks, &active) else {
                     continue;
                 };
-                let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
-                if !active() {
+                if !core.mix_preparation.publish_previews(revision, pairs) {
                     continue;
                 }
-                sequence.pairs = pairs;
-                core.mix_preparation
-                    .preview_revision
-                    .fetch_add(1, Ordering::Release);
-                drop(sequence);
                 for id in tracks.iter().take(2) {
                     if !active() {
                         break;

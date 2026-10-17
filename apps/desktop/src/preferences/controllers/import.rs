@@ -77,6 +77,7 @@ impl Preferences {
     pub(super) fn preset_import_panel(
         &self,
         report: &ImportReport,
+        from_batch: bool,
         height: f32,
         window: &Window,
         cx: &Context<Self>,
@@ -354,7 +355,7 @@ impl Preferences {
                             .text_size(px(11.))
                             .line_height(px(16.))
                             .text_color(theme::MUTED)
-                            .child(if self.import_batch.is_some() {
+                            .child(if from_batch {
                                 "Return to the file list to import the batch."
                             } else {
                                 "Saves a separate copy. Apply it to a device after import."
@@ -362,16 +363,12 @@ impl Preferences {
                     )
                     .child(self.button(
                         "cancel-preset-import",
-                        if self.import_batch.is_some() {
-                            "Back"
-                        } else {
-                            "Cancel"
-                        },
+                        if from_batch { "Back" } else { "Cancel" },
                         self.job.is_none(),
                         |s, _, _| s.import_preview = None,
                         cx,
                     ))
-                    .when(self.import_batch.is_none(), |el| {
+                    .when(!from_batch, |el| {
                         el.child(self.primary_button(
                             "accept-preset-import",
                             "Import preset",
@@ -414,7 +411,7 @@ impl Preferences {
                             .w_0()
                             .min_w_0()
                             .child(div().text_size(px(11.)).text_color(theme::MUTED).child(
-                                if self.import_batch.is_some() {
+                                if from_batch {
                                     "Preset details"
                                 } else {
                                     "Import preset"

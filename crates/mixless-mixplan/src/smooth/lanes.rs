@@ -214,5 +214,46 @@ pub(super) fn shape(
             lanes.eq_a.low.nodes.dedup_by(|a, b| a.0 == b.0);
             lanes.fx_send_a = Polyline::constant(0.);
         }
+        if technique == Technique::TapeStop {
+            // A slowing platter drops in pitch; ease the level and bass down
+            // with it so the stop dies away instead of growling into B.
+            lanes.gain_a = line(&[
+                (0., 0.),
+                ((handoff - 0.5).max(0.), 0.),
+                ((handoff - 0.15).max(0.), -6.),
+                (handoff, KILL),
+            ]);
+            lanes.gain_a.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.eq_a.low = line(&[
+                (0., 0.),
+                ((handoff - 0.5).max(0.), 0.),
+                ((handoff - 0.2).max(0.), -9.),
+                (handoff, KILL),
+            ]);
+            lanes.eq_a.low.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.filter_a = neutral().filter_a;
+            lanes.fx_send_a = Polyline::constant(0.);
+        }
+        if technique == Technique::BuildRoll {
+            // The roll tightens under a rising high-pass, so its repeats
+            // thin out into a riser instead of stacking bass on the drop.
+            lanes.filter_a.hp_hz = line(&[
+                (0., 20.),
+                ((handoff - 1.).max(0.), 20.),
+                ((handoff - 0.25).max(0.), 400.),
+                (handoff, 900.),
+            ]);
+            lanes.filter_a.hp_hz.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.filter_a.lp_hz = Polyline::constant(20000.);
+            lanes.gain_a = line(&[
+                (0., 0.),
+                ((handoff - 0.25).max(0.), 0.),
+                ((handoff - fade).max(0.), -3.),
+                (handoff, KILL),
+            ]);
+            lanes.gain_a.nodes.dedup_by(|a, b| a.0 == b.0);
+            lanes.eq_a.low = line(&[(0., 0.), (handoff - fade, 0.), (handoff, KILL)]);
+            lanes.fx_send_a = Polyline::constant(0.);
+        }
     }
 }

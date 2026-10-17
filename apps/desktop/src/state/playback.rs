@@ -13,6 +13,8 @@ impl UiState {
             && matches!(
                 cmd,
                 Command::PlayPause { .. }
+                    | Command::Seek { .. }
+                    | Command::ScrubTo { .. }
                     | Command::JumpCue { .. }
                     | Command::TriggerTemporaryCue { .. }
                     | Command::BeginCuePreview { .. }

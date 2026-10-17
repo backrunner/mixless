@@ -241,6 +241,41 @@ pub fn schedule(core: &std::sync::Arc<AppCore>, tracks: &[Track]) {
 }
 
 /// Coalesce duplicate requests per track, while independent tracks run in parallel.
+/// Whether any track in the set still needs analysis or stem separation, so
+/// AUTO can hold its start and say what it is waiting for.
+pub fn needs_work(core: &AppCore, tracks: &[TrackId]) -> bool {
+    work_progress(core, tracks).0 < tracks.len()
+}
+
+/// A terminal decode/analysis failure cannot be resolved by waiting longer.
+pub fn preparation_error(core: &AppCore, tracks: &[TrackId]) -> Option<String> {
+    let statuses = core.analysis.statuses();
+    tracks.iter().find_map(|id| match statuses.get(id) {
+        Some(Status::Failed(error) | Status::MissingFile(error)) => Some(error.clone()),
+        _ => None,
+    })
+}
+
+/// Tracks ready for AutoMix, including any scheduled stem separation.
+pub fn work_progress(core: &AppCore, tracks: &[TrackId]) -> (usize, usize) {
+    let statuses = core.analysis.statuses();
+    let stems = core.analysis.stem_statuses();
+    let ready = tracks
+        .iter()
+        .filter(|id| {
+            let analyzed = matches!(statuses.get(id), Some(Status::Ready(_)));
+            // Separation is optional: a terminal failure falls back to full
+            // track playback, while queued/running separation still waits.
+            let separated = matches!(
+                stems.get(id),
+                Some(StemStatus::Ready | StemStatus::Failed(_)) | None
+            );
+            analyzed && separated
+        })
+        .count();
+    (ready, tracks.len())
+}
+
 pub fn prepare(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
     let lock = core
         .analysis
@@ -546,6 +581,26 @@ pub fn publish_load(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preparation_waits_for_work_but_not_terminal_failures() {
+        let (_dir, core, tracks) = crate::automix::tests::fixture();
+        let id = tracks[0];
+        core.analysis.set_stems(id, StemStatus::Queued);
+        assert!(needs_work(&core, &tracks));
+        core.analysis
+            .set_stems(id, StemStatus::Failed("separator unavailable".into()));
+        assert!(!needs_work(&core, &tracks));
+        assert!(preparation_error(&core, &tracks).is_none());
+        for status in [
+            Status::Failed("decode failed".into()),
+            Status::MissingFile("missing audio".into()),
+        ] {
+            core.analysis.set(id, status);
+            assert!(preparation_error(&core, &tracks).is_some());
+            assert!(preparation_error(&core, &tracks[1..]).is_none());
+        }
+    }
 
     #[test]
     fn basic_completion_is_published_while_stems_remain_pending() {

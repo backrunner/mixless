@@ -99,6 +99,14 @@
         },
         {
           "deck": "a",
+          "type": "time_display"
+        },
+        {
+          "deck": "a",
+          "type": "position"
+        },
+        {
+          "deck": "a",
           "type": "jog"
         },
         {
@@ -410,6 +418,14 @@
         {
           "deck": "b",
           "type": "brake"
+        },
+        {
+          "deck": "b",
+          "type": "time_display"
+        },
+        {
+          "deck": "b",
+          "type": "position"
         },
         {
           "deck": "b",

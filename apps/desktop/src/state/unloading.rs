@@ -118,7 +118,10 @@ impl UiState {
         self.automix_plan = None;
         self.automix_rx = None;
         self.cancel_deck_transport_press(deck);
-        if matches!(self.drag, Some(DragCtl::Jog { deck: d, .. } | DragCtl::Wave { deck: d, .. }) if d == deck)
+        if self.wheel_scrub.is_some_and(|(active, _)| active == deck) {
+            self.end_wheel_scrub();
+        }
+        if matches!(self.drag, Some(DragCtl::Jog { deck: d, .. } | DragCtl::Wave { deck: d, .. } | DragCtl::Progress { deck: d, .. }) if d == deck)
         {
             self.end_drag();
         }

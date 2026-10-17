@@ -7,6 +7,7 @@ enum Shape {
     Button,
     Knob,
     Jog,
+    Progress,
     Fader,
     Crossfader,
 }
@@ -44,6 +45,7 @@ impl Preferences {
             }
         );
         let mut control = diagram_rect(rect)
+            .occlude()
             .debug_selector(|| format!("diagram-{target:?}"))
             // Reset a visible tooltip when an automatic bind changes its text.
             .id(SharedString::from(format!("map-diagram-{target:?}-{tip}")))
@@ -90,11 +92,18 @@ impl Preferences {
                         ),
                 )
                 .when(!label.is_empty(), |el| el.child(label.to_owned())),
+            Shape::Progress => control.child(
+                div()
+                    .size(px(h - 4.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(color),
+            ),
             Shape::Jog => control.child(
                 div()
                     .relative()
                     .flex_none()
-                    .size(px(84.))
+                    .size(px((h - 4.).min(84.)))
                     .rounded_full()
                     .border_1()
                     .border_color(color)
@@ -103,7 +112,7 @@ impl Preferences {
                     .justify_center()
                     .child(
                         div()
-                            .size(px(74.))
+                            .size(px((h - 14.).min(74.)))
                             .rounded_full()
                             .border_1()
                             .border_color(theme::with_alpha(color, 0.35))
@@ -112,7 +121,7 @@ impl Preferences {
                             .justify_center()
                             .child(
                                 div()
-                                    .size(px(52.))
+                                    .size(px((h - 36.).min(52.)))
                                     .rounded_full()
                                     .border_1()
                                     .border_color(theme::with_alpha(color, 0.55))
@@ -281,6 +290,13 @@ impl Preferences {
                 [origin + 260., 43., 100., 16.],
                 theme::MUTED,
             ));
+        diagram = diagram.child(self.map_control(
+            TimeDisplay { deck },
+            "TIME",
+            [origin + 214., 43., 42., 17.],
+            Shape::Button,
+            cx,
+        ));
         for (target, label, r, shape) in [
             (Tempo { deck }, "TEMPO", [8., 94., 34., 90.], Shape::Fader),
             (Sync { deck }, "SYNC", [49., 71., 65., 17.], Shape::Button),
@@ -291,7 +307,15 @@ impl Preferences {
                 Shape::Button,
             ),
             (Pitch { deck }, "KEY", [118., 71., 34., 30.], Shape::Knob),
-            (Jog { deck }, "JOG", [163., 77., 164., 107.], Shape::Jog),
+            (
+                Position { deck },
+                "",
+                [189., 77., 112., 107.],
+                Shape::Progress,
+            ),
+            // Same rotation/touch targets as the platter. Paused jog audition
+            // uses the monitor bus; position remains a separate absolute target.
+            (Jog { deck }, "JOG", [205., 93., 80., 75.], Shape::Jog),
             (
                 DeckGain { deck },
                 "GAIN",

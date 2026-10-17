@@ -14,11 +14,37 @@ thread_local! {
         Default::default();
 }
 
+#[cfg(feature = "trace")]
+thread_local! {
+    /// Candidate exit and entry being judged, for `MIXLESS_TRACE_EXIT`.
+    pub(crate) static CANDIDATE: std::cell::Cell<(f32, f32, u16, u8)> =
+        const { std::cell::Cell::new((0., 0., 0, 0)) };
+}
+
 #[inline(always)]
 pub(crate) fn record<T>(_site: &'static str) -> Option<T> {
     #[cfg(feature = "trace")]
-    COUNTS.with(|c| *c.borrow_mut().entry(_site).or_default() += 1);
+    {
+        COUNTS.with(|c| *c.borrow_mut().entry(_site).or_default() += 1);
+        // MIXLESS_TRACE_EXIT=<seconds> prints every rejection of an exit
+        // within a bar of that point.
+        if let Some(at) = std::env::var("MIXLESS_TRACE_EXIT")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+        {
+            let (end, entry, n, mode) = CANDIDATE.with(|c| c.get());
+            if (end - at).abs() < 2. {
+                eprintln!("exit {end:.1} entry {entry:.1} n={n} mode={mode}: {_site}");
+            }
+        }
+    }
     None
+}
+
+#[inline(always)]
+pub(crate) fn candidate(_end: f32, _entry: f32, _n: u16, _mode: u8) {
+    #[cfg(feature = "trace")]
+    CANDIDATE.with(|c| c.set((_end, _entry, _n, _mode)));
 }
 
 /// Drain this thread's counts, most frequent first.

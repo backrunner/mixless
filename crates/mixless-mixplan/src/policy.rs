@@ -17,6 +17,19 @@ pub(crate) enum Technique {
     ScratchCut,
     Spinback,
     LoopOut,
+    TapeStop,
+    BuildRoll,
+}
+
+impl Technique {
+    /// A performance move that lands on the incoming downbeat instead of an
+    /// overlap. Each carries its own build, so none needs an FX tail.
+    pub(crate) fn accent(self) -> bool {
+        matches!(
+            self,
+            Self::DropCut | Self::ScratchCut | Self::Spinback | Self::TapeStop | Self::BuildRoll
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -25,6 +38,10 @@ pub(crate) struct Evidence {
     pub scratch: bool,
     pub drop: bool,
     pub spinback: bool,
+    /// The outgoing last bar is a vocal-free beat, safe to repeat.
+    pub roll: bool,
+    /// A transport accent the user asked for by name.
+    pub requested: Option<Technique>,
     /// Deterministic per-candidate value so the planner rotates between
     /// equally valid techniques instead of always taking the same one.
     pub variety: u32,
@@ -78,14 +95,23 @@ pub(crate) fn choose(e: Evidence) -> Decision {
         && e.phrase_reliable
         && e.incoming_kick >= 0.55
         && e.outgoing_vocal < 0.5
-        && if e.drop {
-            e.variety % 5 < 2
-        } else {
-            e.variety % 10 < 7
-        }
+        && (e.requested.is_some()
+            || if e.drop {
+                e.variety % 5 < 2
+            } else {
+                e.variety % 10 < 7
+            })
     {
+        // Rotate the transport accents so a set does not repeat one move.
+        let technique = match (e.requested, (e.variety / 16) % 3) {
+            (Some(Technique::BuildRoll), _) if !e.roll => Technique::DryCut,
+            (Some(technique), _) => technique,
+            (None, 0) => Technique::Spinback,
+            (None, 2) if e.roll => Technique::BuildRoll,
+            _ => Technique::TapeStop,
+        };
         return Decision {
-            technique: Technique::Spinback,
+            technique,
             confidence: 0.86,
         };
     }
@@ -159,6 +185,8 @@ mod tests {
             scratch: false,
             drop: false,
             spinback: false,
+            roll: false,
+            requested: None,
             variety: 0,
             grid_reliable: true,
             phrase_reliable: true,

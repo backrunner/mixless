@@ -79,6 +79,8 @@ pub(super) fn arrange(
             Technique::FilterBridge => "Filter exit",
             Technique::LoopRoll => "Loop layer",
             Technique::Spinback => "Spinback",
+            Technique::TapeStop => "Tape stop",
+            Technique::BuildRoll => "Build roll",
             _ => "Phrase cut",
         };
         if let Some(op) = &lanes.loop_b {
@@ -92,9 +94,15 @@ pub(super) fn arrange(
                 stage(op.off_bar + 0.25, n, "Blend out outgoing"),
             ];
         }
+        // A roll starts on the last bar; every other move on its last half.
+        let lead = if technique == Technique::BuildRoll {
+            1.
+        } else {
+            0.5
+        };
         return vec![
-            stage(0., (n - 0.5).max(0.01), "Hold phrase"),
-            stage((n - 0.5).max(0.01), n + 0.25, label),
+            stage(0., (n - lead).max(0.01), "Hold phrase"),
+            stage((n - lead).max(0.01), n + 0.25, label),
         ];
     }
     if n < 24. || !harmonic || !rhythmic || voice_a.max(voice_b) >= 0.45 {
