@@ -58,6 +58,8 @@ The transition strip shows the selected windows, countdown or progress, techniqu
 
 The idle deck is prepared with its cue, tempo, key lock, EQ, and a closed level. During the handoff, AutoMix can drive transport, filter, EQ, channel faders, crossfader, selected effects, and stem levels.
 
+When tempos are too far apart to beat-match, prepared stems let AutoMix fit separate entrance and exit curves for each part. It searches for an incoming downbeat, uses the measured remaining parts to carry the rhythm change, and adjusts each deck's level and EQ independently. Unsupported tonal overlaps and competing drum patterns stay separated. A transition name does not select a fixed set of curves; insufficient evidence keeps the conservative handoff available.
+
 ## Take control
 
 **PAUSE**, **RESUME**, and **SKIP** are available while a plan runs. Adjusting a fader, EQ, or filter takes over that lane only. Loading a track manually takes over from AutoMix.

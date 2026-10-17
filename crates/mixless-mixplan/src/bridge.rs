@@ -10,6 +10,8 @@ use crate::{
 };
 use mixless_protocol::{BarMap, MixPlan, MixStage, Polyline, StrategyId};
 
+mod stems;
+
 fn ease(t: f32) -> f32 {
     let t = t.clamp(0., 1.);
     t * t * t * (10. + t * (-15. + 6. * t))
@@ -66,11 +68,10 @@ pub(super) fn expand(
     // wash under the incoming beat.
     let native = !locked && n > 1.;
     let drumless = beatless(a, plan.t_in_a, plan.t_out_a) || beatless(b, plan.t_in_b, b_end);
-    // With stems on both decks the outgoing drums and bass can leave on the
-    // phrase line itself while the incoming beat starts: the rhythm changes
-    // hands at one instant and only the outgoing foreground washes out.
-    let strip = native && !drumless && stem_pair && n <= 4.;
-    if native && (n > 16. || !(drumless || strip)) {
+    // Aligned stem buffers let the host fit each part's handover separately,
+    // with a measured bed carrying the change between unrelated rhythms.
+    let staged = native && stem_pair;
+    if native && (n > 16. || !(drumless || staged)) {
         return miss!();
     }
     if b_end > b.duration_sec - 0.1
@@ -87,7 +88,8 @@ pub(super) fn expand(
     }) {
         return miss!();
     }
-    if !harmonic
+    if !staged
+        && !harmonic
         && !percussion_only(a, plan.t_in_a, plan.t_out_a)
         && !percussion_only(b, plan.t_in_b, b_end)
     {
@@ -100,6 +102,24 @@ pub(super) fn expand(
     } else {
         BarMap::OneToOne
     };
+    if staged {
+        plan.clock.nodes.retain(|(u, _)| *u <= n);
+        plan.outgoing_source.nodes.retain(|(u, _)| *u <= n);
+        plan.incoming_start_bar = 0.;
+        plan.t_end_b = b_end;
+        plan.incoming_source = Polyline {
+            nodes: plan
+                .clock
+                .nodes
+                .iter()
+                .filter(|p| p.0 <= n)
+                .map(|(u, sec)| (*u, plan.t_in_b + sec * ctx.offset_b.rate))
+                .collect(),
+        };
+        plan.lanes.rate_b = Polyline::constant(ctx.offset_b.rate);
+        plan.incoming_offset_end.rate = ctx.offset_b.rate;
+        return stems::arrange(plan, ctx, harmonic);
+    }
     let mut voice = [0f32; 2];
     for i in 0..64 {
         let u = (i as f32 + 0.5) / 64. * n;
@@ -242,10 +262,6 @@ pub(super) fn expand(
             },
         ));
     }
-    if strip {
-        strip_out(plan, n, harmonic, trim);
-        return Some(());
-    }
     plan.incoming_offset_end.rate = lanes.rate_b.sample(n);
     plan.summary.as_mut()?.strategy = if echo {
         StrategyId::EchoOut
@@ -288,93 +304,4 @@ pub(super) fn expand(
         },
     ];
     Some(())
-}
-
-/// Native-rate stem exit. The incoming track plays complete from its phrase
-/// start; the outgoing drums and bass leave on that same line, and what is
-/// left of the outgoing track closes through a low-pass and echo tail.
-/// `trim` is B's loudness trim from before the staged envelope was written.
-fn strip_out(plan: &mut MixPlan, n: f32, harmonic: bool, trim: f32) {
-    let rate = plan.lanes.rate_b.sample(0.);
-    let lanes = &mut plan.lanes;
-    for lane in [
-        &mut lanes.xfader,
-        &mut lanes.gain_a,
-        &mut lanes.gain_b,
-        &mut lanes.eq_a.low,
-        &mut lanes.eq_b.low,
-        &mut lanes.eq_a.mid,
-        &mut lanes.eq_b.mid,
-        &mut lanes.eq_a.high,
-        &mut lanes.eq_b.high,
-        &mut lanes.filter_a.lp_hz,
-        &mut lanes.filter_b.hp_hz,
-        &mut lanes.fx_send_a,
-    ] {
-        lane.nodes.clear();
-    }
-    let edge = 0.0625f32.min(n);
-    for i in 0..=n as usize * 64 {
-        let u = i as f32 / 64.;
-        let t = u / n;
-        let close = ease((t - 0.35) / 0.65);
-        lanes.xfader.nodes.push((u, ease(t)));
-        lanes.gain_a.nodes.push((u, db(1. - close)));
-        lanes.gain_b.nodes.push((u, trim));
-        lanes
-            .eq_a
-            .low
-            .nodes
-            .push((u, if u < edge { 0. } else { -96. }));
-        lanes.eq_b.low.nodes.push((u, 0.));
-        lanes.eq_a.mid.nodes.push((u, -4. * ease(t / 0.6)));
-        lanes.eq_b.mid.nodes.push((u, 0.));
-        lanes.eq_a.high.nodes.push((u, -6. * ease(t / 0.6)));
-        lanes.eq_b.high.nodes.push((u, 0.));
-        lanes.filter_a.lp_hz.nodes.push((
-            u,
-            (20000f32.ln() + ease(t / 0.8) * (1200f32 / 20000.).ln()).exp(),
-        ));
-        lanes.filter_b.hp_hz.nodes.push((u, 20.));
-        lanes
-            .fx_send_a
-            .nodes
-            .push((u, 0.3 * ease(u / edge) * (1. - ease((t - 0.7) / 0.3))));
-    }
-    lanes.rate_b = Polyline::constant(rate);
-    let line = |nodes: &[(f32, f32)]| Polyline {
-        nodes: nodes.to_vec(),
-    };
-    let mut mix = mixless_protocol::StemMix {
-        outgoing: std::array::from_fn(|_| Polyline::constant(1.)),
-        incoming: std::array::from_fn(|_| Polyline::constant(1.)),
-    };
-    use mixless_protocol::StemKind;
-    for stem in [StemKind::Drums, StemKind::Bass] {
-        mix.outgoing[stem.index()] = line(&[(0., 1.), (edge, 0.), (n, 0.)]);
-    }
-    // Clashing keys: only the outgoing voice may ring on, and it has already
-    // released by the exit (checked by the caller).
-    if !harmonic {
-        mix.outgoing[StemKind::Instruments.index()] = line(&[(0., 1.), (1f32.min(n), 0.), (n, 0.)]);
-    }
-    plan.stem_mix = Some(mix);
-    plan.requires_stems = true;
-    plan.incoming_offset_end.rate = rate;
-    plan.handoff_bar = Some(0.);
-    if let Some(summary) = plan.summary.as_mut() {
-        summary.strategy = StrategyId::EchoOut;
-    }
-    plan.stages = vec![
-        MixStage {
-            start_bar: 0.,
-            end_bar: edge,
-            label: "Incoming beat takes over".into(),
-        },
-        MixStage {
-            start_bar: edge,
-            end_bar: n,
-            label: "Outgoing echo tail".into(),
-        },
-    ];
 }

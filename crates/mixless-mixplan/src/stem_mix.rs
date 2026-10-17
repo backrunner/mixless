@@ -414,6 +414,33 @@ pub(super) fn separate_tonal(plan: &mut MixPlan) -> Option<()> {
         StemKind::Bass.index(),
         StemKind::Instruments.index(),
     ];
+    // An independently fitted bridge can already separate every pitched
+    // part. Do not add another fade and change its predicted energy.
+    let mut points: Vec<f32> = stems
+        .outgoing
+        .iter()
+        .chain(&stems.incoming)
+        .flat_map(|lane| lane.nodes.iter().map(|p| p.0))
+        .collect();
+    points.sort_by(f32::total_cmp);
+    points.dedup();
+    let checks = points
+        .iter()
+        .copied()
+        .chain(points.windows(2).map(|w| (w[0] + w[1]) * 0.5));
+    if checks.into_iter().all(|u| {
+        let a = pitched
+            .iter()
+            .map(|s| stems.outgoing[*s].sample(u))
+            .fold(0., f32::max);
+        let b = pitched
+            .iter()
+            .map(|s| stems.incoming[*s].sample(u))
+            .fold(0., f32::max);
+        a * b <= 0.0001
+    }) {
+        return Some(());
+    }
     let release = pitched
         .iter()
         .map(|s| {

@@ -1227,6 +1227,7 @@ pub(super) fn direct(
     } else if !carry
         && !loop_out
         && !short_overlap
+        && plan.stem_mix.is_none()
         && (blend || loop_roll || plan.incoming_start_bar == 0.)
     {
         crate::vocals::protect(&mut plan, a)?;

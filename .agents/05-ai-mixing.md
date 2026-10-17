@@ -26,6 +26,8 @@ FX 决策层位于平滑规划器之前：先做 grid、phrase、vocal、kick、
 
 ## Mix 时钟
 
+2026-10-17 大曲速差修订：双碟 stem PCM 就绪的原速 PhraseBridge 改为按实际声部能量搜索独立包络，不再在开头一次性撤掉鼓和低音。搜索入碟源域重拍、旋律交接区间及两碟各声部淡变宽度，联合评估能量损失与节奏冲突。每碟 EQ 按重叠频段贡献独立衰减，通道音量补偿实际交叉推子定律并缓慢抑制能量突增。失同步鼓组与低音不叠加；调性不确定时所有有音高声部分开交接。新增能量凹陷检查以相同时刻的可用源能量为参考，避免把 breakdown 开头的一次 impact 当作整段应维持的响度。源码在 `bridge/stems.rs`；所有计算在 host 完成，callback 只消费曲线。
+
 - Master = **出碟**，除非策略声明（`energy_hold` 在 xf 过 0 后把 master 交给入碟，仍用出碟 sounding 网格）。
 - `length_bars` 按 master grid。
 - 入碟起始源帧：rate 折线之后，选定 downbeat 重合。

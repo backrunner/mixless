@@ -497,7 +497,7 @@ fn transcribed_progression_changes_matching_with_pitch_offset_and_rejects_corrup
 }
 
 #[test]
-fn unmatched_tempi_hand_the_beat_over_on_one_line_with_stems() {
+fn unmatched_tempi_stage_the_parts_before_changing_the_beat() {
     let mut a = with_stems(crate::tests::track(
         1,
         175.,
@@ -548,20 +548,20 @@ fn unmatched_tempi_hand_the_beat_over_on_one_line_with_stems() {
     if p.requires_stems && p.transition_mode == Some(mixless_protocol::TransitionMode::PhraseBridge)
     {
         let stems = p.stem_mix.as_ref().unwrap();
-        // One instant: A's drums are gone within a sixteenth of a bar while
-        // B is already audible at full trim on the same downbeat.
-        assert!(stems.outgoing[StemKind::Drums.index()].sample(0.1) < 0.01);
-        assert!(
-            p.lanes.gain_b.sample(0.) > -6.,
-            "{:?}",
-            p.lanes.gain_b.nodes.first()
-        );
-        assert!(p.lanes.xfader.sample(0.) >= 0.);
+        assert!(stems.outgoing[StemKind::Drums.index()].sample(0.) > 0.99);
+        assert_eq!(stems.incoming[StemKind::Drums.index()].sample(0.), 0.);
+        let handoff = p.handoff_bar.unwrap();
+        assert!(handoff > 0.25 && handoff < n);
+        for i in 0..=2048 {
+            let u = n * i as f32 / 2048.;
+            assert!(stems.outgoing[1].sample(u) * stems.incoming[1].sample(u) < 0.0001);
+        }
+        assert_eq!(p.lanes.xfader.sample(0.), -1.);
         assert!(p.lanes.gain_a.sample(n) <= -90.);
         assert!((p.lanes.rate_b.sample(0.) - 1.).abs() < 1e-6, "native rate");
     } else {
         panic!(
-            "expected a stem strip-out, got {:?} {:?}",
+            "expected a staged stem bridge, got {:?} {:?}",
             p.transition_mode, p.summary
         );
     }
