@@ -3,7 +3,7 @@
 //! whose transitions score best. Pure and deterministic; computed once per
 //! playlist, then played round and round in that order.
 /// Increment when ordering or the transition planner changes cached Best results.
-pub const ORDER_VERSION: u32 = 2;
+pub const ORDER_VERSION: u32 = 3;
 
 use crate::{Planner, PlannerOptions};
 use mixless_protocol::TrackAnalysis;

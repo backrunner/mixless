@@ -19,13 +19,7 @@ pub(super) fn candidate(
     let a_bpm = ga.bpm(join) * ctx.offset_a.rate;
     let b_bpm = gb.bpm(input) * ctx.offset_b.rate;
     let ratio = a_bpm / b_bpm;
-    let factor = if (ratio / 2. - 1.).abs() < 0.08 {
-        0.5
-    } else if (ratio / 0.5 - 1.).abs() < 0.08 {
-        2.
-    } else {
-        1.
-    };
+    let factor = crate::grid::tempo_factor(ratio);
     if (ratio * factor - 1.).abs() <= 0.08 {
         return None;
     }
@@ -34,12 +28,31 @@ pub(super) fn candidate(
     // even when a shared clock is feasible (e.g. A already sped up by 5%).
     let native_a = ga.bpm(join);
     let native_b = gb.bpm(input) / factor;
-    let low = (native_a * 0.9201)
-        .max(native_b * 0.9201)
-        .max(a_bpm * 0.9201);
-    let high = (native_a * 1.0799)
-        .min(native_b * 1.0799)
-        .min(a_bpm * 1.0799);
+    let interval = |budget: f32| {
+        let lo = 1. - budget + 0.0001;
+        let hi = 1. + budget - 0.0001;
+        (
+            (native_a * lo)
+                .max(native_b * lo)
+                .max(a_bpm * lo)
+                .max(b_bpm / factor * lo),
+            (native_a * hi)
+                .min(native_b * hi)
+                .min(a_bpm * hi)
+                .min(b_bpm / factor * hi),
+        )
+    };
+    let (mut low, mut high) = interval(0.08);
+    if low > high
+        && options.stem_playback
+        && ctx.outgoing.stems.is_some()
+        && ctx.incoming.stems.is_some()
+    {
+        // Separated parts can reveal the prepared clock without introducing
+        // the complete dense arrangement at once. Use the engine's existing
+        // 12% movement budget only when the ordinary 8% intersection is empty.
+        (low, high) = interval(0.12);
+    }
     if low > high {
         return miss!();
     }
@@ -47,11 +60,11 @@ pub(super) fn candidate(
     // next pair and solo recovery can decide when to return towards native.
     let target = a_bpm.clamp(low, high);
     let rate = target / native_a;
-    // Share the correction; neither deck may exceed the existing 8% budget.
+    // Share the correction within the selected stretch budget.
     // Absolute limits also prevent accumulated offsets drifting indefinitely.
-    if !(0.92..=1.08).contains(&rate)
-        || !(0.92..=1.08).contains(&(target * factor / gb.bpm(input)))
-        || !(0.92..=1.08).contains(&(rate / ctx.offset_a.rate))
+    if !(0.88..=1.12).contains(&rate)
+        || !(0.88..=1.12).contains(&(target * factor / gb.bpm(input)))
+        || !(0.88..=1.12).contains(&(rate / ctx.offset_a.rate))
     {
         return miss!();
     }
@@ -95,7 +108,10 @@ pub(super) fn candidate(
             rate,
             ..ctx.offset_a
         },
-        offset_b: ctx.offset_b,
+        offset_b: mixless_protocol::PerformanceOffset {
+            rate: target * factor / gb.bpm(input),
+            ..ctx.offset_b
+        },
     };
     let held = PlannerOptions {
         strategy: Some(S::EnergyHold),
@@ -111,6 +127,9 @@ pub(super) fn candidate(
         minimum_score,
         false,
     )?;
+    if (rate - 1.).abs().max((prepared.offset_b.rate - 1.).abs()) > 0.08 && !plan.requires_stems {
+        return miss!();
+    }
     // Preparation earns no duration reward. The original overlap was scored.
     plan.summary.as_mut()?.score -= change * 0.1;
     if plan.summary.as_ref()?.score <= minimum_score {
@@ -285,6 +304,47 @@ mod tests {
     }
 
     #[test]
+    fn shared_preparation_finds_half_time_outside_the_single_deck_budget() {
+        let mut a = crate::tests::track(1, 100., "8A", L::Outro, 96, 0.9, 0.2);
+        let b = crate::tests::track(2, 182., "8A", L::Intro, 96, 0.9, 0.2);
+        a.sections[0].end_sec = 153.6;
+        a.sections.push(mixless_protocol::Section {
+            start_sec: 153.6,
+            end_sec: a.duration_sec,
+            label: L::Outro,
+        });
+        let ctx = PlanContext {
+            outgoing: &a,
+            incoming: &b,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: Default::default(),
+        };
+        let p = candidate(
+            &ctx,
+            &PlannerOptions::default(),
+            256.,
+            0.,
+            TransitionMode::BeatBlend,
+            16,
+            -1.,
+        )
+        .unwrap();
+        let u = p.incoming_start_bar;
+        assert!(u > 0.);
+        assert!(
+            (p.lanes.rate_a.sample(u) * 100. * 2. - p.lanes.rate_b.sample(u) * 182.).abs() < 0.01
+        );
+        assert!(matches!(
+            p.bar_map,
+            BarMap::TwoToOne {
+                outgoing_is_double: false
+            }
+        ));
+    }
+
+    #[test]
     fn preparation_preserves_entry_and_shares_stretch_without_consuming_incoming() {
         for scale in [0.8, 1., 1.2] {
             let mut a = crate::tests::track(1, 135. * scale, "8A", L::Outro, 96, 0.9, 0.2);
@@ -330,6 +390,35 @@ mod tests {
             };
             assert!(candidate(&ctx, &late, 256., 0., TransitionMode::BeatBlend, 16, -1.).is_none());
         }
+    }
+
+    #[test]
+    fn preparation_respects_the_incoming_carried_rate_budget() {
+        let a = crate::tests::track(1, 100., "8A", L::Outro, 96, 0.9, 0.2);
+        let b = crate::tests::track(2, 182., "8A", L::Intro, 96, 0.9, 0.2);
+        let ctx = PlanContext {
+            outgoing: &a,
+            incoming: &b,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: mixless_protocol::PerformanceOffset {
+                rate: 1.5,
+                pitch_semitones: 0.,
+            },
+        };
+        assert!(
+            candidate(
+                &ctx,
+                &PlannerOptions::default(),
+                256.,
+                0.,
+                TransitionMode::BeatBlend,
+                16,
+                -1.
+            )
+            .is_none()
+        );
     }
 
     #[test]

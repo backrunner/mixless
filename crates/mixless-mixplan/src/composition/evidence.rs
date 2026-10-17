@@ -3,6 +3,7 @@ use mixless_protocol::{MixPlan, StemKind, TrackAnalysis};
 
 pub(super) struct Frame {
     pub u: f32,
+    pub sec: f32,
     pub bands: [[[f32; 3]; 4]; 2],
     pub voice: [f32; 2],
 }
@@ -34,7 +35,12 @@ pub(super) fn frames(p: &MixPlan, ctx: &PlanContext<'_>) -> Option<Vec<Frame>> {
                     }
                 }
             }
-            Some(Frame { u, bands, voice })
+            Some(Frame {
+                u,
+                sec: p.clock.sample(u),
+                bands,
+                voice,
+            })
         })
         .collect()
 }

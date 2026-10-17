@@ -239,3 +239,17 @@ fn a_quiet_held_tail_cannot_be_faded_after_the_main_voice_activity_drops() {
     arrange(&mut safe, &ctx(&a, &b), true).unwrap();
     assert!(crate::foreground::preserved(&safe, &ctx(&a, &b)));
 }
+
+#[test]
+fn a_loud_chord_reveal_gets_time_instead_of_an_instant_power_handoff() {
+    let (a, b, mut p) = fixture(1.);
+    arrange(&mut p, &ctx(&a, &b), true).unwrap();
+    let mut maximum = 0f32;
+    for i in 1..1024 {
+        let u = 16. * i as f32 / 1024.;
+        let previous = u - 16. / 1024.;
+        let dt = p.clock.sample(u) - p.clock.sample(previous);
+        maximum = maximum.max((heard(&p, 1, 2, u) - heard(&p, 1, 2, previous)).abs() / dt);
+    }
+    assert!(maximum < 0.5, "instrument gain changed at {maximum}/s");
+}

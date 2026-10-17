@@ -42,10 +42,11 @@ fn silence_is_unknown_and_never_supplies_a_confident_grid() {
     assert_eq!(a.tempo.segments[0].confidence, 0.);
     assert!(a.tempo.beats.is_empty());
     assert!(a.tempo.downbeats.is_empty());
-    assert!(a
-        .bars
-        .iter()
-        .all(|b| b.rms == 0. && b.section == S::Silence));
+    assert!(
+        a.bars
+            .iter()
+            .all(|b| b.rms == 0. && b.section == S::Silence)
+    );
 }
 #[test]
 fn accented_click_grid_tracks_fractional_bpm_at_source_rates() {
@@ -59,10 +60,11 @@ fn accented_click_grid_tracks_fractional_bpm_at_source_rates() {
         );
         assert!((a.tempo.global_bpm - 127.5).abs() < 0.3);
         assert!(a.tempo.beats.windows(2).all(|p| p[1] > p[0]));
-        assert!(a
-            .bars
-            .iter()
-            .all(|b| b.rms.is_finite() && b.vocal_presence.is_finite()));
+        assert!(
+            a.bars
+                .iter()
+                .all(|b| b.rms.is_finite() && b.vocal_presence.is_finite())
+        );
         assert!(a.bars.iter().any(|b| b.kick_salience > 0.3));
     }
 }
@@ -157,10 +159,11 @@ fn antiphase_stereo_remains_audible_to_structure_detection() {
         frame[1] = -frame[0];
     }
     let a = analyze(TrackId(5), &samples, 22050);
-    assert!(a
-        .bars
-        .iter()
-        .any(|b| b.rms > 0.01 && b.section != S::Silence));
+    assert!(
+        a.bars
+            .iter()
+            .any(|b| b.rms > 0.01 && b.section != S::Silence)
+    );
     assert!(!a.tempo.beats.is_empty());
 }
 
@@ -329,4 +332,17 @@ fn a_kickless_intro_keeps_the_tempo_its_drums_will_play() {
         "{:?}",
         a.tempo.segments.iter().map(|s| s.bpm).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn extending_the_tempo_range_does_not_reward_dotted_note_aliases() {
+    for bpm in [100., 136., 170., 175., 180., 182., 200., 228.] {
+        let a = analyze(TrackId(30), &drums(22050, bpm, 32.), 22050);
+        let ratio = a.tempo.global_bpm / bpm;
+        assert!(
+            (ratio - 1.).abs() < 0.005 || (ratio - 0.5).abs() < 0.005,
+            "{bpm} became {}",
+            a.tempo.global_bpm
+        );
+    }
 }

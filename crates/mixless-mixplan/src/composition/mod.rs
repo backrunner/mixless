@@ -88,6 +88,25 @@ fn cost(frames: &[Frame], shape: &Shape, harmonic: bool, protected: f32) -> Opti
             cost += 4. * p[0][b].min(p[1][b]) / (p[0][b] + p[1][b]).max(1e-12);
         }
     }
+    // A loud chord should not appear simply because a short fade minimized
+    // simultaneous power. Price the audible foreground's control movement
+    // in wall-clock seconds, while natural attacks at a held gain stay free.
+    for pair in frames.windows(2) {
+        let dt = (pair[1].sec - pair[0].sec).max(0.001);
+        let (before, after) = (gains(shape, pair[0].u), gains(shape, pair[1].u));
+        let total = pair[1]
+            .bands
+            .iter()
+            .flatten()
+            .flatten()
+            .sum::<f32>()
+            .max(1e-12);
+        for d in 0..2 {
+            let weight = pair[1].bands[d][2].iter().sum::<f32>() / total;
+            let slope = (after[d][2] - before[d][2]).abs() / dt;
+            cost += 16. * weight * slope.powi(2);
+        }
+    }
     Some(cost / frames.len() as f32)
 }
 
@@ -210,10 +229,11 @@ pub(crate) fn arrange(p: &mut MixPlan, ctx: &PlanContext<'_>, harmonic: bool) ->
                         cost(&frames, &shape, harmonic, protected).unwrap_or(f32::INFINITY);
                     for width in [0.5, 1., 2., 4.] {
                         let mut variant = shape;
-                        if !harmonic && part == 2 {
-                            continue;
+                        if !harmonic && part == 2 && deck == 0 {
+                            variant[deck][part].start = (variant[deck][part].end - width).max(0.);
+                        } else {
+                            variant[deck][part].end = (variant[deck][part].start + width).min(n);
                         }
-                        variant[deck][part].end = (variant[deck][part].start + width).min(n);
                         if let Some(c) = cost(&frames, &variant, harmonic, protected)
                             .filter(|c| *c < current - 1e-4)
                         {

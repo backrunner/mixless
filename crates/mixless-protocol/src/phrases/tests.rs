@@ -261,3 +261,56 @@ fn release_requires_a_full_peak_phrase_and_measured_arrangement_retreat() {
         "one impact is not a full peak"
     );
 }
+
+#[test]
+fn separated_kit_release_survives_a_loud_synth_bed() {
+    for clock in [0.5, 1., 2.] {
+        for gain in [0.1f32, 1., 3.] {
+            let mut t = recording(clock, 1.);
+            t.stems = Some(crate::StemAnalysis {
+                version: 2,
+                separator_sha256: String::new(),
+                notes_sha256: String::new(),
+                duration_sec: 88.,
+                residual_rms: 0.,
+                notes: vec![],
+                frames: (0..1760)
+                    .map(|i| {
+                        let s = i as f32 * 0.05;
+                        crate::StemFrame {
+                            start_sec: s,
+                            end_sec: s + 0.05,
+                            rms: [
+                                0.,
+                                if (40. ..48.).contains(&s) {
+                                    gain * 0.01
+                                } else {
+                                    gain * 0.2
+                                },
+                                gain * 0.3,
+                            ],
+                            band_db: [[-20.; 3]; 3],
+                            onset: [0.; 3],
+                            drum_low_onset: 0.,
+                            vocal_activity: 0.,
+                            note_chroma: [0.; 12],
+                        }
+                    })
+                    .collect(),
+            });
+            assert!(percussion_release(&t, 40., 48.));
+            let mut bass_mute = t.clone();
+            for f in &mut bass_mute.stems.as_mut().unwrap().frames {
+                f.rms[1] = gain * 0.2;
+            }
+            assert!(!percussion_release(&bass_mute, 40., 48.));
+            let mut silence = t.clone();
+            for f in &mut silence.stems.as_mut().unwrap().frames[800..960] {
+                f.rms = [0.; 3];
+            }
+            assert!(!percussion_release(&silence, 40., 48.));
+            t.stems.as_mut().unwrap().frames.drain(820..940);
+            assert!(!percussion_release(&t, 40., 48.));
+        }
+    }
+}

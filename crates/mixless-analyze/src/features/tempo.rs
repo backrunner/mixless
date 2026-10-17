@@ -1,6 +1,9 @@
 //! Onset autocorrelation and phase refinement.
 use super::*;
 
+pub(super) const MIN_BPM: f32 = 70.;
+pub(super) const MAX_BPM: f32 = 240.;
+
 pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     if frames.len() < 128 {
         return (120., 0., 0.);
@@ -23,8 +26,8 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
             .sum::<f32>()
             / (norm * (1. - lag as f32 / flux.len() as f32)).max(1e-6)
     };
-    let min = (60. / 180. / dt) as usize;
-    let max = (60. / 70. / dt).ceil() as usize;
+    let min = (60. / MAX_BPM / dt) as usize;
+    let max = (60. / MIN_BPM / dt).ceil() as usize;
     // Compute each autocorrelation once, including across phrase probes and
     // the 2x/4x harmonic lags the comb scorer below consults. Never narrow
     // the range below `max + 1`: the peak search and interpolation index it
@@ -38,8 +41,16 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
             .unwrap_or(0.)
     };
     let comb = |bpm: f32| {
-        let lag = (60. / bpm / dt).round() as usize;
-        corr_at(lag) + 0.6 * corr_at(2 * lag) + 0.4 * corr_at(4 * lag)
+        let lag = 60. / bpm / dt;
+        let at = |lag: f32| {
+            let lo = lag.floor() as usize;
+            let w = lag.fract();
+            corr_at(lo) * (1. - w) + corr_at(lo + 1) * w
+        };
+        // Interpolate each harmonic's actual lag. Multiplying a rounded
+        // fundamental accumulates the rounding error: 175 BPM has lags
+        // 29.5/59/118 frames, not 30/60/120. The latter rewards dotted aliases.
+        at(lag) + 0.6 * at(2. * lag) + 0.4 * at(4. * lag)
     };
     let best = (min..=max)
         .max_by(|a, b| correlations[*a - min + 1].total_cmp(&correlations[*b - min + 1]))
@@ -53,7 +64,7 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     let mut centers = vec![center];
     for factor in [0.5, 2., 2. / 3., 1.5, 0.75, 4. / 3.] {
         let candidate = center * factor;
-        if (70. ..=180.).contains(&candidate) {
+        if (MIN_BPM..=MAX_BPM).contains(&candidate) {
             centers.push(candidate);
         }
     }
@@ -62,7 +73,7 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     let best_comb = centers
         .iter()
         .flat_map(|&center| (-12..=12).map(move |step| center + step as f32 * 0.05))
-        .filter(|candidate| (70. ..=180.).contains(candidate))
+        .filter(|candidate| (MIN_BPM..=MAX_BPM).contains(candidate))
         .map(comb)
         .fold(0f32, f32::max);
     let mut bpm = center;
@@ -72,7 +83,7 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     for center in centers {
         for step in -12..=12 {
             let candidate = center + step as f32 * 0.05;
-            if !(70. ..=180.).contains(&candidate) {
+            if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
                 continue;
             }
             let period = 60. / candidate;
@@ -80,7 +91,7 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
             if strength < best_comb * 0.45 {
                 continue;
             }
-            let weight = 0.5 + 0.5 * strength / best_comb.max(1e-6);
+            let weight = strength / best_comb.max(1e-6);
             let (score, j) = fold(frames, candidate);
             // Keep the original metrical interpretation for near-ties.
             if score * weight > fit * 1.005 {
@@ -116,9 +127,8 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     (bpm, phase, confidence)
 }
 
-/// Onset weight folded onto one beat period: the best phase bin's kernel
-/// score and that bin.
-fn fold(frames: &[Frame], bpm: f32) -> (f32, usize) {
+/// Onset weight above a uniform phase background, and its best phase bin.
+pub(super) fn fold(frames: &[Frame], bpm: f32) -> (f32, usize) {
     let period = 60. / bpm;
     let mut histogram = [0.; 64];
     for f in frames {
@@ -141,6 +151,14 @@ fn fold(frames: &[Frame], bpm: f32) -> (f32, usize) {
             best = (score, j);
         }
     }
+    // A faster grid has more attack windows per second and therefore catches
+    // more unrelated flux. Subtract the uniform-phase expectation before
+    // comparing different periods; otherwise extending the BPM range rewards
+    // dense hats and dotted-note aliases simply for being faster.
+    let kernel: f32 = (-(radius.ceil() as i32)..=radius.ceil() as i32)
+        .map(|offset| (1. - (offset as f32).abs() / (radius + 1.)).max(0.))
+        .sum();
+    best.0 = (best.0 - histogram.iter().sum::<f32>() * kernel / 64.).max(0.);
     best
 }
 
@@ -210,8 +228,8 @@ pub(super) fn pulse_confidence(frames: &[Frame], bpm: f32, phase: f32) -> f32 {
         return 0.;
     }
     let dt = HOP as f32 / SR;
-    let lo = (60. / 180. / dt) as usize;
-    let hi = (60. / 70. / dt).ceil() as usize;
+    let lo = (60. / MAX_BPM / dt) as usize;
+    let hi = (60. / MIN_BPM / dt).ceil() as usize;
     let correlations: Vec<_> = (lo..=hi)
         .map(|lag| {
             frames

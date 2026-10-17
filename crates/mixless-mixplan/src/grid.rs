@@ -1,5 +1,15 @@
 use mixless_protocol::TrackAnalysis;
 
+/// Choose the metrical relationship before applying either deck's stretch
+/// budget. Otherwise a half/double pair just outside the single-deck budget
+/// never reaches the shared-tempo preparation search.
+pub(crate) fn tempo_factor(ratio: f32) -> f32 {
+    [1f32, 0.5, 2.]
+        .into_iter()
+        .min_by(|a, b| (ratio * a).ln().abs().total_cmp(&(ratio * b).ln().abs()))
+        .unwrap_or(1.)
+}
+
 /// Beat timestamps win over the integrated tempo map; the latter also supports
 /// partial analyses that have no explicit grid yet.
 pub(crate) struct Grid<'a>(pub &'a TrackAnalysis);

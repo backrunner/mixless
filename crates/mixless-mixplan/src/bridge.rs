@@ -41,13 +41,7 @@ pub(super) fn expand(
     let a_start = ga.beat(plan.t_in_a);
     let b_start = gb.beat(plan.t_in_b);
     let ratio = ga.bpm(a_start) * ctx.offset_a.rate / (gb.bpm(b_start) * ctx.offset_b.rate);
-    let factor = if (ratio / 2. - 1.).abs() < 0.08 {
-        0.5
-    } else if (ratio / 0.5 - 1.).abs() < 0.08 {
-        2.
-    } else {
-        1.
-    };
+    let factor = crate::grid::tempo_factor(ratio);
     let locked = (ratio * factor - 1.).abs() <= 0.08
         && ga.meter() == gb.meter()
         && grid_reliable(a, plan.t_in_a, plan.t_out_a)

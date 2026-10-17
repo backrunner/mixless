@@ -106,6 +106,28 @@ pub(crate) fn boundary_quality(t: &TrackAnalysis, sec: f32) -> f32 {
         .fold(0., f32::max)
 }
 
+/// A part-by-part entrance may follow a quiet pickup by a few downbeats.
+/// This is not a new phrase boundary and never authorizes a full-mix cut.
+pub(crate) fn layer_entry(t: &TrackAnalysis, sec: f32) -> bool {
+    let g = Grid(t);
+    let beat = g.beat(sec);
+    t.stems.is_some()
+        && t.sections.iter().any(|s| {
+            matches!(
+                s.label,
+                mixless_protocol::SectionLabel::Intro
+                    | mixless_protocol::SectionLabel::Unknown
+                    | mixless_protocol::SectionLabel::Break
+                    | mixless_protocol::SectionLabel::Breakdown
+            ) && sec > s.start_sec + 0.05
+                && beat - g.ceil_bar(s.start_sec) <= 4. * g.meter() + 0.01
+                && g.sec(beat + 4. * g.meter()) <= s.end_sec + 0.05
+                && (g.sec(g.floor_bar(sec)) - sec).abs() < 0.01
+                && boundary_quality(t, s.start_sec) >= 0.5
+                && crate::smooth::grid_reliable(t, sec, g.sec(beat + 4. * g.meter()))
+        })
+}
+
 pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) -> Vec<f32> {
     let g = Grid(t);
     let explicit: Vec<_> = cues
@@ -180,6 +202,37 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         );
     }
     let mut window_points = vec![];
+    if !out && t.stems.is_some() && explicit.is_empty() {
+        // A quiet pickup can occupy the weak edge of a grid-analysis window.
+        // Offer the first measured downbeat inside that introductory phrase,
+        // rather than either trusting the weak clock or missing the entire
+        // tempo-matched entrance. Final voice/peak guards still apply.
+        for s in &t.sections {
+            if !matches!(
+                s.label,
+                mixless_protocol::SectionLabel::Intro
+                    | mixless_protocol::SectionLabel::Unknown
+                    | mixless_protocol::SectionLabel::Break
+                    | mixless_protocol::SectionLabel::Breakdown
+            ) {
+                continue;
+            }
+            let begin = g.ceil_bar(s.start_sec);
+            for bar in 1..=4 {
+                let beat = begin + bar as f32 * g.meter();
+                let sec = g.sec(beat);
+                let end = g.sec(beat + 4. * g.meter());
+                if end > s.end_sec + 0.05 {
+                    break;
+                }
+                if sec < t.duration_sec * 0.5 && layer_entry(t, sec) {
+                    window_points.push(beat);
+                    break;
+                }
+            }
+        }
+        result.extend(&window_points);
+    }
     if out {
         for (start, end) in crate::recovery::windows(t) {
             let mut beat = g.ceil_bar(start);
@@ -376,4 +429,59 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         }
     }
     unique
+}
+
+#[cfg(test)]
+mod entry_tests {
+    use super::*;
+    #[test]
+    fn layered_pickup_requires_a_measured_clock_and_keeps_manual_entry() {
+        let mut t = crate::tests::track(
+            1,
+            120.,
+            "8A",
+            mixless_protocol::SectionLabel::Intro,
+            32,
+            0.8,
+            0.2,
+        );
+        t.phrase_boundaries.push(mixless_protocol::PhraseBoundary {
+            time_sec: 0.,
+            confidence: 0.9,
+            novelty: 0.5,
+        });
+        t.stems = Some(mixless_protocol::StemAnalysis {
+            version: 2,
+            separator_sha256: String::new(),
+            notes_sha256: String::new(),
+            duration_sec: t.duration_sec,
+            residual_rms: 0.,
+            notes: vec![],
+            frames: vec![],
+        });
+        assert!(layer_entry(&t, 2.));
+        assert!(
+            !layer_entry(&t, 2.5),
+            "an off-downbeat pickup is not an entry"
+        );
+        assert!(
+            !layer_entry(&t, 10.),
+            "do not skip arbitrarily far into a phrase"
+        );
+        let cue = Cue {
+            index: 0,
+            frame: 16 * 48000,
+            kind: CueKind::In,
+            user_set: true,
+        };
+        assert_eq!(points(&t, &[cue], false, 0.), vec![32.]);
+        t.tempo.pulse_confidence = vec![0.2];
+        assert!(!layer_entry(&t, 2.));
+        t.tempo.pulse_confidence = vec![1.];
+        t.sections[0].label = mixless_protocol::SectionLabel::Drop;
+        assert!(!layer_entry(&t, 2.), "a partial drop is not a quiet pickup");
+        t.sections[0].label = mixless_protocol::SectionLabel::Intro;
+        t.stems = None;
+        assert!(!layer_entry(&t, 2.));
+    }
 }

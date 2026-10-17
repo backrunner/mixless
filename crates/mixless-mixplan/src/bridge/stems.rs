@@ -94,6 +94,18 @@ fn cost(frames: &[Frame], shape: &Shape, harmonic: bool) -> Option<f32> {
         }
         let p = band_power(f, g);
         let power = p.iter().flatten().sum::<f32>();
+        // A plucked chord, bass pulse or vocal chop also carries rhythm.
+        // Muting only the drum lane does not make its deck beatless. Native
+        // clocks may overlap a sustained bed, never two audible attack beds.
+        let rhythmic: [f32; 2] = std::array::from_fn(|d| {
+            (0..4)
+                .filter(|s| *s == 1 || f.onset[d][(*s).min(2)] >= 0.4)
+                .map(|s| f.bands[d][s].iter().sum::<f32>() * g[d][s].powi(2))
+                .sum()
+        });
+        if rhythmic[0].min(rhythmic[1]) > power.max(1e-12) * 0.01 {
+            return None;
+        }
         let x = ease(f.sec / duration);
         let target = (full(f, 0) * (1. - x) + full(f, 1) * x).max(1e-12);
         let delta = 10. * (power.max(1e-12) / target).log10();

@@ -106,12 +106,20 @@ pub(super) fn detect(t: &TrackAnalysis) -> Vec<MixRegion> {
                 (_, S::Silence) => continue,
                 _ => 0.,
             };
+            let release = kind == Kind::In
+                && t.sections.iter().any(|s| {
+                    (s.start_sec - anchor).abs() < 0.15
+                        && matches!(s.label, S::Break | S::Breakdown)
+                        && mixless_protocol::percussion_release(t, anchor, s.end_sec)
+                });
             candidates.push(MixRegion {
                 kind,
                 start_sec: start,
                 end_sec: end,
                 anchor_sec: anchor,
-                confidence: (confidence * 0.75 + structure + kick / duration * 0.15
+                confidence: (confidence * 0.75
+                    + structure
+                    + if release { 0.2 } else { kick / duration * 0.15 }
                     - vocal / duration * 0.12)
                     .clamp(0., 1.),
                 rms: (rms / duration).sqrt(),

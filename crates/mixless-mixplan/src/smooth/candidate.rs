@@ -40,13 +40,7 @@ pub(super) fn direct(
     let outgoing_bpm = ga.bpm((out - 0.01).max(0.)) * ctx.offset_a.rate;
     let incoming_bpm = gb.bpm(input) * ctx.offset_b.rate;
     let ratio = outgoing_bpm / incoming_bpm;
-    let factor = if (ratio / 2. - 1.).abs() < 0.08 {
-        0.5
-    } else if (ratio / 0.5 - 1.).abs() < 0.08 {
-        2.
-    } else {
-        1.
-    };
+    let factor = crate::grid::tempo_factor(ratio);
     let map = if factor == 1. {
         BarMap::OneToOne
     } else {
@@ -226,12 +220,15 @@ pub(super) fn direct(
             end,
             true,
         ));
-    let in_phrase = boundary_quality(b, bin).max(crate::cue_policy::manual_quality(
-        b,
-        ctx.cues_in,
-        bin,
-        false,
-    ));
+    let layer_entry = blend && stem_pair && n >= 4. && crate::phrasing::layer_entry(b, bin);
+    let in_phrase = boundary_quality(b, bin)
+        .max(if layer_entry { 0.5 } else { 0. })
+        .max(crate::cue_policy::manual_quality(
+            b,
+            ctx.cues_in,
+            bin,
+            false,
+        ));
     let start_phrase = boundary_quality(a, start).max(crate::recovery::quality(a, start));
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
     // Every technique finishes A at an evidenced phrase edge. Recovery
@@ -1255,6 +1252,9 @@ pub(super) fn direct(
     // Longer cross-key layers need a measured, strictly separated part fit;
     // the legacy fixed envelope remains limited to its validated span.
     if !composed && stem_layer && n > 32. && !loop_out {
+        return miss!();
+    }
+    if layer_entry && boundary_quality(b, bin) < 0.5 && !composed {
         return miss!();
     }
     if !composed

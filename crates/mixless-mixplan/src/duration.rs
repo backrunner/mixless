@@ -21,13 +21,7 @@ pub(super) fn candidates(
             .collect();
     }
     let ratio = ga.bpm(out) * ctx.offset_a.rate / (gb.bpm(input) * ctx.offset_b.rate);
-    let factor = if (ratio / 2. - 1.).abs() < 0.08 {
-        0.5
-    } else if (ratio / 0.5 - 1.).abs() < 0.08 {
-        2.
-    } else {
-        1.
-    };
+    let factor = crate::grid::tempo_factor(ratio);
     let mut spans = vec![4., 8., 16., 24., 32., 48., 64.];
     let mut recovery_spans = vec![];
     // Keep actual outgoing arrangement starts as well as incoming landings.

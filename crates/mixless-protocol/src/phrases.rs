@@ -34,6 +34,50 @@ fn local_bar(track: &TrackAnalysis, sec: f32) -> f32 {
         .unwrap_or(track.tempo.meter_num.max(1) as f32 * 60. / track.tempo.global_bpm.max(20.))
 }
 
+/// Sustained kit withdrawal while a tonal bed remains. A synth can keep the
+/// mixture loud and spectrally similar throughout a useful breakdown. Compare
+/// separated power on either side, not a mixture novelty threshold.
+pub fn percussion_release(track: &TrackAnalysis, start: f32, end: f32) -> bool {
+    let Some(stems) = &track.stems else {
+        return false;
+    };
+    let width = end - start;
+    if width < 2. * local_bar(track, start) - 0.05
+        || start < width
+        || end >= track.duration_sec - 0.05
+    {
+        return false;
+    }
+    let powers = |lo: f32, hi: f32| -> Option<[f32; 3]> {
+        let first = stems.frames.partition_point(|f| f.end_sec <= lo);
+        let (mut seconds, mut sum) = (0., [0.; 3]);
+        for f in stems.frames[first..]
+            .iter()
+            .take_while(|f| f.start_sec < hi)
+        {
+            let w = (f.end_sec.min(hi) - f.start_sec.max(lo)).max(0.);
+            seconds += w;
+            for i in 0..3 {
+                sum[i] += f.rms[i].powi(2) * w;
+            }
+        }
+        (seconds >= (hi - lo) * 0.95).then(|| sum.map(|v| v / seconds))
+    };
+    let (Some(before), Some(after)) = (powers(start - width, start), powers(start, end)) else {
+        return false;
+    };
+    // At least 6 dB kit retreat; the former kit must actually have been
+    // audible. Silence, separator leakage and bass-only mutes do not qualify.
+    before[1] > before.iter().sum::<f32>() * 0.01
+        && after[1] <= before[1] * 0.25
+        && after[2] >= before[2] * 0.25
+        && after[2] > after.iter().sum::<f32>() * 0.1
+        && [0., 0.5].into_iter().all(|part| {
+            powers(start + width * part, start + width * (part + 0.5))
+                .is_some_and(|p| p[1] <= before[1] * 0.35)
+        })
+}
+
 /// A short, measured retreat between sustained peaks is a suspension. Length
 /// alone cannot distinguish one from a usable short breakdown. Compare its
 /// source duration with both surrounding passages, independently of half/double
