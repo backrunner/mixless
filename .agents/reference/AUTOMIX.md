@@ -61,6 +61,10 @@ AUTO 正常播放期间，`mixless_mixplan::performance_moves` 按分析为出�
 
 ## 验证入口
 
+跨版本比较使用独立的 [离线评估器](../../scripts/automix_eval/README.md)：同一参考证据重算旧版、新分析加旧规划器、新版，分别检查固定顺序和重新生成的 Best 顺序。指标包含实际可听重叠、局部对拍、移调后声部音符、人声衰减与跨界持续音、持续高能量段损失、中高频前景重叠、乐器控制突入、整组音高负担和完整 Drop 后等待。计划自身的 `score` 不作为独立质量指标；静音准备和独奏回调不算混入。
+
+各项同时报告覆盖率、暴露时长和阈值敏感性。鼓活动强度的突变与网格对拍分开计算，避免把节拍一致视为节奏型变化自然。循环／scratch／insert 等无法还原的路径标为未覆盖，缺少人工标注时不报告 cue 准确率。三频段功率与参考网格均为代理测量，不能替代 PCM 对拍验证或主观试听。各 set 分开比较，并区分安全检查带来的短切与仍可改进的混音退步；已用于调试的录音不能作为 holdout。本次对照结果见[跨 set 评估记录](../history/2026-10-17-cross-set-evaluation.md)。
+
 ```sh
 cargo test --locked --workspace --exclude mixless-desktop
 cargo test --locked -p mixless-desktop

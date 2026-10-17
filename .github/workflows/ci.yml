@@ -10,6 +10,8 @@ jobs:
       - name: Test NI source inspector
         run: |
           python3 -B -m unittest discover -s crates/mixless-controllers/research/ni -p 'test_*.py'
+      - name: Test AutoMix evaluation observer
+        run: python3 -B -m unittest discover -s scripts/automix_eval -p 'test_*.py'
       - name: Install stable Rust
         run: rustup update stable && rustup default stable
       - name: Install WebAssembly C toolchain
