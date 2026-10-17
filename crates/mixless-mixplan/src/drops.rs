@@ -23,9 +23,16 @@ pub(super) fn next_peak_start(track: &TrackAnalysis, sec: f32) -> Option<f32> {
     runs(track).iter().map(|p| p.0).find(|&p| p >= sec - 0.05)
 }
 
-/// The peak a play-through owes: the track's main drop ahead of `entry`.
+/// A complete, full-weight peak with an evidenced recovery is enough for a
+/// play-through. Without that evidence retain the conservative main-drop cue.
 pub(super) fn owed_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
-    mixless_protocol::main_peak(track, entry)
+    [
+        mixless_protocol::released_peak(track, entry),
+        mixless_protocol::main_peak(track, entry),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 /// A peak plays whole. The outgoing track never leaves inside a peak, never
@@ -124,6 +131,81 @@ pub(super) fn brief(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
 mod tests {
     use super::*;
     use mixless_protocol::Section;
+
+    #[test]
+    fn measured_recovery_can_mix_early_while_manual_out_still_wins() {
+        use crate::{Planner, PlannerOptions};
+        use mixless_protocol::{Cue, CueKind, PhraseBoundary};
+        let mut a = crate::tests::track(1, 120., "8A", S::Outro, 128, 0.8, 0.2);
+        let b = crate::tests::track(2, 120., "8A", S::Intro, 128, 0.8, 0.2);
+        a.sections = [
+            (0., 32., S::Intro),
+            (32., 64., S::Drop),
+            (64., 128., S::Breakdown),
+            (128., 224., S::Drop),
+            (224., 256., S::Outro),
+        ]
+        .into_iter()
+        .map(|(start_sec, end_sec, label)| Section {
+            start_sec,
+            end_sec,
+            label,
+        })
+        .collect();
+        for bar in &mut a.bars {
+            bar.section = a
+                .sections
+                .iter()
+                .find(|s| bar.start_sec >= s.start_sec && bar.start_sec < s.end_sec)
+                .unwrap()
+                .label;
+            if bar.section == S::Breakdown {
+                bar.rms *= 0.3;
+                bar.low_db -= 12.;
+                bar.onset_density *= 0.25;
+                bar.kick_salience *= 0.25;
+            }
+        }
+        a.phrase_boundaries = (0..=16)
+            .map(|i| PhraseBoundary {
+                time_sec: i as f32 * 16.,
+                confidence: 0.8,
+                novelty: 0.4,
+            })
+            .collect();
+        assert_eq!(mixless_protocol::main_peak(&a, 0.), Some((128., 224.)));
+        assert_eq!(owed_peak(&a, 0.), Some((32., 64.)));
+        let planner = Planner::new();
+        let plan = planner.plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert!(plan.failure_reason.is_none(), "{plan:?}");
+        assert!(
+            plan.t_in_a >= 64. && plan.t_out_a <= 128.,
+            "{}..{}",
+            plan.t_in_a,
+            plan.t_out_a
+        );
+        assert!(plan.summary.as_ref().unwrap().length_bars >= 8);
+        assert!(plan.outgoing_source.sample(plan.handoff_bar.unwrap()) >= 64.);
+        let cue = Cue {
+            index: 0,
+            frame: 240 * 48000,
+            kind: CueKind::Out,
+            user_set: true,
+        };
+        let forced = planner.plan_pair(&a, &b, &[cue], &[], Default::default(), Default::default());
+        assert!(forced.failure_reason.is_none(), "{forced:?}");
+        assert!((forced.t_out_a - 240.).abs() < 0.05);
+        let late = Planner::with_options(PlannerOptions {
+            earliest_outgoing_sec: 140.,
+            ..Default::default()
+        })
+        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert!(late.failure_reason.is_none());
+        assert!(
+            late.t_in_a >= 140.,
+            "never schedule before the previous entrance ends"
+        );
+    }
 
     fn with_peak(bars: u32, peak: (u32, u32)) -> TrackAnalysis {
         let mut t = crate::tests::track(1, 174., "8A", S::Intro, bars, 0.9, 0.2);

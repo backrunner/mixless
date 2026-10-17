@@ -899,7 +899,7 @@ pub(super) fn direct(
         } else if let Some(u) = layered {
             u
         } else {
-            bass_handoff(a, b, &source_a, &source_b, n)?
+            bass_handoff(a, b, &source_a, &source_b, n).or_else(|| miss!())?
         }
     } else if let Some(op) = &lanes.loop_b {
         op.off_bar
@@ -1223,14 +1223,14 @@ pub(super) fn direct(
         }
     }
     if filtered {
-        crate::filtered::arrange(&mut plan, a, b)?;
+        crate::filtered::arrange(&mut plan, a, b).or_else(|| miss!())?;
     } else if !carry
         && !loop_out
         && !short_overlap
         && plan.stem_mix.is_none()
         && (blend || loop_roll || plan.incoming_start_bar == 0.)
     {
-        crate::vocals::protect(&mut plan, a)?;
+        crate::vocals::protect(&mut plan, a).or_else(|| miss!())?;
     }
     // A cut away from an incoming drop may let the outgoing last beat ring
     // out on a tail; that keeps its one-bar lead so the send can catch it.

@@ -209,3 +209,69 @@ pub fn main_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
         .filter(|p| p.0 >= r.0 - 0.05 && p.1 <= r.1 + 0.05)
         .last()
 }
+
+/// A full-weight peak followed by an independently phrased, measured release.
+/// This gives a set planner an earlier opportunity than the longest-drop cue;
+/// it does not move that generic cue or authorize a cut inside either phrase.
+pub fn released_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
+    let major = major_peaks(track);
+    peak_ranges(track).into_iter().find(|&(start, end)| {
+        if start < entry - 0.05
+            || !major
+                .iter()
+                .any(|p| p.0 >= start - 0.05 && (p.1 - end).abs() < 0.05)
+            || drop_suspension(track, end).is_some()
+            || !track.phrase_boundaries.iter().any(|p| {
+                (p.time_sec - end).abs() < 0.08 && p.confidence >= 0.5 && p.novelty >= 0.15
+            })
+        {
+            return false;
+        }
+        let Some(release_end) = track
+            .phrase_boundaries
+            .iter()
+            .filter(|p| p.time_sec > end + 0.08 && p.confidence >= 0.5)
+            .map(|p| p.time_sec)
+            .min_by(f32::total_cmp)
+        else {
+            return false;
+        };
+        // A whole recovery phrase must be quieter than a whole preceding
+        // phrase. The peak must have supplied at least two such phrases;
+        // one impact, a fill or a final silent tail cannot satisfy this.
+        let width = release_end - end;
+        if end - start < 2. * width - 0.05 || release_end >= track.duration_sec - 0.05 {
+            return false;
+        }
+        let mut covered = end;
+        for s in track
+            .sections
+            .iter()
+            .filter(|s| s.start_sec < release_end && s.end_sec > end)
+        {
+            if s.start_sec > covered + 0.05
+                || !matches!(s.label, S::Break | S::Breakdown | S::Outro)
+            {
+                return false;
+            }
+            covered = s.end_sec;
+        }
+        if covered < release_end - 0.05 {
+            return false;
+        }
+        let (Some(before), Some(after)) = (
+            activity(track, end - width, end),
+            activity(track, end, release_end),
+        ) else {
+            return false;
+        };
+        // Same contrast evidence as a suspension, but this release has its
+        // own phrase. Gain and half/double tempo interpretations do not alter
+        // these source-time comparisons. Silence is not a layering bed.
+        after.rms > before.rms * 0.05
+            && after.rms <= before.rms * std::f32::consts::FRAC_1_SQRT_2
+            && after.low_db <= before.low_db - 6.
+            && before.attacks > 0.
+            && after.attacks <= before.attacks * (2. / 3.)
+    })
+}
