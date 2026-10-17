@@ -29,8 +29,24 @@ pub(super) fn candidate(
     if (ratio * factor - 1.).abs() <= 0.08 {
         return None;
     }
-    let target = (a_bpm * b_bpm / factor).sqrt();
-    let rate = target / ga.bpm(join);
+    // Intersect both decks' absolute stretch budgets with the movement left
+    // from A's carried rate. The geometric mean alone can exceed A's budget
+    // even when a shared clock is feasible (e.g. A already sped up by 5%).
+    let native_a = ga.bpm(join);
+    let native_b = gb.bpm(input) / factor;
+    let low = (native_a * 0.9201)
+        .max(native_b * 0.9201)
+        .max(a_bpm * 0.9201);
+    let high = (native_a * 1.0799)
+        .min(native_b * 1.0799)
+        .min(a_bpm * 1.0799);
+    if low > high {
+        return miss!();
+    }
+    // Use the least audible movement needed to reach a shared clock; the
+    // next pair and solo recovery can decide when to return towards native.
+    let target = a_bpm.clamp(low, high);
+    let rate = target / native_a;
     // Share the correction; neither deck may exceed the existing 8% budget.
     // Absolute limits also prevent accumulated offsets drifting indefinitely.
     if !(0.92..=1.08).contains(&rate)
@@ -206,7 +222,7 @@ fn prepend(
         mixless_protocol::MixStage {
             start_bar: 0.,
             end_bar: bars,
-            label: "Prepare shared tempo · incoming silent".into(),
+            label: "Prepare shared tempo".into(),
         },
     );
     p.incoming_start_bar += bars;
@@ -221,6 +237,52 @@ fn prepend(
 mod tests {
     use super::*;
     use mixless_protocol::SectionLabel as L;
+
+    #[test]
+    fn carried_tempo_uses_the_feasible_intersection_instead_of_an_invalid_midpoint() {
+        let mut a = crate::tests::track(1, 152., "8A", L::Outro, 96, 0.9, 0.2);
+        let b = crate::tests::track(2, 174., "8A", L::Intro, 96, 0.9, 0.2);
+        let edge = 64. * 240. / 152.;
+        a.sections[0].end_sec = edge;
+        a.sections.push(mixless_protocol::Section {
+            start_sec: edge,
+            end_sec: a.duration_sec,
+            label: L::Outro,
+        });
+        for rate in [1., 1.04, 1.0526] {
+            let ctx = PlanContext {
+                outgoing: &a,
+                incoming: &b,
+                cues_out: &[],
+                cues_in: &[],
+                offset_a: mixless_protocol::PerformanceOffset {
+                    rate,
+                    pitch_semitones: -2.,
+                },
+                offset_b: Default::default(),
+            };
+            let p = candidate(
+                &ctx,
+                &PlannerOptions {
+                    harmonic_key_shift: true,
+                    ..Default::default()
+                },
+                256.,
+                0.,
+                TransitionMode::BeatBlend,
+                24,
+                -1.,
+            )
+            .unwrap();
+            let launch = p.incoming_start_bar;
+            assert!(launch > 0. && p.summary.as_ref().unwrap().length_bars as f32 - launch >= 24.);
+            let (ra, rb) = (p.lanes.rate_a.sample(launch), p.lanes.rate_b.sample(launch));
+            assert!((0.92..=1.08).contains(&ra) && (0.92..=1.08).contains(&rb));
+            assert!((ra * 152. - rb * 174.).abs() < 0.01);
+            assert_eq!(p.lanes.rate_a.sample(0.), rate);
+            assert_eq!(p.lanes.pitch_a.sample(0.), -2.);
+        }
+    }
 
     #[test]
     fn preparation_preserves_entry_and_shares_stretch_without_consuming_incoming() {
@@ -257,8 +319,8 @@ mod tests {
             let launch = p.incoming_start_bar;
             assert!(launch > 0.);
             assert_eq!(p.lanes.rate_a.sample(0.), 1.);
-            assert!((p.lanes.rate_a.sample(launch) - (150f32 / 135.).sqrt()).abs() < 0.001);
-            assert!((p.incoming_offset_end.rate - (135f32 / 150.).sqrt()).abs() < 0.001);
+            assert!((p.lanes.rate_a.sample(launch) - 150. * 0.9201 / 135.).abs() < 0.001);
+            assert!((p.incoming_offset_end.rate - 0.9201).abs() < 0.001);
             assert_eq!(p.incoming_source.nodes[0].0, launch);
             assert!((p.incoming_source.sample(launch) - p.t_in_b).abs() < 0.001);
             assert!(p.clock.nodes.windows(2).all(|w| w[1].1 > w[0].1));

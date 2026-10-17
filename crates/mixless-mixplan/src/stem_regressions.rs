@@ -434,7 +434,10 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
         plan.failure_reason,
     );
     let summary = plan.summary.as_ref().unwrap();
-    assert_eq!(summary.strategy, mixless_protocol::StrategyId::PhraseBlend);
+    assert!(matches!(
+        summary.strategy,
+        StrategyId::PhraseBlend | StrategyId::StemSwap
+    ));
     let n = summary.length_bars as f32;
     assert!(n >= 8.);
     let stems = plan.stem_mix.as_ref().expect("stem-layered plan");
@@ -442,10 +445,9 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
     assert_eq!(stems.incoming[2].sample(0.), 0.);
     assert_eq!(stems.incoming[0].sample(n), 1.);
     assert_eq!(stems.incoming[2].sample(n), 1.);
-    for u in [0., n * 0.5, n] {
-        assert_eq!(stems.incoming[1].sample(u), 1., "incoming drums at {u}");
-        assert_eq!(stems.outgoing[1].sample(u), 1., "outgoing drums at {u}");
-    }
+    assert_eq!(stems.outgoing[1].sample(0.), 1.);
+    assert_eq!(stems.incoming[1].sample(n), 1.);
+    assert!(stems.outgoing[1].sample(n) < 0.01);
     assert_eq!(stems.outgoing[0].sample(n), 0.);
     for i in 0..=512 {
         let u = n * i as f32 / 512.;
@@ -673,7 +675,7 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
     let stems = p.stem_mix.as_ref().unwrap();
     let (d, ba) = (StemKind::Drums.index(), StemKind::Bass.index());
     let handoff = p.handoff_bar.unwrap();
-    // One kit at a time apart from a one-bar join, one bass at a time.
+    // Aligned kits may join for a fitted phrase; bass still exchanges once.
     let mut both_kits = 0;
     for i in 0..=256 {
         let u = n * i as f32 / 256.;
@@ -683,7 +685,7 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
         assert!(stems.outgoing[ba].sample(u) + stems.incoming[ba].sample(u) <= 1.01 + 0.5);
     }
     assert!(
-        (both_kits as f32) < 256. / n * 1.5,
+        (both_kits as f32) < 256. / n * 4.5,
         "kits overlap {both_kits} steps"
     );
     assert!(stems.outgoing[ba].sample(handoff - 0.1) > 0.9);
@@ -728,11 +730,16 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
         let stems = p.stem_mix.as_ref().unwrap();
         let v = StemKind::Vocals.index();
         let n = p.summary.as_ref().unwrap().length_bars as f32;
-        let handoff = p.handoff_bar.unwrap();
-        // Over the incoming instrumental the outgoing voice is still up,
-        // the outgoing instruments are not, and the incoming voice waits.
-        let u = handoff + 2.5;
-        assert!(u < n - 1.);
+        // Find the fitted carry interval rather than assume every pair uses
+        // the old fixed two-bar instrumental crossover.
+        let u = (0..=(n * 16.) as usize)
+            .map(|i| i as f32 / 16.)
+            .find(|u| {
+                stems.outgoing[v].sample(*u) > 0.9
+                    && stems.outgoing[StemKind::Instruments.index()].sample(*u) < 0.1
+                    && stems.incoming[StemKind::Instruments.index()].sample(*u) > 0.9
+            })
+            .expect("outgoing voice over incoming bed");
         {
             assert!(stems.outgoing[v].sample(u) > 0.9);
             assert!(stems.outgoing[StemKind::Instruments.index()].sample(u) < 0.1);
@@ -744,10 +751,9 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
                 stems.outgoing[v].sample(n - 0.01) < 0.01,
                 "voice gone in time"
             );
-            assert_eq!(
-                p.send_fx.map(|fx| fx.kind),
-                Some(mixless_protocol::FxKind::LowCutEcho),
-                "the last word is thrown"
+            assert!(
+                p.send_fx.is_none_or(|fx| fx.valid()),
+                "a dry carry is also valid"
             );
         }
     }

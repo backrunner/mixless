@@ -23,10 +23,19 @@ pub(super) fn next_peak_start(track: &TrackAnalysis, sec: f32) -> Option<f32> {
     runs(track).iter().map(|p| p.0).find(|&p| p >= sec - 0.05)
 }
 
-/// A complete, full-weight peak with an evidenced recovery is enough for a
-/// play-through. Without that evidence retain the conservative main-drop cue.
+/// One complete full-weight drop is enough for a play-through. A shorter
+/// first chorus remains a preview when a real drop is still ahead. This is
+/// set policy, separate from the generic longest-drop OUT cue suggestion.
 pub(super) fn owed_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
+    let first_drop = major_peaks(track).into_iter().find(|p| {
+        p.0 >= entry - 0.05
+            && track
+                .sections
+                .iter()
+                .any(|s| s.label == S::Drop && s.start_sec < p.1 - 0.05 && s.end_sec > p.0 + 0.05)
+    });
     [
+        first_drop,
         mixless_protocol::released_peak(track, entry),
         mixless_protocol::main_peak(track, entry),
     ]
@@ -101,15 +110,6 @@ pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
                     0.16 + heard * 0.16
                         + later.iter().skip(1).filter(|p| exit > p.0).count() as f32 * 0.08
                 }
-                // After the owed peak has played, penalise leaving before
-                // the next major peak starts — a second drop run is worth
-                // hearing just as much as the first one.
-                Some(next) if exit + 0.1 < next.0 => {
-                    // Scale by how much of the remaining track is that peak.
-                    let remaining = (track.duration_sec - main.1).max(1.);
-                    let weight = ((next.1 - next.0) / remaining).clamp(0., 1.);
-                    0.08 * weight
-                }
                 _ => 0.,
             }
         }
@@ -123,6 +123,11 @@ pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
 /// leaving straight after the entry, nothing once about 90 s (or 45% of a
 /// short track) has been heard.
 pub(super) fn brief(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
+    // A complete meaningful peak satisfies this play-through even when a
+    // late entry makes it shorter than the generic 90-second preference.
+    if owed_peak(track, entry).is_some_and(|p| p.0 >= entry - 0.05 && exit >= p.1 - 0.05) {
+        return 0.;
+    }
     let want = (0.45 * track.duration_sec).min(90.);
     ((want - (exit - entry)) / want.max(1.)).clamp(0., 1.) * 0.3
 }
@@ -307,4 +312,28 @@ mod tests {
         let short = with_peak(48, (8, 32));
         assert_eq!(peaks(&short).len(), 1);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_complete_first_drop_satisfies_a_short_play_through_but_a_partial_one_does_not() {
+    use mixless_protocol::Section;
+    let mut a = crate::tests::track(1, 120., "8A", S::Outro, 128, 0.9, 0.1);
+    a.sections = [
+        (0., 64., S::Intro),
+        (64., 96., S::Drop),
+        (96., 160., S::Breakdown),
+        (160., 224., S::Drop),
+        (224., 256., S::Outro),
+    ]
+    .into_iter()
+    .map(|(start_sec, end_sec, label)| Section {
+        start_sec,
+        end_sec,
+        label,
+    })
+    .collect();
+    assert_eq!(brief(&a, 96., 64.), 0.);
+    assert!(brief(&a, 96., 80.) > 0.);
+    assert!(brief(&a, 80., 64.) > 0.);
 }

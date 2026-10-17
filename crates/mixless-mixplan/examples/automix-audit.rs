@@ -67,8 +67,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
         let mut plan = planner.plan_with_following(&ctx, tracks.get(i + 2));
         let rejected = mixless_mixplan::trace::take();
-        let fallback = plan.failure_reason.is_some();
-        if fallback {
+        let failure = plan.failure_reason.is_some();
+        let fallback = failure
+            || plan.summary.as_ref().is_some_and(|s| {
+                s.used_fallback
+                    && s.strategy == mixless_protocol::StrategyId::DryCut
+                    && s.length_bars == 1
+            });
+        if failure {
             plan = short_handoff(&ctx, earliest);
         }
         let summary = describe(&plan);

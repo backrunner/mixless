@@ -69,8 +69,10 @@ pub(crate) fn vocal_release(t: &TrackAnalysis, sec: f32) -> bool {
     if sec >= t.duration_sec - 0.5 || !crate::continuity::voice_released(t, sec) {
         return false;
     }
-    let lookback = g.sec((g.beat(sec) - g.meter()).max(0.));
-    crate::continuity::voice_active(t, lookback) > 0.35
+    (1..=2).any(|bars| {
+        let lookback = g.sec((g.beat(sec) - bars as f32 * g.meter()).max(0.));
+        crate::continuity::voice_active(t, lookback) > 0.35
+    })
 }
 
 pub(crate) fn boundary_quality(t: &TrackAnalysis, sec: f32) -> f32 {
@@ -207,8 +209,39 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
                 beat += g.meter();
             }
             if g.sec(beat) >= earliest && g.sec(beat) <= audible_end + 0.001 {
-                vocal_ends.push(beat);
-                result.push(beat);
+                for end in [beat, beat + g.meter()] {
+                    if g.sec(end) <= audible_end + 0.001 && vocal_release(t, g.sec(end)) {
+                        vocal_ends.push(end);
+                        result.push(end);
+                    }
+                }
+            }
+        }
+    }
+    // Bar-level voice phrases can span several actual sung lines. Include
+    // rests measured in the fine stem frames, allowing a voice to finish over
+    // the next bed and leave on the following downbeat inside that rest.
+    if out {
+        if let Some(stems) = &t.stems {
+            let mut rest = None;
+            for f in &stems.frames {
+                if f.vocal_activity < 0.2 {
+                    let start = *rest.get_or_insert(f.start_sec);
+                    let beat = g.ceil_bar(start + 0.2);
+                    let sec = g.sec(beat);
+                    if f.end_sec >= sec
+                        && sec >= earliest
+                        && sec <= audible_end
+                        && vocal_release(t, sec)
+                        && !stems.note_crossing(sec, mixless_protocol::StemKind::Vocals)
+                        && !vocal_ends.contains(&beat)
+                    {
+                        vocal_ends.push(beat);
+                        result.push(beat);
+                    }
+                } else {
+                    rest = None;
+                }
             }
         }
     }

@@ -175,3 +175,41 @@ fn recovery_overlap_quality_does_not_authorize_an_interior_instant_cut() {
         .is_some()
     );
 }
+
+#[test]
+fn a_short_peak_exchange_can_hold_the_matched_clock_without_a_breakdown_label() {
+    use mixless_protocol::{Cue, CueKind, SectionLabel as S};
+    let a = crate::tests::track(1, 120., "8A", S::Drop, 64, 0.9, 0.1);
+    let b = crate::tests::track(2, 128., "8A", S::Intro, 64, 0.9, 0.1);
+    let cues = [Cue {
+        index: 1,
+        frame: (32. * a.sample_rate as f32) as u64,
+        kind: CueKind::Out,
+        user_set: true,
+    }];
+    let ctx = PlanContext {
+        outgoing: &a,
+        incoming: &b,
+        cues_out: &cues,
+        cues_in: &[],
+        offset_a: Default::default(),
+        offset_b: Default::default(),
+    };
+    let p = super::candidate::direct(
+        &ctx,
+        &PlannerOptions::default(),
+        64.,
+        0.,
+        TransitionMode::BeatBlend,
+        8,
+        -1.,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        p.summary.as_ref().unwrap().strategy,
+        mixless_protocol::StrategyId::EnergyHold
+    );
+    assert!((p.incoming_offset_end.rate - 120. / 128.).abs() < 0.0001);
+    assert!((p.lanes.rate_a.sample(0.) - 1.).abs() < 0.00001);
+}

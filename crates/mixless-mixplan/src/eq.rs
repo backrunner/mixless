@@ -127,6 +127,12 @@ pub(crate) fn solo(t: &TrackAnalysis, from: f32, until: f32) -> Vec<PerformanceM
 }
 
 pub(crate) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan) {
+    // Required stem plans have already fitted their band ownership against
+    // the complete part/level curves. A second generic cut can remove the
+    // foreground they deliberately preserved.
+    if plan.requires_stems && plan.stem_mix.is_some() {
+        return;
+    }
     let Some(summary) = &plan.summary else { return };
     let n = summary.length_bars as f32;
     let begin = plan.incoming_start_bar;

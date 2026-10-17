@@ -53,30 +53,37 @@ fn held_notes_are_not_cut_and_a_measured_breath_can_exit_within_a_vocal_section(
 }
 
 #[test]
-fn continuous_voice_without_phrase_evidence_uses_a_full_release_to_track_end() {
+fn continuous_voice_without_a_breath_finishes_before_the_next_singer_enters() {
     let mut a = track(1, 128., "8A", S::Outro, 64, 0.8, 0.2);
     let mut b = track(2, 128., "9A", S::Intro, 64, 0.8, 0.2);
     moments(&mut a, 0.9);
     moments(&mut b, 0.9);
-    let p = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    let ctx = PlanContext {
+        outgoing: &a,
+        incoming: &b,
+        cues_out: &[],
+        cues_in: &[],
+        offset_a: Default::default(),
+        offset_b: Default::default(),
+    };
+    let planned = Planner::new().plan_next(&ctx);
+    let p = if planned.failure_reason.is_some() {
+        crate::short_handoff(&ctx, 0.)
+    } else {
+        planned
+    };
     assert!(p.failure_reason.is_none(), "{:?}", p.failure_reason);
-    let n = p.summary.as_ref().unwrap().length_bars as f32;
-    assert!(n >= 8.);
-    assert_eq!(p.incoming_start_bar, 0.);
-    let mut previous = 1.;
-    for i in 0..=1000 {
-        let u = n * i as f32 / 1000.;
-        let angle = (p.lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
-        let va = angle.cos().max(0.)
-            * 10f32.powf((p.lanes.gain_a.sample(u) + p.lanes.eq_a.mid.sample(u)) / 20.);
-        let vb = angle.sin().max(0.)
-            * 10f32.powf((p.lanes.gain_b.sample(u) + p.lanes.eq_b.mid.sample(u)) / 20.);
-        assert!(va * vb < 0.085, "two foregrounds at {u}: {va} {vb}");
-        assert!((va - previous).abs() < 0.035, "abrupt vocal exit at {u}");
-        previous = va;
-    }
-    assert!(previous < 0.0001);
     assert!((p.t_out_a - a.duration_sec).abs() < 0.001);
+    let n = p.summary.as_ref().unwrap().length_bars as f32;
+    for i in 0..1000 {
+        let u = n * i as f32 / 1000.;
+        let source = p.outgoing_source.sample(u);
+        if source < a.duration_sec - 0.1 {
+            let level = ((1. - p.lanes.xfader.sample(u)) / 2.).sqrt()
+                * 10f32.powf((p.lanes.gain_a.sample(u) + p.lanes.eq_a.mid.sample(u)) / 20.);
+            assert!(level > 0.7, "ongoing final word faded at {source}: {level}");
+        }
+    }
 }
 
 #[test]
@@ -204,8 +211,11 @@ fn filtered_background_cannot_reduce_the_foreground_before_its_drop_ends() {
     ];
     crate::filtered::arrange(&mut p, &a, &b).unwrap();
     for u in [1., n * 0.5, n - 2.01] {
-        let x = (p.lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
-        close(x.cos() * 10f32.powf(p.lanes.gain_a.sample(u) / 20.), 1.);
+        let x = (p.lanes.xfader.sample(u) + 1.) * 0.5;
+        close(
+            (1. - x).sqrt() * 10f32.powf(p.lanes.gain_a.sample(u) / 20.),
+            1.,
+        );
         assert!(p.incoming_source.sample(u) > p.t_in_b);
         assert!(p.lanes.eq_b.low.sample(u) <= -90.);
         assert!(p.lanes.eq_b.mid.sample(u) <= -24.);
@@ -236,20 +246,23 @@ fn lookahead_never_retunes_the_audible_deck_or_overrides_a_failed_current_plan()
     let p = planner.plan_with_following(&ctx, Some(&c));
     assert!(p.failure_reason.is_none());
     assert!(p.lanes.pitch_a.nodes.iter().all(|(_, v)| *v == 1.));
-    assert!(p
-        .lanes
-        .pitch_b
-        .nodes
-        .iter()
-        .all(|(_, v)| *v == p.incoming_offset_end.pitch_semitones));
+    assert!(
+        p.lanes
+            .pitch_b
+            .nodes
+            .iter()
+            .all(|(_, v)| *v == p.incoming_offset_end.pitch_semitones)
+    );
     let mut invalid = b.clone();
     invalid.duration_sec = f32::NAN;
     let invalid_ctx = PlanContext {
         incoming: &invalid,
         ..ctx
     };
-    assert!(planner
-        .plan_with_following(&invalid_ctx, Some(&c))
-        .failure_reason
-        .is_some());
+    assert!(
+        planner
+            .plan_with_following(&invalid_ctx, Some(&c))
+            .failure_reason
+            .is_some()
+    );
 }

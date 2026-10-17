@@ -30,6 +30,18 @@ pub(super) fn candidates(
     };
     let mut spans = vec![4., 8., 16., 24., 32., 48., 64.];
     let mut recovery_spans = vec![];
+    // Keep actual outgoing arrangement starts as well as incoming landings.
+    // Otherwise dense incoming subdivisions can evict the only span whose
+    // beginning lets A finish its sung phrase over B's instrumental bed.
+    let mut departure_spans: Vec<_> = a
+        .sections
+        .iter()
+        .map(|s| (out - ga.ceil_bar(s.start_sec)) / ga.meter())
+        .filter(|n| *n >= 4. && *n <= max as f32 && (*n - n.round()).abs() < 0.02)
+        .map(|n| n.round() as u16)
+        .collect();
+    departure_spans.sort_unstable();
+    departure_spans.dedup();
     // Keep the lengths that resolve exactly onto B's peak. Sampling the
     // sorted lengths can discard, for example, a 14-bar build in favour of
     // 8/16 bars; neither substitute can land B's drop on A's phrase ending.
@@ -117,6 +129,12 @@ pub(super) fn candidates(
             // the available long spans, changing uniform sample indices; it
             // must not evict a still-feasible short phrase from the search.
             .chain(spans.iter().copied().take(8))
+            .chain(
+                departure_spans
+                    .into_iter()
+                    .filter(|n| spans.contains(n))
+                    .take(8),
+            )
         {
             if !selected.contains(&n) {
                 selected.push(n);
@@ -176,7 +194,7 @@ mod tests {
                 let options = PlannerOptions::default();
                 let spans = candidates(&ctx, &options, 96. * 4., 0., M::BeatBlend);
                 assert!(spans.contains(&landing), "{bpm}: {spans:?}");
-                assert!(spans.len() <= 28);
+                assert!(spans.len() <= 36);
                 assert!((4..=11).all(|n| spans.contains(&n)));
                 let limited = PlannerOptions {
                     earliest_outgoing_sec: 94. * bar,
@@ -190,5 +208,50 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn dense_incoming_phrases_do_not_evict_an_outgoing_arrangement_start() {
+    use mixless_protocol::{PhraseBoundary, Section, SectionLabel as S};
+    for bpm in [90., 156., 180.] {
+        let bar = 240. / bpm;
+        let mut a = crate::tests::track(1, bpm, "8A", S::Outro, 128, 0.8, 0.2);
+        a.sections = vec![
+            Section {
+                start_sec: 0.,
+                end_sec: 49. * bar,
+                label: S::Chorus,
+            },
+            Section {
+                start_sec: 49. * bar,
+                end_sec: 128. * bar,
+                label: S::Outro,
+            },
+        ];
+        let mut b = a.clone();
+        b.sections.clear();
+        b.phrase_boundaries = (1..100)
+            .map(|i| PhraseBoundary {
+                time_sec: i as f32 * bar,
+                confidence: 0.8,
+                novelty: 0.2,
+            })
+            .collect();
+        let ctx = PlanContext {
+            outgoing: &a,
+            incoming: &b,
+            cues_out: &[],
+            cues_in: &[],
+            offset_a: Default::default(),
+            offset_b: Default::default(),
+        };
+        let spans = candidates(&ctx, &PlannerOptions::default(), 96. * 4., 0., M::BeatBlend);
+        assert!(
+            spans.contains(&47),
+            "outgoing section start lost: {spans:?}"
+        );
+        assert!(spans.len() <= 36);
     }
 }
