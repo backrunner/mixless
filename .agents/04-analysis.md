@@ -26,7 +26,7 @@ hash = blake3(file_len || mtime_secs || first_64k_bytes || last_4k_bytes)
 
 ## BPM / Beat / Downbeat
 
-步骤：flux → tempogram 70–180（含 half/double）→ 全局 BPM → 8–16 s 滑窗 + PELT → 低置信折叠为单 BPM → Ellis 2007 beat → 4/4 vs 3/4 downbeat。
+步骤：flux → tempogram 70–240（含 half/double）→ 全局 BPM → 8–16 s 滑窗 + PELT → 低置信折叠为单 BPM → Ellis 2007 beat → 4/4 vs 3/4 downbeat。
 
 `ANALYSIS_VERSION=15`：16 beat 局部窗口里与全局值偏差 ≥1.5% 的估计，只有相邻窗口同向且各有置信度 ≥0.55 才保留为真实变速（单个离群窗口或 2/3、3/4、4/3、3/2 节拍别名一律回退）。过滤后全部一致的曲目按恒定速度处理：beat 按单周期单相位生成，pulse_confidence 取全局测量与局部测量的较大值，安静 break 不再把网格可靠性拖到零。
 
@@ -41,6 +41,8 @@ hash = blake3(file_len || mtime_secs || first_64k_bytes || last_4k_bytes)
 规划器必须用 `bpm_at_beat(map, beat)` 读 **局部** `TempoSegment.bpm`，不是只读 `global_bpm`。
 
 P1：手拖 grid。
+
+`ANALYSIS_VERSION=21`：拍速范围扩至 240 BPM，自相关 comb 在各个真实小数 lag 插值；候选折叠分数减去均匀相位背景，避免快网格因窗口更多而获利。连续重叠窗口支持局部周期和相位后才细化 beat 时间；插值区间不继承可靠度。共享 `percussion_release` 结合完整分轨覆盖、至少两个局部小节的鼓组 6 dB 退让及保留的乐器背景，补出混合响度不变的低潮入口；自动 cue 与 region 共用，手工 cue 不变。见[实曲回归与限制](history/2026-10-17-rhythm-and-cue.md)。
 
 ## Key
 

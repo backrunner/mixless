@@ -4,6 +4,8 @@
 .vscode/
 .DS_Store
 *.swp
+__pycache__/
+*.pyc
 
 # Node / Vite
 node_modules/

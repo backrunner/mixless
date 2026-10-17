@@ -653,13 +653,10 @@ pub(super) fn carry(plan: &mut MixPlan, shape: &crate::ride::Shape, bpm: f32) {
     // Every fade finishes before the fader closes, so the closing move only
     // ever acts on silence.
     let gone = (n - 0.25).max(leave + 0.25);
-    let (fade_from, fade_to) = match shape.exit {
-        Exit::Tail => (voice_end - 0.5, voice_end + 0.5),
-        Exit::Throw => (voice_end - 0.0625, voice_end),
-        Exit::Sweep => (voice_end - 0.25, voice_end + 0.25),
-        Exit::Wash => (voice_end - 2., voice_end + 0.5),
-    };
-    let (fade_to, fade_from) = (fade_to.min(gone), fade_from.min(gone - 0.0625));
+    // The line has already ended before its dry level or spectrum changes.
+    // FX style controls the tail, never how much of a sung word survives.
+    let fade_from = voice_end.min(gone - 0.0625);
+    let fade_to = (voice_end + 0.25).min(gone);
     let voice = |u: f32| -> f32 {
         let level = 1. + (sit - 1.) * ease(u / leave);
         level * (1. - ease((u - fade_from) / (fade_to - fade_from).max(0.0625)))
@@ -749,7 +746,7 @@ pub(super) fn carry(plan: &mut MixPlan, shape: &crate::ride::Shape, bpm: f32) {
         }
         Exit::Throw => {
             // The dry voice stops with the word; the echo carries it on.
-            hp.extend([(voice_end - 0.25, body), (voice_end, 600.)]);
+            hp.extend([(voice_end, body), (fade_to, 600.)]);
             send.extend([
                 (voice_end - 0.25, 0.),
                 (voice_end - 0.0625, 0.35),
@@ -758,9 +755,9 @@ pub(super) fn carry(plan: &mut MixPlan, shape: &crate::ride::Shape, bpm: f32) {
             crate::send_fx::echo(mixless_protocol::FxKind::LowCutEcho, 0.75, 0.5, bpm)
         }
         Exit::Sweep => {
-            // Thin the voice upwards over two bars so the drop lands clean.
-            let from = (voice_end - 2.).max(leave);
-            hp.extend([(from, body), (voice_end, 2500.)]);
+            // Filter the released tail as the incoming drop arrives.
+            let from = voice_end.max(leave);
+            hp.extend([(from, body), (fade_to, 2500.)]);
             send.extend([(from, 0.), (voice_end, 0.3), (fade_to, 0.)]);
             crate::send_fx::echo(mixless_protocol::FxKind::LowCutEcho, 0.5, 0.3, bpm)
         }

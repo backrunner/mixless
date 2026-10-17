@@ -148,3 +148,169 @@ fn missing_measurements_faded_return_and_long_independent_section_do_not_certify
     t.sections[4].start_sec = 60.;
     assert!(drop_suspension(&t, 40.).is_none());
 }
+
+fn released_recording(clock: f32) -> TrackAnalysis {
+    let mut t = recording(clock, 0.25);
+    // The later peak is twice as long, but the first has a complete phrase
+    // of measured recovery after its own observed ending.
+    t.duration_sec = 120.;
+    t.sections[3].end_sec = 112.;
+    t.sections[4].start_sec = 112.;
+    t.sections[4].end_sec = 120.;
+    let step = 2. / clock;
+    let template = t.bars.last().unwrap().clone();
+    for i in t.bars.len()..(120. / step) as usize {
+        let mut b = template.clone();
+        b.bar_index = i as u32;
+        b.start_sec = i as f32 * step;
+        b.end_sec = b.start_sec + step;
+        t.bars.push(b);
+    }
+    t.phrase_boundaries = [(40., 0.6), (44., 0.), (48., 0.6), (112., 0.6)]
+        .into_iter()
+        .map(|(time_sec, novelty)| crate::PhraseBoundary {
+            time_sec,
+            novelty,
+            confidence: 0.8,
+        })
+        .collect();
+    t
+}
+
+#[test]
+fn independent_release_allows_a_complete_peak_before_the_longest_drop() {
+    for clock in [0.5, 1., 2.] {
+        for speed in [0.75, 1., 1.5] {
+            for gain in [0.125_f32, 1., 2.] {
+                let mut t = released_recording(clock);
+                let offset = 3.7;
+                for b in &mut t.bars {
+                    b.start_sec = b.start_sec / speed + offset;
+                    b.end_sec = b.end_sec / speed + offset;
+                    b.rms *= gain;
+                    b.low_db += 20. * gain.log10();
+                    b.onset_density *= speed;
+                }
+                for s in &mut t.sections {
+                    s.start_sec = s.start_sec / speed + offset;
+                    s.end_sec = s.end_sec / speed + offset;
+                }
+                for p in &mut t.phrase_boundaries {
+                    p.time_sec = p.time_sec / speed + offset;
+                }
+                t.duration_sec = t.duration_sec / speed + offset;
+                t.tempo.global_bpm *= speed;
+                assert_eq!(
+                    released_peak(&t, offset),
+                    Some((8. / speed + offset, 40. / speed + offset))
+                );
+                assert_eq!(
+                    main_peak(&t, offset),
+                    Some((48. / speed + offset, 112. / speed + offset)),
+                    "generic cue remains conservative"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn release_requires_a_full_peak_phrase_and_measured_arrangement_retreat() {
+    let base = released_recording(1.);
+    assert!(
+        released_peak(&base, 9.).is_none(),
+        "a partially entered peak is not a full play-through"
+    );
+    for variant in 0..9 {
+        let mut t = base.clone();
+        match variant {
+            0 => t.phrase_boundaries.clear(),
+            1 => t.phrase_boundaries[0].novelty = 0.,
+            2 => t.phrase_boundaries[0].confidence = 0.4,
+            3 => t.sections[2].label = S::BuildUp,
+            4 => t.bars.retain(|b| b.start_sec != 42.),
+            5 => {
+                for b in &mut t.bars[20..22] {
+                    b.rms = 0.;
+                }
+            }
+            6 => {
+                for b in &mut t.bars[20..22] {
+                    b.low_db = -10.;
+                }
+            }
+            7 => {
+                for b in &mut t.bars[20..22] {
+                    b.onset_density = 20.;
+                }
+            }
+            8 => {
+                for b in &mut t.bars[4..20] {
+                    b.rms *= 0.5;
+                }
+            }
+            _ => unreachable!(),
+        }
+        assert!(released_peak(&t, 0.).is_none(), "variant {variant}");
+    }
+    let mut fill = base;
+    fill.sections[0].end_sec = 36.;
+    fill.sections[1].start_sec = 36.;
+    assert!(
+        released_peak(&fill, 0.).is_none(),
+        "one impact is not a full peak"
+    );
+}
+
+#[test]
+fn separated_kit_release_survives_a_loud_synth_bed() {
+    for clock in [0.5, 1., 2.] {
+        for gain in [0.1f32, 1., 3.] {
+            let mut t = recording(clock, 1.);
+            t.stems = Some(crate::StemAnalysis {
+                version: 2,
+                separator_sha256: String::new(),
+                notes_sha256: String::new(),
+                duration_sec: 88.,
+                residual_rms: 0.,
+                notes: vec![],
+                frames: (0..1760)
+                    .map(|i| {
+                        let s = i as f32 * 0.05;
+                        crate::StemFrame {
+                            start_sec: s,
+                            end_sec: s + 0.05,
+                            rms: [
+                                0.,
+                                if (40. ..48.).contains(&s) {
+                                    gain * 0.01
+                                } else {
+                                    gain * 0.2
+                                },
+                                gain * 0.3,
+                            ],
+                            band_db: [[-20.; 3]; 3],
+                            onset: [0.; 3],
+                            drum_low_onset: 0.,
+                            vocal_activity: 0.,
+                            note_chroma: [0.; 12],
+                        }
+                    })
+                    .collect(),
+            });
+            assert!(percussion_release(&t, 40., 48.));
+            let mut bass_mute = t.clone();
+            for f in &mut bass_mute.stems.as_mut().unwrap().frames {
+                f.rms[1] = gain * 0.2;
+            }
+            assert!(!percussion_release(&bass_mute, 40., 48.));
+            let mut silence = t.clone();
+            for f in &mut silence.stems.as_mut().unwrap().frames[800..960] {
+                f.rms = [0.; 3];
+            }
+            assert!(!percussion_release(&silence, 40., 48.));
+            t.stems.as_mut().unwrap().frames.drain(820..940);
+            assert!(!percussion_release(&t, 40., 48.));
+        }
+    }
+}

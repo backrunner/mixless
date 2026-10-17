@@ -34,6 +34,50 @@ fn local_bar(track: &TrackAnalysis, sec: f32) -> f32 {
         .unwrap_or(track.tempo.meter_num.max(1) as f32 * 60. / track.tempo.global_bpm.max(20.))
 }
 
+/// Sustained kit withdrawal while a tonal bed remains. A synth can keep the
+/// mixture loud and spectrally similar throughout a useful breakdown. Compare
+/// separated power on either side, not a mixture novelty threshold.
+pub fn percussion_release(track: &TrackAnalysis, start: f32, end: f32) -> bool {
+    let Some(stems) = &track.stems else {
+        return false;
+    };
+    let width = end - start;
+    if width < 2. * local_bar(track, start) - 0.05
+        || start < width
+        || end >= track.duration_sec - 0.05
+    {
+        return false;
+    }
+    let powers = |lo: f32, hi: f32| -> Option<[f32; 3]> {
+        let first = stems.frames.partition_point(|f| f.end_sec <= lo);
+        let (mut seconds, mut sum) = (0., [0.; 3]);
+        for f in stems.frames[first..]
+            .iter()
+            .take_while(|f| f.start_sec < hi)
+        {
+            let w = (f.end_sec.min(hi) - f.start_sec.max(lo)).max(0.);
+            seconds += w;
+            for i in 0..3 {
+                sum[i] += f.rms[i].powi(2) * w;
+            }
+        }
+        (seconds >= (hi - lo) * 0.95).then(|| sum.map(|v| v / seconds))
+    };
+    let (Some(before), Some(after)) = (powers(start - width, start), powers(start, end)) else {
+        return false;
+    };
+    // At least 6 dB kit retreat; the former kit must actually have been
+    // audible. Silence, separator leakage and bass-only mutes do not qualify.
+    before[1] > before.iter().sum::<f32>() * 0.01
+        && after[1] <= before[1] * 0.25
+        && after[2] >= before[2] * 0.25
+        && after[2] > after.iter().sum::<f32>() * 0.1
+        && [0., 0.5].into_iter().all(|part| {
+            powers(start + width * part, start + width * (part + 0.5))
+                .is_some_and(|p| p[1] <= before[1] * 0.35)
+        })
+}
+
 /// A short, measured retreat between sustained peaks is a suspension. Length
 /// alone cannot distinguish one from a usable short breakdown. Compare its
 /// source duration with both surrounding passages, independently of half/double
@@ -208,4 +252,70 @@ pub fn main_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
         .into_iter()
         .filter(|p| p.0 >= r.0 - 0.05 && p.1 <= r.1 + 0.05)
         .last()
+}
+
+/// A full-weight peak followed by an independently phrased, measured release.
+/// This gives a set planner an earlier opportunity than the longest-drop cue;
+/// it does not move that generic cue or authorize a cut inside either phrase.
+pub fn released_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
+    let major = major_peaks(track);
+    peak_ranges(track).into_iter().find(|&(start, end)| {
+        if start < entry - 0.05
+            || !major
+                .iter()
+                .any(|p| p.0 >= start - 0.05 && (p.1 - end).abs() < 0.05)
+            || drop_suspension(track, end).is_some()
+            || !track.phrase_boundaries.iter().any(|p| {
+                (p.time_sec - end).abs() < 0.08 && p.confidence >= 0.5 && p.novelty >= 0.15
+            })
+        {
+            return false;
+        }
+        let Some(release_end) = track
+            .phrase_boundaries
+            .iter()
+            .filter(|p| p.time_sec > end + 0.08 && p.confidence >= 0.5)
+            .map(|p| p.time_sec)
+            .min_by(f32::total_cmp)
+        else {
+            return false;
+        };
+        // A whole recovery phrase must be quieter than a whole preceding
+        // phrase. The peak must have supplied at least two such phrases;
+        // one impact, a fill or a final silent tail cannot satisfy this.
+        let width = release_end - end;
+        if end - start < 2. * width - 0.05 || release_end >= track.duration_sec - 0.05 {
+            return false;
+        }
+        let mut covered = end;
+        for s in track
+            .sections
+            .iter()
+            .filter(|s| s.start_sec < release_end && s.end_sec > end)
+        {
+            if s.start_sec > covered + 0.05
+                || !matches!(s.label, S::Break | S::Breakdown | S::Outro)
+            {
+                return false;
+            }
+            covered = s.end_sec;
+        }
+        if covered < release_end - 0.05 {
+            return false;
+        }
+        let (Some(before), Some(after)) = (
+            activity(track, end - width, end),
+            activity(track, end, release_end),
+        ) else {
+            return false;
+        };
+        // Same contrast evidence as a suspension, but this release has its
+        // own phrase. Gain and half/double tempo interpretations do not alter
+        // these source-time comparisons. Silence is not a layering bed.
+        after.rms > before.rms * 0.05
+            && after.rms <= before.rms * std::f32::consts::FRAC_1_SQRT_2
+            && after.low_db <= before.low_db - 6.
+            && before.attacks > 0.
+            && after.attacks <= before.attacks * (2. / 3.)
+    })
 }

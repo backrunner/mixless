@@ -24,7 +24,10 @@ pub use fx::*;
 pub use ids::*;
 pub use mixplan::*;
 pub use models::{ModelArtifact, STEM_MODELS, STEM_NOTES, STEM_SEPARATOR};
-pub use phrases::{drop_suspension, main_peak, major_peaks, peak_ranges, peak_units};
+pub use phrases::{
+    drop_suspension, main_peak, major_peaks, peak_ranges, peak_units, percussion_release,
+    released_peak,
+};
 pub use snapshot::*;
 pub use stems::*;
 pub use tonal::{estimate_harmonic_key, estimate_key, transpose_camelot};

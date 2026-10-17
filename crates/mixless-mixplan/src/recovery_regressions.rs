@@ -83,21 +83,21 @@ fn explicit_recovery_window_layers_next_track_and_preserves_the_sung_line() {
     );
     assert_eq!(p.incoming_start_bar, 0.);
     let u = (73. * bar - p.t_in_a) / bar;
-    let angle = (p.lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
-    let voice_level = angle.cos() * 10f32.powf(p.lanes.gain_a.sample(u) / 20.);
+    let angle = (p.lanes.xfader.sample(u) + 1.) * 0.5;
+    let voice_level = (1. - angle).sqrt() * 10f32.powf(p.lanes.gain_a.sample(u) / 20.);
     assert!((voice_level - 1.).abs() < 0.005, "{voice_level}");
-    assert!(angle.sin() * 10f32.powf(p.lanes.gain_b.sample(u) / 20.) > 0.15);
+    assert!(angle.sqrt() * 10f32.powf(p.lanes.gain_b.sample(u) / 20.) > 0.15);
     assert_eq!(p.lanes.eq_a.mid.sample(u), 0.);
     assert_eq!(p.lanes.filter_a.lp_hz.sample(u), 20000.);
     assert_eq!(p.lanes.fx_send_a.sample(u), 0.);
     assert!(p.incoming_source.sample(u) > p.t_in_b + bar);
     for i in 0..100 {
         let u = p.summary.as_ref().unwrap().length_bars as f32 * i as f32 / 100.;
-        let x = (p.lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
-        let low_a =
-            x.cos() * 10f32.powf((p.lanes.gain_a.sample(u) + p.lanes.eq_a.low.sample(u)) / 20.);
+        let x = (p.lanes.xfader.sample(u) + 1.) * 0.5;
+        let low_a = (1. - x).sqrt()
+            * 10f32.powf((p.lanes.gain_a.sample(u) + p.lanes.eq_a.low.sample(u)) / 20.);
         let low_b =
-            x.sin() * 10f32.powf((p.lanes.gain_b.sample(u) + p.lanes.eq_b.low.sample(u)) / 20.);
+            x.sqrt() * 10f32.powf((p.lanes.gain_b.sample(u) + p.lanes.eq_b.low.sample(u)) / 20.);
         assert!(low_a * low_a + low_b * low_b <= 1.02);
     }
 }
@@ -172,19 +172,21 @@ fn filtered_rhythm_requires_voice_evidence_and_hides_tonal_bands_until_the_hando
     assert!((900. ..=2500.).contains(&p.lanes.filter_b.hp_hz.sample(n * 0.5)));
     assert!((p.lanes.filter_b.hp_hz.sample(n) - 20.).abs() < 0.01);
     assert_eq!(p.lanes.eq_b.mid.sample(n), 0.);
-    assert!(p
-        .lanes
-        .xfader
-        .nodes
-        .iter()
-        .all(|(_, v)| (-1. ..=1.).contains(v)));
-    assert!(p
-        .lanes
-        .filter_b
-        .hp_hz
-        .nodes
-        .iter()
-        .all(|(_, v)| (20. ..=20000.).contains(v)));
+    assert!(
+        p.lanes
+            .xfader
+            .nodes
+            .iter()
+            .all(|(_, v)| (-1. ..=1.).contains(v))
+    );
+    assert!(
+        p.lanes
+            .filter_b
+            .hp_hz
+            .nodes
+            .iter()
+            .all(|(_, v)| (20. ..=20000.).contains(v))
+    );
     for bar in &mut b.bars {
         bar.vocal_confidence = None;
     }

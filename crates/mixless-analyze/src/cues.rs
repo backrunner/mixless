@@ -51,13 +51,21 @@ pub fn automatic_cues(t: &TrackAnalysis) -> Vec<Cue> {
             continue;
         }
         let point = next.start_sec;
-        let evidence = t
+        let mut evidence = t
             .phrase_boundaries
             .iter()
             .filter(|p| (p.time_sec - point).abs() < 0.15)
             .filter(|p| p.confidence >= 0.65 && p.novelty >= 0.28)
             .map(|p| p.confidence * p.novelty.min(1.))
             .fold(0., f32::max);
+        if peak_end
+            && mixless_protocol::percussion_release(t, point, next.end_sec)
+            && t.phrase_boundaries
+                .iter()
+                .any(|p| (p.time_sec - point).abs() < 0.15 && p.confidence >= 0.5)
+        {
+            evidence = evidence.max(0.5);
+        }
         if evidence > 0. && next.end_sec - next.start_sec >= spacing {
             candidates.push((point, evidence, CueKind::Hot));
         }

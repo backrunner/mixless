@@ -211,3 +211,20 @@ fn no_bed_missing_stems_and_a_crossing_sung_note_are_not_authority_to_mix() {
         "never cut a sustained word to fit the bridge"
     );
 }
+
+#[test]
+fn muting_drums_does_not_make_a_plucked_foreground_beatless() {
+    let (mut a, mut b, p) = fixture();
+    for t in [&mut a, &mut b] {
+        for f in &mut t.stems.as_mut().unwrap().frames {
+            f.onset = [1.; 3];
+        }
+    }
+    assert!(run(&a, &b, &mut p.clone(), true).is_none());
+    for t in [&mut a, &mut b] {
+        for f in &mut t.stems.as_mut().unwrap().frames {
+            f.onset[2] = 0.;
+        }
+    }
+    assert!(run(&a, &b, &mut p.clone(), true).is_some());
+}

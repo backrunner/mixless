@@ -89,7 +89,11 @@ pub(crate) fn arrange(p: &mut MixPlan, a: &TrackAnalysis, b: &TrackAnalysis) -> 
             if u == n {
                 -96.
             } else {
-                db(a_level / angle.cos().max(0.00002))
+                db(a_level
+                    / (1. - angle / std::f32::consts::FRAC_PI_2)
+                        .max(0.)
+                        .sqrt()
+                        .max(0.00002))
             },
         ));
         lanes.gain_b.nodes.push((u, 0.));

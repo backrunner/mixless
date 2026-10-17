@@ -214,9 +214,8 @@ fn later_or_partially_entered_drop_cannot_be_faded_halfway_through() {
     let (a, _) = structured(16);
     let bar = 240. / 174.;
     assert!(!crate::drops::allows(&a, 24., 42., 0., false));
-    // A 32-bar first drop is a preview of the 48-bar main drop: leaving
-    // after it skips the main drop, so it is allowed only once that plays.
-    assert!(!crate::drops::allows(
+    // A complete 32-bar first drop is enough even when a later drop is longer.
+    assert!(crate::drops::allows(
         &a,
         48. * bar - 8.,
         48. * bar,

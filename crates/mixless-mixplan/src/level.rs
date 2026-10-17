@@ -23,7 +23,7 @@ fn filter_gain(lp: f32, hp: f32, hz: f32) -> f32 {
 /// Band powers of one source around `sec`: low, mid, high in linear power.
 /// Stem evidence splits each band into vocals, drums and instruments (the
 /// bass stem is part of instruments in the meters).
-fn bands(t: &TrackAnalysis, sec: f32, stems: Option<[f32; 3]>) -> [f32; 3] {
+fn bands(t: &TrackAnalysis, sec: f32, stems: Option<[f32; 4]>) -> [f32; 3] {
     if let Some(meters) = &t.stems {
         let frames: Vec<_> = (0..4)
             .filter_map(|i| meters.frame_at(sec - 0.15 + 0.1 * i as f32))
@@ -32,8 +32,9 @@ fn bands(t: &TrackAnalysis, sec: f32, stems: Option<[f32; 3]>) -> [f32; 3] {
             let mut power = [0f32; 3];
             for f in &frames {
                 for (stem, gains) in f.band_db.iter().enumerate() {
-                    let g = stems.map_or(1., |s| s[stem]);
                     for band in 0..3 {
+                        let part = if stem == 2 && band == 0 { 3 } else { stem };
+                        let g = stems.map_or(1., |s| s[part]);
                         power[band] += 10f32.powf(gains[band] / 10.) * g * g;
                     }
                 }
@@ -49,10 +50,14 @@ fn bands(t: &TrackAnalysis, sec: f32, stems: Option<[f32; 3]>) -> [f32; 3] {
     raw.map(|p| p / total * bar.rms * bar.rms)
 }
 
-/// Stem gains for each analysed part, folding bass into instruments.
-fn parts(mix: &[Polyline; 4], u: f32) -> [f32; 3] {
-    let g = |i: usize| mix[i].sample(u).clamp(0., 1.);
-    [g(0), g(1), ((g(2).powi(2) + g(3).powi(2)) * 0.5).sqrt()]
+/// The analysed instrument low band is the available bass proxy; do not
+/// average a muted bass into the heard melody's mid/high gain.
+fn parts(mix: &[Polyline; 4], u: f32) -> [f32; 4] {
+    std::array::from_fn(|i| mix[i].sample(u).clamp(0., 1.))
+}
+
+pub(crate) fn unmixed(t: &TrackAnalysis, sec: f32) -> f32 {
+    10. * bands(t, sec, None).iter().sum::<f32>().max(1e-12).log10()
 }
 
 /// Predicted master level in dB at bar `u` of the plan.

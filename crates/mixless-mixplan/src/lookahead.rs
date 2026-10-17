@@ -42,6 +42,12 @@ impl Planner {
         if self.options.strategy.is_some() {
             return first;
         }
+        if first.failure_reason.is_some() {
+            // A terminal handoff can prepare the silent incoming deck for C.
+            // Otherwise B may enter too late at native speed to reach its
+            // first complete-drop exit before a slow tempo ramp has finished.
+            return self.prepared_handoff(ctx, next).unwrap_or(first);
+        }
         let mut native = self.options.clone();
         native.harmonic_key_shift = false;
         let alternative = Planner::with_options(native).plan_next(ctx);
@@ -84,5 +90,81 @@ impl Planner {
             }
         }
         best
+    }
+}
+
+impl Planner {
+    fn prepared_handoff(&self, ctx: &PlanContext<'_>, next: &TrackAnalysis) -> Option<MixPlan> {
+        let native = ctx.incoming.tempo.global_bpm;
+        let sounding = native * ctx.offset_b.rate;
+        let following = [0.5, 1., 2.]
+            .into_iter()
+            .map(|factor| next.tempo.global_bpm * factor)
+            .min_by(|a, b| ((sounding / a).ln().abs()).total_cmp(&(sounding / b).ln().abs()))?;
+        let low = (native * 0.9201)
+            .max(following * 0.9201)
+            .max(sounding * 0.9201);
+        let high = (native * 1.0799)
+            .min(following * 1.0799)
+            .min(sounding * 1.0799);
+        if !low.is_finite() || !high.is_finite() || native <= 0. || low > high {
+            return None;
+        }
+        let rate = sounding.clamp(low, high) / native;
+        if (rate - ctx.offset_b.rate).abs() < 0.0001 {
+            return None;
+        }
+        let prepared = PlanContext {
+            offset_b: mixless_protocol::PerformanceOffset {
+                rate,
+                ..ctx.offset_b
+            },
+            ..*ctx
+        };
+        let mut plan = crate::short_handoff(&prepared, self.options.earliest_outgoing_sec);
+        // Only an actual boundary cut has a silent incoming deck throughout
+        // the outgoing phrase. Never change an overlapping fallback's clock.
+        if plan.failure_reason.is_some()
+            || plan.summary.as_ref()?.strategy != mixless_protocol::StrategyId::DryCut
+            || plan.incoming_start_bar < plan.summary.as_ref()?.length_bars as f32
+        {
+            return None;
+        }
+        plan.stages[0].label = "Complete phrase at prepared tempo".into();
+        Some(plan)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mixless_protocol::SectionLabel as S;
+    #[test]
+    fn terminal_entry_can_prepare_the_next_clock_without_touching_the_sung_exit() {
+        for scale in [0.8, 1., 1.1] {
+            let mut a = crate::tests::track(1, 147. * scale, "8A", S::Verse, 32, 0.8, 0.9);
+            for bar in &mut a.bars {
+                bar.vocal_presence = 0.9;
+                bar.vocal_confidence = Some(0.9);
+            }
+            let b = crate::tests::track(2, 152. * scale, "3B", S::Intro, 64, 0.8, 0.1);
+            let c = crate::tests::track(3, 174. * scale, "3B", S::Intro, 64, 0.8, 0.1);
+            let ctx = PlanContext {
+                outgoing: &a,
+                incoming: &b,
+                cues_out: &[],
+                cues_in: &[],
+                offset_a: Default::default(),
+                offset_b: Default::default(),
+            };
+            let p = Planner::new().prepared_handoff(&ctx, &c).unwrap();
+            assert_eq!(p.t_out_a, a.duration_sec);
+            assert!(p.incoming_start_bar >= p.summary.as_ref().unwrap().length_bars as f32);
+            assert!((p.incoming_offset_end.rate - 174. * 0.9201 / 152.).abs() < 0.0001);
+            assert_eq!(p.lanes.rate_a.sample(0.), 1.);
+            assert_eq!(p.incoming_offset_end.pitch_semitones, 0.);
+            let far = crate::tests::track(4, 210. * scale, "3B", S::Intro, 64, 0.8, 0.1);
+            assert!(Planner::new().prepared_handoff(&ctx, &far).is_none());
+        }
     }
 }

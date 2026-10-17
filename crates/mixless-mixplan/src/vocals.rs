@@ -85,8 +85,8 @@ pub(crate) fn last_end(t: &TrackAnalysis, start: f32, end: f32) -> Option<f32> {
         .max_by(f32::total_cmp)
 }
 
-/// Keep one singer in front, then use a measured breath or a long level/EQ
-/// release. Completing an entire vocal section is not a hard constraint.
+/// Keep one singer in front and propose a level/EQ release. The final audible
+/// foreground check still requires that a sung word survives the release.
 pub(crate) fn protect(plan: &mut mixless_protocol::MixPlan, t: &TrackAnalysis) -> Option<()> {
     if last_end(t, plan.t_in_a, plan.t_out_a).is_none() {
         return Some(());
@@ -139,11 +139,11 @@ pub(crate) fn protect(plan: &mut mixless_protocol::MixPlan, t: &TrackAnalysis) -
             1. / 3. + 2. / 3. * ease((u - hold) / (n - hold))
         };
         let tail = ease((u - hold) / (n - hold));
-        let cos = (p * std::f32::consts::FRAC_PI_2).cos().max(0.00002);
+        let fader_a = (1. - p).sqrt().max(0.00002);
         let gain = if u <= hold {
-            1. / cos
+            1. / fader_a
         } else {
-            (1. - tail) / cos
+            (1. - tail) / fader_a
         };
         lanes.xfader.nodes.push((u, 2. * p - 1.));
         lanes.gain_a.nodes.push((
@@ -166,14 +166,12 @@ pub(crate) fn protect(plan: &mut mixless_protocol::MixPlan, t: &TrackAnalysis) -
             .push((u, -18. * (1. - ease((tail - 0.6) / 0.4))));
         // Recompute bass compensation against the new vocal-preserving levels.
         // Reusing the old EQ curve would boost both bass lines during the hold.
-        let x = p * std::f32::consts::FRAC_PI_2;
         let exchange = ease((u - bass + 0.125) / 0.25) * std::f32::consts::FRAC_PI_2;
-        lanes
-            .eq_a
-            .low
-            .nodes
-            .push((u, to_db(exchange.cos().max(0.) / (cos * gain).max(0.00002))));
-        let level_b = x.sin() * 10f32.powf(lanes.gain_b.sample(u) / 20.);
+        lanes.eq_a.low.nodes.push((
+            u,
+            to_db(exchange.cos().max(0.) / (fader_a * gain).max(0.00002)),
+        ));
+        let level_b = p.sqrt() * 10f32.powf(lanes.gain_b.sample(u) / 20.);
         lanes
             .eq_b
             .low

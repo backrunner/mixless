@@ -23,9 +23,25 @@ pub(super) fn next_peak_start(track: &TrackAnalysis, sec: f32) -> Option<f32> {
     runs(track).iter().map(|p| p.0).find(|&p| p >= sec - 0.05)
 }
 
-/// The peak a play-through owes: the track's main drop ahead of `entry`.
+/// One complete full-weight drop is enough for a play-through. A shorter
+/// first chorus remains a preview when a real drop is still ahead. This is
+/// set policy, separate from the generic longest-drop OUT cue suggestion.
 pub(super) fn owed_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
-    mixless_protocol::main_peak(track, entry)
+    let first_drop = major_peaks(track).into_iter().find(|p| {
+        p.0 >= entry - 0.05
+            && track
+                .sections
+                .iter()
+                .any(|s| s.label == S::Drop && s.start_sec < p.1 - 0.05 && s.end_sec > p.0 + 0.05)
+    });
+    [
+        first_drop,
+        mixless_protocol::released_peak(track, entry),
+        mixless_protocol::main_peak(track, entry),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 /// A peak plays whole. The outgoing track never leaves inside a peak, never
@@ -94,15 +110,6 @@ pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
                     0.16 + heard * 0.16
                         + later.iter().skip(1).filter(|p| exit > p.0).count() as f32 * 0.08
                 }
-                // After the owed peak has played, penalise leaving before
-                // the next major peak starts — a second drop run is worth
-                // hearing just as much as the first one.
-                Some(next) if exit + 0.1 < next.0 => {
-                    // Scale by how much of the remaining track is that peak.
-                    let remaining = (track.duration_sec - main.1).max(1.);
-                    let weight = ((next.1 - next.0) / remaining).clamp(0., 1.);
-                    0.08 * weight
-                }
                 _ => 0.,
             }
         }
@@ -116,6 +123,11 @@ pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
 /// leaving straight after the entry, nothing once about 90 s (or 45% of a
 /// short track) has been heard.
 pub(super) fn brief(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
+    // A complete meaningful peak satisfies this play-through even when a
+    // late entry makes it shorter than the generic 90-second preference.
+    if owed_peak(track, entry).is_some_and(|p| p.0 >= entry - 0.05 && exit >= p.1 - 0.05) {
+        return 0.;
+    }
     let want = (0.45 * track.duration_sec).min(90.);
     ((want - (exit - entry)) / want.max(1.)).clamp(0., 1.) * 0.3
 }
@@ -124,6 +136,81 @@ pub(super) fn brief(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
 mod tests {
     use super::*;
     use mixless_protocol::Section;
+
+    #[test]
+    fn measured_recovery_can_mix_early_while_manual_out_still_wins() {
+        use crate::{Planner, PlannerOptions};
+        use mixless_protocol::{Cue, CueKind, PhraseBoundary};
+        let mut a = crate::tests::track(1, 120., "8A", S::Outro, 128, 0.8, 0.2);
+        let b = crate::tests::track(2, 120., "8A", S::Intro, 128, 0.8, 0.2);
+        a.sections = [
+            (0., 32., S::Intro),
+            (32., 64., S::Drop),
+            (64., 128., S::Breakdown),
+            (128., 224., S::Drop),
+            (224., 256., S::Outro),
+        ]
+        .into_iter()
+        .map(|(start_sec, end_sec, label)| Section {
+            start_sec,
+            end_sec,
+            label,
+        })
+        .collect();
+        for bar in &mut a.bars {
+            bar.section = a
+                .sections
+                .iter()
+                .find(|s| bar.start_sec >= s.start_sec && bar.start_sec < s.end_sec)
+                .unwrap()
+                .label;
+            if bar.section == S::Breakdown {
+                bar.rms *= 0.3;
+                bar.low_db -= 12.;
+                bar.onset_density *= 0.25;
+                bar.kick_salience *= 0.25;
+            }
+        }
+        a.phrase_boundaries = (0..=16)
+            .map(|i| PhraseBoundary {
+                time_sec: i as f32 * 16.,
+                confidence: 0.8,
+                novelty: 0.4,
+            })
+            .collect();
+        assert_eq!(mixless_protocol::main_peak(&a, 0.), Some((128., 224.)));
+        assert_eq!(owed_peak(&a, 0.), Some((32., 64.)));
+        let planner = Planner::new();
+        let plan = planner.plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert!(plan.failure_reason.is_none(), "{plan:?}");
+        assert!(
+            plan.t_in_a >= 64. && plan.t_out_a <= 128.,
+            "{}..{}",
+            plan.t_in_a,
+            plan.t_out_a
+        );
+        assert!(plan.summary.as_ref().unwrap().length_bars >= 8);
+        assert!(plan.outgoing_source.sample(plan.handoff_bar.unwrap()) >= 64.);
+        let cue = Cue {
+            index: 0,
+            frame: 240 * 48000,
+            kind: CueKind::Out,
+            user_set: true,
+        };
+        let forced = planner.plan_pair(&a, &b, &[cue], &[], Default::default(), Default::default());
+        assert!(forced.failure_reason.is_none(), "{forced:?}");
+        assert!((forced.t_out_a - 240.).abs() < 0.05);
+        let late = Planner::with_options(PlannerOptions {
+            earliest_outgoing_sec: 140.,
+            ..Default::default()
+        })
+        .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+        assert!(late.failure_reason.is_none());
+        assert!(
+            late.t_in_a >= 140.,
+            "never schedule before the previous entrance ends"
+        );
+    }
 
     fn with_peak(bars: u32, peak: (u32, u32)) -> TrackAnalysis {
         let mut t = crate::tests::track(1, 174., "8A", S::Intro, bars, 0.9, 0.2);
@@ -225,4 +312,28 @@ mod tests {
         let short = with_peak(48, (8, 32));
         assert_eq!(peaks(&short).len(), 1);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_complete_first_drop_satisfies_a_short_play_through_but_a_partial_one_does_not() {
+    use mixless_protocol::Section;
+    let mut a = crate::tests::track(1, 120., "8A", S::Outro, 128, 0.9, 0.1);
+    a.sections = [
+        (0., 64., S::Intro),
+        (64., 96., S::Drop),
+        (96., 160., S::Breakdown),
+        (160., 224., S::Drop),
+        (224., 256., S::Outro),
+    ]
+    .into_iter()
+    .map(|(start_sec, end_sec, label)| Section {
+        start_sec,
+        end_sec,
+        label,
+    })
+    .collect();
+    assert_eq!(brief(&a, 96., 64.), 0.);
+    assert!(brief(&a, 96., 80.) > 0.);
+    assert!(brief(&a, 80., 64.) > 0.);
 }

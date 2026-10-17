@@ -40,13 +40,7 @@ pub(super) fn direct(
     let outgoing_bpm = ga.bpm((out - 0.01).max(0.)) * ctx.offset_a.rate;
     let incoming_bpm = gb.bpm(input) * ctx.offset_b.rate;
     let ratio = outgoing_bpm / incoming_bpm;
-    let factor = if (ratio / 2. - 1.).abs() < 0.08 {
-        0.5
-    } else if (ratio / 0.5 - 1.).abs() < 0.08 {
-        2.
-    } else {
-        1.
-    };
+    let factor = crate::grid::tempo_factor(ratio);
     let map = if factor == 1. {
         BarMap::OneToOne
     } else {
@@ -57,6 +51,7 @@ pub(super) fn direct(
     let blend = mode == TransitionMode::BeatBlend;
     let loop_roll = mode == TransitionMode::LoopRoll;
     let detailed = !a.moments.is_empty() && !b.moments.is_empty();
+    let stem_pair = options.stem_playback && a.stems.is_some() && b.stems.is_some();
     if options.strategy == Some(S::LoopConstruct) && !loop_roll {
         return miss!();
     }
@@ -115,7 +110,7 @@ pub(super) fn direct(
     // A chopped vocal is rhythmic material: it may be cut through and
     // entered over, unlike a sung line. Judged on measured note lengths.
     let chop_a = crate::vocals::chops(a, start, end);
-    // A short recovery need not fit the entire tempo migration. Keep A's
+    // A short phrase need not fit the entire tempo migration. Keep A's
     // sounding clock and carry B's offset into the next pair instead of
     // rejecting a safe overlap until the outro. 1.875 is the maximum slope
     // of the quintic ease used by timing::prepare.
@@ -137,13 +132,13 @@ pub(super) fn direct(
     if ride && !carry {
         return None;
     }
+    let part_release = blend && stem_pair && n >= 4. && crate::phrasing::vocal_release(a, end);
     let hold = blend
         && (requested_hold
             // The voice keeps the pulse it was sung to: A stays at its own
             // tempo and B is matched underneath it.
             || carry
             || options.strategy.is_none()
-                && crate::recovery::contains(a, start, end)
                 && 1.875 * correction.ln().abs() / ((end - start) / ctx.offset_a.rate).max(0.01)
                     > MAX_LOG_TEMPO_PER_SEC);
     // Deterministic rotation between equally valid techniques — the pair, the
@@ -225,17 +220,20 @@ pub(super) fn direct(
             end,
             true,
         ));
-    let in_phrase = boundary_quality(b, bin).max(crate::cue_policy::manual_quality(
-        b,
-        ctx.cues_in,
-        bin,
-        false,
-    ));
+    let layer_entry = blend && stem_pair && n >= 4. && crate::phrasing::layer_entry(b, bin);
+    let in_phrase = boundary_quality(b, bin)
+        .max(if layer_entry { 0.5 } else { 0. })
+        .max(crate::cue_policy::manual_quality(
+            b,
+            ctx.cues_in,
+            bin,
+            false,
+        ));
     let start_phrase = boundary_quality(a, start).max(crate::recovery::quality(a, start));
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
     // Every technique finishes A at an evidenced phrase edge. Recovery
     // quality may authorize layering, never an internal exit, even with stems.
-    if !explicit_out && !carry && !crate::phrasing::exit_boundary(a, end) {
+    if !explicit_out && !carry && !part_release && !crate::phrasing::exit_boundary(a, end) {
         return miss!();
     }
     // A recovery interval can support an overlap, but its internal downbeats
@@ -274,7 +272,11 @@ pub(super) fn direct(
     // A metrical downbeat is not automatically the beginning of a phrase.
     // Strong structural evidence takes precedence over the old fixed offsets.
     // A carry leaves A where its line ends, but B still starts its phrase.
-    if (!carry && !a.phrase_boundaries.is_empty() && !explicit_out && out_phrase < 0.5)
+    if (!carry
+        && !part_release
+        && !a.phrase_boundaries.is_empty()
+        && !explicit_out
+        && out_phrase < 0.5)
         || (!b.phrase_boundaries.is_empty() && !explicit_in && in_phrase < 0.5)
         || (blend
             && !carry
@@ -364,7 +366,7 @@ pub(super) fn direct(
             ctx.offset_b.pitch_semitones + key_shift,
         )
         .or_else(|| miss!())?;
-        let shape = crate::ride::shape(
+        let mut shape = crate::ride::shape(
             a,
             b,
             &source_a,
@@ -372,10 +374,16 @@ pub(super) fn direct(
             n,
             ((outgoing_bpm * factor) / incoming_bpm - 1.).abs() <= 0.08,
         );
-        // The incoming voice comes back on a breath, or on a strong phrase
-        // line where it swells in rather than cutting in mid-word.
+        shape.voice_end = crate::composition::voice_release_after(a, &source_a, n, shape.voice_end)
+            .or_else(|| miss!())?;
+        // A vocal ride must leave actual room AFTER the sung word. A long
+        // reverb or filter sweep cannot substitute for completing that word.
+        if shape.voice_end > n - 0.5 {
+            return miss!();
+        }
+        // The incoming voice comes back on a measured breath.
         let back = source_b.sample(shape.voice_end.min(n));
-        if !crate::vocals::safe_entry(b, back) && boundary_quality(b, source_b.sample(n)) < 0.6 {
+        if !crate::vocals::safe_entry(b, back) {
             return miss!();
         }
         if !crate::drops::allows(
@@ -431,6 +439,7 @@ pub(super) fn direct(
     // The incoming peak may resolve at the overlap's end or later; it must
     // never start underneath the blend and play filtered beneath A.
     if !carry
+        && !(blend && stem_pair && n >= 4.)
         && (blend || loop_roll)
         && !explicit_in
         && crate::drops::peaks(b)
@@ -452,14 +461,13 @@ pub(super) fn direct(
     // EQ strip remove its foreground and the incoming track takes over on the
     // phrase. The loop window is the only outgoing material ever heard, so it
     // is the part that must be vocal-safe unless stems strip it anyway.
-    let stem_pair = options.stem_playback && a.stems.is_some() && b.stems.is_some();
     let loop_bars = if n >= 8. { 2. } else { 1. };
     let loop_end = ga.sec(start_beat + loop_bars * ga.meter());
     let loop_vocal_safe = a
         .bars
         .iter()
         .filter(|bar| bar.start_sec < loop_end - 0.01 && bar.end_sec > start + 0.01)
-        .all(|bar| bar.vocal_presence < 0.5);
+        .all(|bar| crate::vocals::risk(bar) < 0.5);
     let loop_out = blend
         && (n == 4. || n == 8.)
         && options.strategy.is_none_or(|s| s == S::LoopOut)
@@ -505,6 +513,7 @@ pub(super) fn direct(
             < average_rms(a, start, end).unwrap_or(1.) * 0.6
             || feature(b, bin + 0.01).is_some_and(|f| f.kick_salience < 0.35));
     let filtered = blend
+        && !stem_pair
         && !carry
         && !loop_out
         && (!harmonic || quiet_layer)
@@ -530,7 +539,7 @@ pub(super) fn direct(
         && options.stem_playback
         && a.stems.is_some()
         && b.stems.is_some()
-        && ((8. ..=32.).contains(&n) || loop_out);
+        && (n >= 8. || loop_out);
     if tonal_clash && !stem_layer {
         return miss!();
     }
@@ -882,7 +891,8 @@ pub(super) fn direct(
     // bass changes hands on the peak's last bar line, the way a DJ brings
     // the next intro in over the last phrases of a drop. B must carry a beat
     // there so the swap reveals a groove, not an empty intro.
-    let layered = (blend && !loop_out && !filtered && !explicit_out)
+    let part_exchange = blend && stem_pair && harmonic && !loop_out && !carry && n >= 4.;
+    let layered = (blend && !part_exchange && !loop_out && !filtered && !explicit_out)
         .then(|| peak_end_bar(a, &source_a, start, end, n))
         .flatten()
         .filter(|u| {
@@ -899,7 +909,7 @@ pub(super) fn direct(
         } else if let Some(u) = layered {
             u
         } else {
-            bass_handoff(a, b, &source_a, &source_b, n)?
+            bass_handoff(a, b, &source_a, &source_b, n).or_else(|| miss!())?
         }
     } else if let Some(op) = &lanes.loop_b {
         op.off_bar
@@ -911,6 +921,7 @@ pub(super) fn direct(
     // Nor does A open a new peak underneath B once it has handed over.
     if (blend || loop_roll)
         && !carry
+        && !part_exchange
         && !explicit_out
         && (crate::drops::inside_peak(a, source_a.sample(handoff))
             || crate::drops::peaks(a)
@@ -1166,14 +1177,18 @@ pub(super) fn direct(
         send_fx: None,
         insert_a: None,
     };
+    let composition_candidate = blend && stem_pair && !loop_out && !carry && n >= 4.;
+    let mut composed = composition_candidate;
     // The shaped lanes hold the swap at unity per band; combined they can
     // still dip or surge. Trim both decks so the master follows the level it
     // starts and ends at, never by more than one clean boost.
-    crate::level::compensate(&mut plan, a, b);
+    if !composed {
+        crate::level::compensate(&mut plan, a, b);
+    }
     // Two quiet sources under a full crossfade leave a hole no attenuation
     // can fill, so a blend ending inside the outgoing track's own fade is
     // only worth taking when some overlap really carries the level.
-    if (blend || loop_roll) && crate::level::worst_dip(&plan, a, b) > 9. {
+    if !composed && !carry && (blend || loop_roll) && crate::level::worst_dip(&plan, a, b) > 9. {
         return miss!();
     }
     crate::level::sanitize(&mut plan);
@@ -1201,7 +1216,7 @@ pub(super) fn direct(
             mixless_protocol::MixStage {
                 start_bar: n / 2. + 0.25,
                 end_bar: n,
-                label: "Release loop · outgoing out".into(),
+                label: "Release outgoing loop".into(),
             },
         ];
         if stem_pair {
@@ -1222,15 +1237,55 @@ pub(super) fn direct(
             summary.strategy = S::VocalRide;
         }
     }
-    if filtered {
-        crate::filtered::arrange(&mut plan, a, b)?;
-    } else if !carry
+    if composed {
+        composed = crate::composition::arrange(&mut plan, ctx, harmonic).is_some();
+        if !composed {
+            // A failed fit leaves the original lanes intact. Restore their
+            // normal level checks before evaluating a legacy arrangement.
+            crate::level::compensate(&mut plan, a, b);
+            crate::level::sanitize(&mut plan);
+        }
+        if composed && plan.summary.as_ref()?.score <= minimum_score {
+            return miss!();
+        }
+    }
+    // Longer cross-key layers need a measured, strictly separated part fit;
+    // the legacy fixed envelope remains limited to its validated span.
+    if !composed && stem_layer && n > 32. && !loop_out {
+        return miss!();
+    }
+    if layer_entry && boundary_quality(b, bin) < 0.5 && !composed {
+        return miss!();
+    }
+    if !composed
+        && !carry
+        && !explicit_out
+        && ((part_release && !crate::phrasing::exit_boundary(a, end))
+            || (part_exchange
+                && crate::drops::inside_peak(a, plan.outgoing_source.sample(handoff))))
+    {
+        return miss!();
+    }
+    if !composed
+        && !carry
+        && blend
+        && !explicit_in
+        && crate::drops::peaks(b)
+            .iter()
+            .any(|p0| p0.0 >= bin - 0.05 && p0.0 < b_end - 0.05)
+    {
+        return miss!();
+    }
+    if !composed && filtered {
+        crate::filtered::arrange(&mut plan, a, b).or_else(|| miss!())?;
+    } else if !composed
+        && !carry
         && !loop_out
         && !short_overlap
         && plan.stem_mix.is_none()
         && (blend || loop_roll || plan.incoming_start_bar == 0.)
     {
-        crate::vocals::protect(&mut plan, a)?;
+        crate::vocals::protect(&mut plan, a).or_else(|| miss!())?;
     }
     // A cut away from an incoming drop may let the outgoing last beat ring
     // out on a tail; that keeps its one-bar lead so the send can catch it.
@@ -1250,7 +1305,7 @@ pub(super) fn direct(
     if plan.t_in_a < options.earliest_outgoing_sec {
         return miss!();
     }
-    if stem_layer && !loop_out {
+    if stem_layer && !loop_out && !composed {
         crate::stem_mix::layer(ctx, &mut plan, handoff);
     }
     // With stems on a long harmonic blend, swap the parts on phrase lines
@@ -1290,8 +1345,17 @@ pub(super) fn direct(
             }
         }
     }
-    if !harmonic && plan.requires_stems {
+    if !harmonic && plan.requires_stems && !composed {
         crate::stem_mix::separate_tonal(&mut plan).or_else(|| miss!())?;
+    }
+    if stem_pair && !composed {
+        crate::stem_mix::arrange(ctx, &mut plan, true);
+    }
+    if composition_candidate && !composed && crate::level::worst_dip(&plan, a, b) > 9. {
+        return miss!();
+    }
+    if !crate::foreground::preserved(&plan, ctx) {
+        return miss!();
     }
     Some(plan)
 }

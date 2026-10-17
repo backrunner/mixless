@@ -1,3 +1,4 @@
+mod clock;
 mod moments;
 mod tempo;
 mod tonal;
@@ -12,7 +13,7 @@ const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 20;
+pub const ANALYSIS_VERSION: u32 = 21;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -186,7 +187,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             {
                 bpm
             } else {
-                corrected.clamp(70., 180.)
+                corrected.clamp(tempo::MIN_BPM, tempo::MAX_BPM)
             }
         } else {
             bpm
@@ -257,6 +258,9 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         t += 60.0 / local_bpms[phrase];
         beat_index += 1;
     }
+    clock::refine(&frames, &mut beats, &mut local_bpms);
+    beats.retain(|sec| *sec <= duration);
+    let constant = local_bpms.iter().all(|&v| (v / bpm - 1.).abs() < 0.001);
     // Downbeat phase is estimated from the strongest recurring low-frequency
     // accent. Confidence includes accent ambiguity; a uniform click is not
     // enough evidence for a musical bar-one.
