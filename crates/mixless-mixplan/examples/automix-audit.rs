@@ -35,6 +35,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Like the app: a track cannot start leaving before its own entrance has
     // finished, plus one second of staging.
     let mut earliest = 0f32;
+    // Continue from an actually completed handoff, including a solo retune.
+    if let Ok(path) = std::env::var("AUDIT_PREVIOUS_PLAN") {
+        let previous: MixPlan = serde_json::from_slice(&std::fs::read(path)?)?;
+        if previous.summary.as_ref().map(|s| s.pair.1) != tracks.first().map(|t| t.track_id) {
+            return Err("Previous plan does not enter the first audit track".into());
+        }
+        offset = previous.incoming_offset_end;
+        entry = previous.t_in_b;
+        earliest = previous.t_end_b + offset.rate;
+    }
     let mut sites = std::collections::BTreeMap::<&str, u32>::new();
     let mut pair_data = Vec::new();
     let mut plans = Vec::new();

@@ -26,7 +26,9 @@ The choice is saved and applies to subsequent playlist selections, including **A
 
 mixless compares entry and exit regions using local tempo, phrase boundaries, key compatibility, energy, rhythm, and vocal evidence. Prepared stems and note analysis add information about foreground material and harmonic movement.
 
-For overlaps, AutoMix checks the sounding keys in the transition windows, including carried pitch and effect tails. When the evidence supports a match, it transposes the incoming track before it becomes audible, choosing the nearest compatible key within six semitones of the recording. The pitch stays fixed through the mix and carries into the next transition. Vocal rides also compare the transposed notes; uncertain harmony uses a separated drum layer, filtered transition, or cut instead.
+For overlaps, AutoMix checks the sounding keys in the transition windows, including carried pitch and effect tails. When the evidence supports a match, it transposes the incoming track before it becomes audible, choosing the nearest compatible key within six semitones of the recording. The pitch stays fixed through the overlap. Vocal rides also compare the transposed notes; uncertain harmony uses a separated drum layer, filtered transition, or cut instead.
+
+During solo playback, AutoMix can move the track back toward its original pitch in a measured, quieter passage. It considers the following track's key and departure window, then chooses a full or partial restoration with a smooth pitch curve, filter, EQ and available stems. Active vocals, held vocal notes, peaks and insufficient time prevent the move; sustained instrumental beds allow only a smaller, slower adjustment. Without a suitable window, the current pitch carries forward. Manual tuning stays authoritative. Taking over a masking control or pressing SKIP holds the pitch actually reached, which is used when planning the next handoff.
 
 | Technique | Musical purpose |
 | --- | --- |

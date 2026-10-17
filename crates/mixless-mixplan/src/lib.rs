@@ -28,6 +28,7 @@ mod musical;
 pub mod order;
 pub mod performance;
 mod phrasing;
+mod pitch_recovery;
 mod policy;
 mod recovery;
 mod rhythm;

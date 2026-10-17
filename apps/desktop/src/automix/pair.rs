@@ -42,13 +42,7 @@ pub(super) fn scheduled_pair(
         .into_iter()
         .filter(|c| c.kind != mixless_protocol::CueKind::In)
         .collect();
-    let cb: Vec<_> = core
-        .library
-        .cues(b.track.id)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter(|c| c.kind != mixless_protocol::CueKind::Out)
-        .collect();
+    let cb: Vec<_> = core.library.cues(b.track.id).map_err(|e| e.to_string())?;
     // Read only current-version cached evidence. Do not stall playback for a
     // third decode/model pass; the playlist preparation queue warms this cache.
     let following_analysis = following.and_then(|id| {
@@ -57,9 +51,14 @@ pub(super) fn scheduled_pair(
             .ok()
             .flatten()
     });
+    let following_cues = following
+        .map(|id| core.library.cues(id))
+        .transpose()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
     let live_moves = core.settings.get().live_moves;
     let key = format!(
-        "{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{:?}:{:?}:{}:{:?}",
+        "{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{:?}:{:?}:{}:{:?}:{}",
         entry.to_bits(),
         evidence_key(&a.analysis)?,
         evidence_key(&b.analysis)?,
@@ -72,11 +71,10 @@ pub(super) fn scheduled_pair(
         serde_json::to_string(&ca).map_err(|e| e.to_string())?,
         serde_json::to_string(&cb).map_err(|e| e.to_string())?,
         following,
-        following_analysis
-            .as_ref()
-            .map(|a| (&a.camelot, a.key_confidence, a.tempo.global_bpm)),
+        following_analysis.as_ref().map(evidence_key).transpose()?,
         stem_playback,
         live_moves,
+        serde_json::to_string(&following_cues).map_err(|e| e.to_string())?,
     );
     if let Some(pair) = core.mix_preparation.scheduled(&key, earliest) {
         return Ok(pair);
@@ -100,6 +98,7 @@ pub(super) fn scheduled_pair(
             entry,
             false,
             following_analysis.as_ref(),
+            &following_cues,
             stem_playback,
             live_moves,
         );
@@ -133,6 +132,7 @@ pub(super) fn scheduled_pair(
         entry,
         true,
         following_analysis.as_ref(),
+        &following_cues,
         stem_playback,
         live_moves,
     );
@@ -156,6 +156,7 @@ fn choose_plan(
     entry: f32,
     fallback: bool,
     following: Option<&mixless_protocol::TrackAnalysis>,
+    following_cues: &[mixless_protocol::Cue],
     stem_playback: bool,
     live_moves: mixless_protocol::LiveMoves,
 ) -> mixless_protocol::MixPlan {
@@ -181,6 +182,7 @@ fn choose_plan(
         .collect();
     let outgoing = mixless_mixplan::cue_policy::cue_choices(&future, true);
     let incoming = mixless_mixplan::cue_policy::cue_choices(cb, false);
+    let exit_cues = cb;
     for ca in &outgoing {
         for cb in &incoming {
             let ctx = mixless_mixplan::PlanContext {
@@ -191,7 +193,8 @@ fn choose_plan(
                 offset_a,
                 offset_b,
             };
-            let mut plan = planner.plan_with_following(&ctx, following);
+            let mut plan =
+                planner.plan_with_following_cues(&ctx, following, exit_cues, following_cues);
             if fallback && plan.failure_reason.is_some() {
                 plan = mixless_mixplan::short_handoff(&ctx, earliest);
             }

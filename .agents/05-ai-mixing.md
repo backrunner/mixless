@@ -32,7 +32,7 @@ FX 决策层位于平滑规划器之前：先做 grid、phrase、vocal、kick、
 - `length_bars` 按 master grid。
 - 入碟起始源帧：rate 折线之后，选定 downbeat 重合。
 - `who_stretches ∈ {A,B,Both}`：1× 时按 **sounding** BPM 分配差（`rate_a = sounding_bpm_B / sounding_bpm_A`）。2× 见下。
-- 入碟结束写 `PerformanceOffset { rate, pitch_semitones }`，传入下一 `plan_pair`。入碟未被 hold 时 offset = `{1.0, 0.0}`。
+- 入碟结束写 `PerformanceOffset { rate, pitch_semitones }`，传入下一对计划。音高是实际完成值；有移调但没有安全独奏恢复窗口时继续保留，不能假定未被 hold 就一定为零。
 
 ## Cue 约束（分轨）
 
@@ -78,7 +78,7 @@ r = sounding_bpm_A / sounding_bpm_B
 完整 bar-offset 节点表（xf/gain/eq/filter/fx/rate/pitch/loop）在主文档 **§7.6**。实现必须按表出金样，禁止“凭感觉写包络”。摘要：
 
 - `bass_swap`：u=0 xf=-0.3 A.low=0 B.low=KILL；u=N/2 xf=+0.2 低交换；u=N xf=+1 A.gain=KILL。
-- `phrase_blend`：32 bar 慢 xf，可选 B pitch glide 回原调。
+- `phrase_blend`：32 bar 慢 xf，重叠期间固定 B 音高；独奏恢复由独立证据窗口决定。
 - `drop_cut`：前 3 bar xf=-1，最后 1 bar 快切 + A echo send。
 - `echo_out`：A send 升、gain 降，B 直入。
 - `filter_sweep`：A LP 20k→200，B HP 2.5k→20。
@@ -116,3 +116,5 @@ A 128 BPM Drop-end 8A vs B 126 BPM Intro 9A，`bass_swap` 16，`rate_b≈1.016` 
 ## 接管
 
 单 lane 取消；pause/resume/skip；换歌则带当前 offset 重算。
+
+2026-10-17 独奏回原调：`plan_with_following_cues` 在重叠曲线确定后，为入碟搜索较弱且无活跃人声的独奏窗口。使用完整 stem 测量、局部网格、持续音和邻域响度判断，不能用 `partial` 字段代替覆盖检查。比较原调距离与下一首所需移调，允许部分恢复；以真实下一对计划确认出场窗口和手工 cue，避免恢复挤掉原有重叠。五次平滑 pitch 曲线位于 filter/EQ/stem 遮掩内部，恢复完成后更新 `t_end_b` 和 `incoming_offset_end`，下一对从该实际状态出发。无窗口保持音高，不在重叠中回调。手动接管相关声部、EQ、filter、速度或 loop 会取消剩余 pitch 自动化；SKIP 保留当前 pitch，避免跳到尚未执行的目标。下一对执行重新读取 snapshot。

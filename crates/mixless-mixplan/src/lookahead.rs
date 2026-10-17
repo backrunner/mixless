@@ -1,7 +1,7 @@
 //! Bounded one-track anticipation. Future compatibility can select between
 //! safe current plans, but can never override their musical safety gates.
 use crate::{PlanContext, Planner};
-use mixless_protocol::{MixPlan, TrackAnalysis};
+use mixless_protocol::{Cue, MixPlan, TrackAnalysis};
 
 impl Planner {
     pub fn plan_with_following(
@@ -9,6 +9,30 @@ impl Planner {
         ctx: &PlanContext<'_>,
         following: Option<&TrackAnalysis>,
     ) -> MixPlan {
+        self.plan_with_following_cues(ctx, following, &[], &[])
+    }
+
+    /// Exit cues belong to B's later departure, not its current entrance.
+    pub fn plan_with_following_cues(
+        &self,
+        ctx: &PlanContext<'_>,
+        following: Option<&TrackAnalysis>,
+        incoming_exit_cues: &[Cue],
+        following_entry_cues: &[Cue],
+    ) -> MixPlan {
+        let mut plan = self.anticipate(ctx, following);
+        crate::pitch_recovery::arrange(
+            self,
+            ctx,
+            following,
+            incoming_exit_cues,
+            following_entry_cues,
+            &mut plan,
+        );
+        plan
+    }
+
+    fn anticipate(&self, ctx: &PlanContext<'_>, following: Option<&TrackAnalysis>) -> MixPlan {
         let first = self.plan_next(ctx);
         let Some(next) =
             following.filter(|t| t.tempo.global_bpm.is_finite() && t.tempo.global_bpm > 0.)

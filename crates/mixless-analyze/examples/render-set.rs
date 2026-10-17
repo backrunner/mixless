@@ -103,6 +103,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let source_sec = deck.frame as f32 / deck.src_sample_rate as f32;
         let limit =
             ((plan.t_in_a - source_sec).max(0.) / deck.rate + plan.duration_sec() + 10.) * 48000.;
+        let expected = plan.incoming_offset_end;
+        let expected_end = plan.t_end_b;
         load(i + 1, incoming)?;
         engine.load_plan_on(plan, outgoing)?;
         let mut elapsed = 0;
@@ -113,13 +115,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return Err("Set handoff did not complete".into());
             }
         }
-        if !engine.snapshot().deck(incoming).playing {
+        let snapshot = engine.snapshot();
+        let deck = snapshot.deck(incoming);
+        if !deck.playing {
             return Err("Incoming deck did not continue".into());
         }
+        if (deck.pitch_semitones - expected.pitch_semitones).abs() > 0.02
+            || (deck.rate - expected.rate).abs() > 0.002
+            || (deck.frame as f32 / deck.src_sample_rate as f32 - expected_end).abs() > 0.03
+        {
+            return Err("Completed handoff differs from its final source/pitch/rate state".into());
+        }
         println!(
-            "{} -> {} completed with carried state",
+            "{} -> {} completed: source={:.3} pitch={:.2} rate={:.6}",
             tracks[i].track_id.0,
-            tracks[i + 1].track_id.0
+            tracks[i + 1].track_id.0,
+            deck.frame as f32 / deck.src_sample_rate as f32,
+            deck.pitch_semitones,
+            deck.rate,
         );
         outgoing = incoming;
     }

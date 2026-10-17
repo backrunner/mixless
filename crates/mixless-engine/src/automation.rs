@@ -28,10 +28,19 @@ pub(super) struct AutomationShared {
     pub(super) suppress_resume: AtomicBool,
     pub(super) progress: AtomicU32,
     cancelled: AtomicU32,
+    /// A solo pitch move depends on its masking controls and source clock.
+    recovery_dependencies: AtomicU32,
+    recovery_pitch: AtomicU32,
     pub(super) gain_cancelled: AtomicBool,
     skip: AtomicBool,
 }
 impl AutomationShared {
+    fn cancel_lanes(&self, mut mask: u32) {
+        if mask & self.recovery_dependencies.load(Ordering::Acquire) != 0 {
+            mask |= self.recovery_pitch.load(Ordering::Acquire);
+        }
+        self.cancelled.fetch_or(mask, Ordering::AcqRel);
+    }
     pub(super) fn initialize_callback_lock(&self) {
         drop(self.published.lock().expect("plan initialization"));
         drop(
@@ -674,6 +683,26 @@ impl Engine {
             b.stem_gain[3].store(stems[3], Ordering::Relaxed);
         }
         let shared = &self.shared.automation;
+        let overlap_bar = dense.plan.summary.as_ref().unwrap().length_bars as f32;
+        let pitch = &dense.plan.lanes.pitch_b;
+        let recovers = pitch.nodes.iter().any(|&(u, value)| {
+            u > overlap_bar && (value - pitch.sample(overlap_bar)).abs() > 0.005
+        });
+        let incoming = 1 - dense.outgoing;
+        shared.recovery_pitch.store(
+            if recovers { bit(incoming, 5) } else { 0 },
+            Ordering::Release,
+        );
+        shared.recovery_dependencies.store(
+            if recovers {
+                [1, 2, 4, 6, 7, 8, 9, 10]
+                    .into_iter()
+                    .fold(0, |mask, lane| mask | bit(incoming, lane))
+            } else {
+                0
+            },
+            Ordering::Release,
+        );
         let mut published = shared
             .published
             .lock()
@@ -767,10 +796,7 @@ impl Engine {
             LaneId::PitchB => bit(1, 5),
             _ => 0,
         };
-        self.shared
-            .automation
-            .cancelled
-            .fetch_or(mask, Ordering::AcqRel);
+        self.shared.automation.cancel_lanes(mask);
     }
 
     pub(super) fn stop_automix_for_eject(&self) {
@@ -900,7 +926,7 @@ impl Engine {
             }
             _ => 0,
         };
-        auto.cancelled.fetch_or(mask, Ordering::AcqRel);
+        auto.cancel_lanes(mask);
     }
 }
 impl Shared {
@@ -1031,6 +1057,12 @@ impl Shared {
             }
         }
         if skip {
+            // SKIP ends the handoff now; it must not jump to the pitch of a
+            // solo recovery that has not been performed yet.
+            auto.cancelled.fetch_or(
+                auto.recovery_pitch.load(Ordering::Acquire),
+                Ordering::AcqRel,
+            );
             rt.elapsed = plan.total_frames;
         }
         // Source EOF may precede the next 32-frame automation sample by a
@@ -1633,6 +1665,78 @@ mod tests {
         assert_eq!(snapshot.decks[1].eq_db[0], -9.);
         assert_eq!(snapshot.decks[0].gain_db, -96.);
         assert!(!snapshot.automix_on);
+    }
+    #[test]
+    fn solo_pitch_recovery_completes_but_mask_takeover_and_skip_hold_actual_pitch() {
+        for outgoing in [DeckId::A, DeckId::B] {
+            for action in 0..4 {
+                let (engine, mut plan) = transport_fixture();
+                let incoming = if outgoing == DeckId::A {
+                    DeckId::B
+                } else {
+                    DeckId::A
+                };
+                if outgoing == DeckId::B {
+                    engine.shared.decks[0].track_id.store(2, Ordering::Relaxed);
+                    engine.shared.decks[1].track_id.store(1, Ordering::Relaxed);
+                }
+                plan.clock.nodes.push((8.25, 6.25));
+                plan.t_end_b = 4.25;
+                plan.lanes.pitch_b = Polyline {
+                    nodes: vec![(0., -2.), (4.25, -2.), (8.25, 0.)],
+                };
+                plan.lanes.filter_b.lp_hz = Polyline {
+                    nodes: vec![
+                        (0., 20000.),
+                        (4.25, 20000.),
+                        (5.25, 2000.),
+                        (7.25, 2000.),
+                        (8.25, 20000.),
+                    ],
+                };
+                engine
+                    .dispatch(Command::Seek {
+                        deck: outgoing,
+                        frame: 4 * 48000,
+                    })
+                    .unwrap();
+                engine
+                    .dispatch(Command::PlayPause { deck: outgoing })
+                    .unwrap();
+                engine.load_plan_on(plan, outgoing).unwrap();
+                engine.render_offline(3 * 48000);
+                let pitch = engine.snapshot().deck(incoming).pitch_semitones;
+                assert!(pitch > -2. && pitch < 0.);
+                match action {
+                    1 => engine
+                        .dispatch(Command::SetChannelFilter {
+                            deck: incoming,
+                            amount: 0.,
+                        })
+                        .unwrap(),
+                    2 => engine.takeover_lane(if incoming == DeckId::A {
+                        LaneId::EqA
+                    } else {
+                        LaneId::EqB
+                    }),
+                    3 => engine.dispatch(Command::SkipAutomix).unwrap(),
+                    _ => (),
+                }
+                let audio = engine.render_offline(4 * 48000);
+                assert!(audio.iter().all(|v| v.is_finite() && v.abs() <= 1.));
+                let snapshot = engine.snapshot();
+                assert!(!snapshot.automix_on);
+                assert_eq!(
+                    snapshot.deck(incoming).pitch_semitones,
+                    if action == 0 { 0. } else { pitch }
+                );
+                assert!(!snapshot.deck(outgoing).playing);
+                assert!(snapshot.deck(incoming).playing);
+                if action == 1 {
+                    assert_eq!(snapshot.deck(incoming).filter_amount, 0.);
+                }
+            }
+        }
     }
     #[test]
     fn stem_automation_requires_pcm_and_manual_takeover_is_per_voice() {
