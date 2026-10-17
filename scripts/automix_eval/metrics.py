@@ -2,7 +2,7 @@
 import math
 from .signal import Plan, grid_error, heard_chroma, roughness
 
-VERSION = 1
+VERSION = 2
 STEP = .05
 
 
@@ -243,6 +243,8 @@ def evaluate_set(plans, tracks, audible=.02):
             if total(bands) > audible:
                 solo_audible += seconds
                 solo_burden += seconds * abs(offset['pitch_semitones'])
+                if seconds > 0:
+                    max_pitch = max(max_pitch, abs(offset['pitch_semitones']))
         solo_seconds += max(0, plans[0]['t_in_a']) / rate
     for i, p in enumerate(plans):
         track = tracks[p['summary']['pair'][1]]
@@ -259,7 +261,8 @@ def evaluate_set(plans, tracks, audible=.02):
         solo_burden += audible_seconds * abs(offset['pitch_semitones'])
         solo_audible += audible_seconds
         solo_seconds += seconds
-        max_pitch = max(max_pitch, abs(offset['pitch_semitones']))
+        if audible_seconds > 0:
+            max_pitch = max(max_pitch, abs(offset['pitch_semitones']))
     summary = {'pairs': len(pairs), 'cuts': sum(p['cut'] for p in pairs),
                'fallbacks': sum(p['fallback'] for p in pairs),
                'played_out': sum(p['played_out'] for p in pairs),

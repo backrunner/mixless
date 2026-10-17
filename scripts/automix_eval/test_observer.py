@@ -242,6 +242,23 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(base['metrics']['voice_attenuation_db']['observed_seconds'],
                          extended['metrics']['voice_attenuation_db']['observed_seconds'])
 
+    def test_max_pitch_includes_opening_solo_and_excludes_unheard_offsets(self):
+        p = plan(0)
+        p['outgoing_offset']['pitch_semitones'] = -6
+        r = evaluate_set([p], self.tracks)['summary']
+        self.assertEqual(r['max_abs_pitch'], 6)
+        self.assertAlmostEqual(r['solo_pitch_semitone_seconds'], 24)
+        silent = copy.deepcopy(self.data)
+        for f in silent[0]['stems']['frames']:
+            f['band_db'] = [[-120] * 3 for _ in range(3)]
+        r = evaluate_set([p], {t['track_id']: Track(t) for t in silent})['summary']
+        self.assertEqual(r['max_abs_pitch'], 0)
+        p['t_in_a'] = 0
+        p['t_end_b'] = self.tracks[2].duration
+        p['incoming_offset_end']['pitch_semitones'] = 4
+        r = evaluate_set([p], self.tracks)['summary']
+        self.assertEqual(r['max_abs_pitch'], 0)
+
     def test_cue_recall_requires_independent_annotations(self):
         self.assertEqual(cue_events(None, {})['status'], 'unavailable')
         r = cue_events([{'track_id': 1, 'time_sec': 12, 'tolerance_sec': 1}], {'1': [13, 20]})

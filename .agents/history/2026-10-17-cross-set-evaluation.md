@@ -46,11 +46,13 @@ Binary SHA-256:
 | Candidate | `aa13f9949fdf06b0c58788c3a2e75b6ac16db650d0567d786173ffc254bb2f73` |
 
 Private evidence is retained under ignored `target/generalization-review-20261017/`:
-`matrix.json`, `evaluation.json`, `source-check.json`, observer/binary hashes,
-individual plans/orders and build/test logs. Only `evaluation.json` is the final
-observer result; provisional outputs preceded stem-specific chroma, segment-indexed
-grid confidence and separate drum diagnostics. No audio, personal library or
-generated analysis is committed.
+`matrix.json`, `evaluation-v2.json`, `source-check.json`, observer/binary hashes,
+individual plans/orders and build/test logs. `evaluation-v2.json` is the final
+observer result; it reproduces every per-run value and sensitivity result in
+version 1's `evaluation.json` with identical input hashes. Earlier provisional
+outputs preceded stem-specific chroma, segment-indexed grid confidence and
+separate drum diagnostics. No audio, personal library or generated analysis is
+committed.
 
 ## Per-set results
 
@@ -170,11 +172,15 @@ At 20/30/50 ms, broad grid-risk macro changes **19.81/17.62/14.25% →
 6.56/6.56/4.77%** fixed and **8.41/7.83/6.14% → 2.83/2.83/2.36%** Best.
 No threshold was selected to hide a regression.
 
-- Observer and matrix tests: **23 passed**. Coverage includes quarter-beat errors,
+- Observer and matrix tests: **24 passed**. Coverage includes quarter-beat errors,
   half/double equivalence, gain/time/tempo transformations, per-segment confidence,
   quiet held voice, missing stems/notes, muted-part harmony, aligned-grid drum
   activity changes, natural attacks and
   releases, cuts, solo restoration, loop exclusions and snapshot provenance guards.
+  Final review corrected maximum pitch accounting for an already-shifted opening
+  solo and excluded inaudible/empty solo offsets. Observer version 2 includes a
+  regression for both cases; all 30 runs / 432 transitions and sensitivity
+  results were rerun and are unchanged for this corpus.
 - Workspace: **567 passed**, 27 ignored. Desktop: **185 passed**, 7 ignored.
 - Development bundle build passed, without launching or installing.
   Version `0.1.0-beta.4`, dev, revision `v0.1.0-beta.4-14-g6c251d8-dirty`,

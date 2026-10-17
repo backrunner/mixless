@@ -1,4 +1,4 @@
-# AutoMix evaluation, observer version 1
+# AutoMix evaluation, observer version 2
 
 This observer is independent of the planner's candidate scores. It reads exported
 `TrackAnalysis` and `MixPlan` JSON, uses one reference analysis for every variant,
@@ -50,6 +50,10 @@ The grid-confidence floor is 0.15. Active voice uses activity >= 0.35 or a held
 note of confidence >= 0.5; an exposed vocal phrase needs 0.2% reference power at
 some point. These are observer assumptions, not tuning changes to the planner.
 Quantitative improvements do not establish listening quality.
+
+Version 2 corrects maximum absolute pitch accounting: include audible opening
+solo playback and exclude offsets carried through empty or inaudible solo spans.
+The semitone-second burden and transition measurements are unchanged.
 
 Drum-onset activity is the source's normalized drum onset feature multiplied by
 the square root of its heard normalized drum power. Adjacent one-second windows
