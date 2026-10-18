@@ -203,22 +203,37 @@ impl UiState {
                         .h(px(30.))
                         .rounded(px(4.))
                         .border_1()
+                        .cursor_pointer()
                         .text_size(px(11.))
                         .font_weight(gpui::FontWeight::BOLD)
                         .child(match d.cue_kinds[i] {
                             CueKind::In if set => format!("{} IN", i + 1),
                             CueKind::Out if set => format!("{} OUT", i + 1),
                             _ => (i + 1).to_string(),
-                        })
-                        .hover(|s| s.bg(theme::with_alpha(color, 0.15)));
+                        });
                     if set {
                         el.bg(color)
                             .border_color(theme::with_alpha(color, 0.7))
                             .text_color(gpui::rgb(0x101216))
+                            .hover(|s| {
+                                s.bg(color.blend(gpui::rgba(0xffffff24)))
+                                    .border_color(color.blend(gpui::rgba(0xffffff52)))
+                            })
+                            .active(|s| s.bg(color.blend(gpui::rgba(0x0000001f))))
                     } else {
                         el.bg(theme::PANEL_INSET)
                             .border_color(theme::LINE)
                             .text_color(theme::with_alpha(color, 0.55))
+                            .hover(|s| {
+                                s.bg(theme::with_alpha(color, 0.13))
+                                    .border_color(theme::with_alpha(color, 0.6))
+                                    .text_color(color)
+                            })
+                            .active(|s| {
+                                s.bg(theme::with_alpha(color, 0.24))
+                                    .border_color(color)
+                                    .text_color(color)
+                            })
                     }
                 };
                 let state = pad_state.clone();

@@ -2273,6 +2273,42 @@
       "macOS": "27.0.1 (26A434)",
       "audioDevice": "Offline",
       "scope": "Hovering the ellipsized ShadyShady album shows the complete Tone Sphere Original Soundtracks - Luminous Sun text. Title, artist and album use the same two-line metadata cell and full-text tooltip. Isolated app identity app.mixless.audit.cachealbum with an SQLite backup and offline audio; the original live playback instance was not restarted and its library was not migrated. Rendering and cache/metadata verification only, not listening evidence."
+    },
+    "cue-hover-filled": {
+      "file": "cue-hover/filled.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T12:34:36.949878+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-11-gc63b388-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T12:30:35Z"
+      },
+      "binarySha256": "b24afa4c4d00d79e9593e0b70a5cd7858c538fa1abbc6daf24cb4692bed36984",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Deck A has Stella loaded with four assigned cues. Hovering assigned cue 1 preserves its solid red fill, lightly brightens the fill and border, and keeps the dark number legible. Native click/release and hover states were exercised. Isolated app instance with a copy of the existing library. Original live playback was not interrupted. Static visual evidence only; no listening or frame-time measurements."
+    },
+    "cue-hover-empty": {
+      "file": "cue-hover/empty.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T12:34:48.166651+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-11-gc63b388-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T12:30:35Z"
+      },
+      "binarySha256": "b24afa4c4d00d79e9593e0b70a5cd7858c538fa1abbc6daf24cb4692bed36984",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Hovering empty cue 8 gives it a subtle purple tint and outline. Assigned pads remain solid and idle empty pads stay dark; the pad geometry does not change between states. Isolated app instance with a copy of the existing library. Original live playback was not interrupted. Static visual evidence only; no listening or frame-time measurements."
     }
   }
 }
