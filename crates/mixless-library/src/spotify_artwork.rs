@@ -110,6 +110,7 @@ mod tests {
             .save_import_items(
                 playlist,
                 &[0, 1].map(|position| ImportItem {
+                    album: None,
                     position,
                     external_id: "a".repeat(22),
                     title: "Track".into(),

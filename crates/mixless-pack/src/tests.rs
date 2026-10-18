@@ -170,11 +170,9 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
     );
     let a = &rows[1];
     assert_ne!(a.id, TrackId(1));
-    assert!(
-        restored
-            .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
-            .unwrap()
-    );
+    assert!(restored
+        .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
+        .unwrap());
     assert_eq!(
         restored
             .load_analysis(a.id, mixless_analyze::ANALYSIS_VERSION)
@@ -189,24 +187,20 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
         restored.load_waveform(a.id).unwrap().unwrap().detail_pos,
         [256, 512]
     );
-    assert!(
-        playback
-            .playback(&a.content_hash, 4410, 44100)
-            .unwrap()
-            .is_some()
-    );
+    assert!(playback
+        .playback(&a.content_hash, 4410, 44100)
+        .unwrap()
+        .is_some());
     // Cached analysis returns before attempting the deliberately failing loader.
-    assert!(
-        playback
-            .analyze(
-                &a.content_hash,
-                0.1,
-                || panic!("must not run inference"),
-                &mut |_| {},
-                &|| true
-            )
-            .is_ok()
-    );
+    assert!(playback
+        .analyze(
+            &a.content_hash,
+            0.1,
+            || panic!("must not run inference"),
+            &mut |_| {},
+            &|| true
+        )
+        .is_ok());
     let ids = report.imported;
     let repeat = import_all(&restored, &playback, &path);
     assert_eq!(repeat.imported, ids);
@@ -217,18 +211,14 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
     }
     drop(restored);
     let restarted = Library::open(&dest.path().join("library.db")).unwrap();
-    assert!(
-        !restarted
-            .list_playlists()
-            .unwrap()
-            .iter()
-            .any(|p| p.name == "package-media")
-    );
-    assert!(
-        restarted
-            .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
-            .unwrap()
-    );
+    assert!(!restarted
+        .list_playlists()
+        .unwrap()
+        .iter()
+        .any(|p| p.name == "package-media"));
+    assert!(restarted
+        .analysis_ready(a.id, mixless_analyze::ANALYSIS_VERSION)
+        .unwrap());
 }
 
 #[test]
@@ -257,6 +247,7 @@ fn late_database_failure_rolls_back_every_source_and_new_media() {
         .next()
         .unwrap();
     let placeholder = mixless_library::ImportItem {
+        album: None,
         position: 7,
         external_id: "missing".into(),
         title: "Unavailable".into(),
@@ -293,6 +284,7 @@ fn pending_audio_and_unavailable_playlist_rows_roundtrip_without_network_work() 
         .external_playlist("spotify", "source", "Remote")
         .unwrap();
     let item = mixless_library::ImportItem {
+        album: Some("Portable album".into()),
         position: 0,
         external_id: "local".into(),
         title: "Song".into(),
@@ -325,6 +317,8 @@ fn pending_audio_and_unavailable_playlist_rows_roundtrip_without_network_work() 
     assert!(!tracks[0].analyzed);
     assert_eq!(items.len(), 2);
     assert_eq!(items[1].status, "missing");
+    assert_eq!(items[1].album.as_deref(), Some("Portable album"));
+    assert_eq!(tracks[0].album.as_deref(), Some("Portable album"));
     assert!(!items[1].is_pending());
 }
 
@@ -618,11 +612,10 @@ fn compressed_stems_roundtrip_with_their_format_and_exact_playback_length() {
         assert_eq!(import_all(&restored, &q, &path).stems, 1);
         let pcm = q.playback(&hash, 4410, 44100).unwrap().unwrap();
         assert_eq!(pcm.bytes(), 4410 * 24);
-        assert!(
-            q.cache_path(&hash)
-                .join(format!("vocals.{format}"))
-                .exists()
-        );
+        assert!(q
+            .cache_path(&hash)
+            .join(format!("vocals.{format}"))
+            .exists());
         assert!(!q.cache_path(&hash).join("vocals.wav").exists());
         // A second export/import preserves the encoding without transcoding.
         let next = dest.path().join("next.mixpack");

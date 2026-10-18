@@ -28,6 +28,7 @@ pub(super) fn parse(html: &str, id: &str) -> Result<SpotifyPlaylistMeta, Spotify
         .map(|row| {
             let t = &row["itemV2"]["data"];
             SpotifyTrackMeta {
+                album: t["albumOfTrack"]["name"].as_str().map(String::from),
                 id: if t["__typename"] == "Track" {
                     t["uri"]
                         .as_str()
@@ -77,11 +78,13 @@ mod tests {
     }
     #[test]
     fn counted_snapshot_retains_duplicates_and_unavailable_slots() {
-        let track = serde_json::json!({"itemV2":{"data":{"__typename":"Track","uri":"spotify:track:abc", "name":"Song","duration":{"totalMilliseconds":197000},"artists":{"items":[{"profile":{"name":"Madeon"}}]}}}});
+        let track = serde_json::json!({"itemV2":{"data":{"__typename":"Track","uri":"spotify:track:abc", "name":"Song","albumOfTrack":{"name":"专辑"},"duration":{"totalMilliseconds":197000},"artists":{"items":[{"profile":{"name":"Madeon"}}]}}}});
         let html = page(3, serde_json::json!([track.clone(), null, track]));
         let p = parse(&html, "test").unwrap();
         assert_eq!(p.tracks.len(), 3);
         assert_eq!(p.tracks[0].artist, "Madeon");
+        assert_eq!(p.tracks[0].album.as_deref(), Some("专辑"));
+        assert_eq!(p.tracks[1].album, None);
         assert_eq!(p.tracks[0].duration_ms, 197000);
         assert!(p.tracks[1].id.is_empty());
         assert_eq!(p.tracks[0].id, p.tracks[2].id);

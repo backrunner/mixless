@@ -299,6 +299,10 @@ impl UiState {
                 self.import_rx = Some(rx);
             }
         }
+        if self.album_fetch.poll() > 0 {
+            self.refresh_tracks();
+            changed = true;
+        }
         if self.artwork_fetch.poll() > 0 {
             for artwork in &mut self.deck_artwork {
                 artwork.invalidate();

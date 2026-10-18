@@ -7,6 +7,8 @@ pub struct ImportItem {
     pub external_id: String,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub album: Option<String>,
     pub duration_ms: u32,
     pub status: String,
     pub track_id: Option<TrackId>,
@@ -183,8 +185,8 @@ impl Library {
             [playlist.0],
         )?;
         for item in items {
-            tx.execute("INSERT INTO import_items(playlist_id,position,external_id,title,artist,duration_ms,status,track_id,error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                params![playlist.0,item.position as i64,item.external_id,item.title,item.artist,item.duration_ms,item.status,item.track_id.map(|id|id.0),item.error])?;
+            tx.execute("INSERT INTO import_items(playlist_id,position,external_id,title,artist,duration_ms,status,track_id,error,album) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![playlist.0,item.position as i64,item.external_id,item.title,item.artist,item.duration_ms,item.status,item.track_id.map(|id|id.0),item.error,item.album])?;
         }
         let remote_positions: Vec<_> = items
             .iter()
@@ -202,6 +204,7 @@ impl Library {
                 params![playlist.0, position as i64, id.0],
             )?;
         }
+        fill_import_albums(&tx, playlist)?;
         if remote.is_none() {
             align_import_order(&tx, playlist, &ordered)?;
         }
@@ -233,6 +236,7 @@ impl Library {
                 ],
             )?;
         }
+        fill_import_albums(&tx, playlist)?;
         if items.iter().any(|item| !item.is_pending()) {
             tx.execute(
                 "DELETE FROM playlist_items WHERE playlist_id=?1",
@@ -309,9 +313,10 @@ pub(super) fn read_import_items(
     conn: &Connection,
     playlist: PlaylistId,
 ) -> Result<Vec<ImportItem>, LibraryError> {
-    let mut query = conn.prepare("SELECT position,external_id,title,artist,duration_ms,status,track_id,error FROM import_items WHERE playlist_id=?1 ORDER BY position")?;
+    let mut query = conn.prepare("SELECT position,external_id,title,artist,duration_ms,status,track_id,error,album FROM import_items WHERE playlist_id=?1 ORDER BY position")?;
     let rows = query.query_map([playlist.0], |r| {
         Ok(ImportItem {
+            album: r.get(8)?,
             position: r.get::<_, i64>(0)? as usize,
             external_id: r.get(1)?,
             title: r.get(2)?,
@@ -333,12 +338,13 @@ pub(super) fn align_import_order(
     ordered: &[TrackId],
 ) -> Result<(), LibraryError> {
     let mut query = tx.prepare(
-        "SELECT position,external_id,title,artist,duration_ms,status,track_id,error
+        "SELECT position,external_id,title,artist,duration_ms,status,track_id,error,album
          FROM import_items WHERE playlist_id=?1 AND status IN ('local','acquired')
          AND track_id IS NOT NULL ORDER BY position",
     )?;
     let rows = query.query_map([playlist.0], |r| {
         Ok(ImportItem {
+            album: r.get(8)?,
             position: r.get::<_, i64>(0)? as usize,
             external_id: r.get(1)?,
             title: r.get(2)?,
@@ -363,7 +369,7 @@ pub(super) fn align_import_order(
         };
         tx.execute(
             "UPDATE import_items SET external_id=?1,title=?2,artist=?3,duration_ms=?4,
-             status=?5,track_id=?6,error=?7 WHERE playlist_id=?8 AND position=?9",
+             status=?5,track_id=?6,error=?7,album=?10 WHERE playlist_id=?8 AND position=?9",
             params![
                 item.external_id,
                 item.title,
@@ -373,7 +379,8 @@ pub(super) fn align_import_order(
                 item.track_id.map(|id| id.0),
                 item.error,
                 playlist.0,
-                slot.position as i64
+                slot.position as i64,
+                item.album
             ],
         )?;
     }
@@ -397,6 +404,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(position, status)| ImportItem {
+                album: None,
                 position,
                 external_id: format!("row-{position}"),
                 title: "Song".into(),
@@ -441,6 +449,7 @@ mod tests {
             .unwrap();
         let mut rows: Vec<_> = (0..5)
             .map(|position| ImportItem {
+                album: None,
                 position,
                 external_id: format!("id-{position}"),
                 title: format!("Song {position}"),
@@ -514,4 +523,19 @@ mod tests {
             3
         );
     }
+}
+
+/// Called inside the same transaction that links a ready import row. This also
+/// handles local reuse, resync and retries without rewriting the audio file.
+fn fill_import_albums(conn: &Connection, playlist: PlaylistId) -> Result<(), LibraryError> {
+    conn.execute(
+        "UPDATE tracks SET album=(SELECT TRIM(i.album) FROM import_items i
+        WHERE i.playlist_id=?1 AND i.track_id=tracks.id AND i.status IN ('local','acquired')
+        AND NULLIF(TRIM(i.album),'') IS NOT NULL ORDER BY i.position LIMIT 1)
+        WHERE NULLIF(TRIM(tracks.album),'') IS NULL AND EXISTS (SELECT 1 FROM import_items i
+        WHERE i.playlist_id=?1 AND i.track_id=tracks.id AND i.status IN ('local','acquired')
+        AND NULLIF(TRIM(i.album),'') IS NOT NULL)",
+        [playlist.0],
+    )?;
+    Ok(())
 }

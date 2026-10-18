@@ -256,6 +256,7 @@ mod tests {
 
     fn item(position: usize, status: &str) -> ImportItem {
         ImportItem {
+            album: None,
             position,
             external_id: ((b'a' + position as u8) as char).to_string().repeat(22),
             title: format!("Retry fixture {position}"),

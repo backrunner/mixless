@@ -199,6 +199,7 @@ impl ImportService<'_> {
             .iter()
             .enumerate()
             .map(|(position, t)| ImportItem {
+                album: t.album.clone(),
                 position,
                 external_id: t.id.clone(),
                 title: t.title.clone(),
@@ -637,6 +638,7 @@ mod tests {
     }
     pub(super) fn remote(id: char, title: &str, seconds: u32) -> SpotifyTrackMeta {
         SpotifyTrackMeta {
+            album: None,
             id: id.to_string().repeat(22),
             title: title.into(),
             artist: "Artist".into(),
@@ -918,7 +920,7 @@ mod tests {
             .unwrap();
         lib.set_recording_metadata(b, "Song B", "Artist", None)
             .unwrap();
-        let p = playlist(
+        let mut p = playlist(
             "remote-one",
             vec![
                 remote('a', "Song A", 1),
@@ -926,6 +928,7 @@ mod tests {
                 remote('a', "Song A", 1),
             ],
         );
+        p.tracks[0].album = Some("Local album backfill".into());
         let report = service
             .spotify_playlist(
                 &p,
@@ -935,6 +938,10 @@ mod tests {
             .unwrap();
         let pid = report.playlist.unwrap();
         assert_eq!(report.local, 3);
+        assert_eq!(
+            lib.get_track(a).unwrap().album.as_deref(),
+            Some("Local album backfill")
+        );
         assert_eq!(
             lib.playlist_tracks(pid)
                 .unwrap()
@@ -1003,7 +1010,7 @@ mod tests {
         let wrong = dir.path().join("wrong.wav");
         wav(&valid, 8, 16);
         wav(&wrong, 1, 16);
-        let p = playlist(
+        let mut p = playlist(
             "remote",
             vec![
                 remote('a', "Acquired", 8),
@@ -1011,6 +1018,7 @@ mod tests {
                 remote('c', "Unavailable", 8),
             ],
         );
+        p.tracks[0].album = Some("Downloaded album".into());
         let report = service
             .spotify_playlist(
                 &p,
@@ -1023,6 +1031,10 @@ mod tests {
             )
             .unwrap();
         let pid = report.playlist.unwrap();
+        assert_eq!(
+            lib.playlist_tracks(pid).unwrap()[0].album.as_deref(),
+            Some("Downloaded album")
+        );
         assert_eq!((report.acquired, report.suspect, report.failed), (1, 1, 1));
         assert_eq!(lib.list_tracks().unwrap().len(), 1);
         assert_eq!(lib.playlist_tracks(pid).unwrap().len(), 1);
@@ -1088,6 +1100,7 @@ mod tests {
         let remote = lib.external_playlist("spotify", "remote", "Local").unwrap();
         assert_ne!(pid, remote);
         let good = ImportItem {
+            album: None,
             position: 0,
             external_id: "a".repeat(22),
             title: "Song".into(),

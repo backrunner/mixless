@@ -125,6 +125,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(position, id)| crate::ImportItem {
+                album: None,
                 position,
                 external_id: format!("song-{}", id.0),
                 title: "song".into(),

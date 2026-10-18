@@ -246,8 +246,8 @@ impl Library {
                     } else {
                         &item.status
                     };
-                    tx.execute("INSERT INTO import_items(playlist_id,position,external_id,title,artist,duration_ms,status,track_id,error) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                    params![id,item.position as i64,item.external_id,item.title,item.artist,item.duration_ms,status,track,item.error])?;
+                    tx.execute("INSERT INTO import_items(playlist_id,position,external_id,title,artist,duration_ms,status,track_id,error,album) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                    params![id,item.position as i64,item.external_id,item.title,item.artist,item.duration_ms,status,track,item.error,item.album])?;
                 }
             }
             // Preserve local rows; give imported rows the source library's order.

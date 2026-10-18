@@ -5,6 +5,7 @@ mod drag;
 mod import;
 pub(crate) mod import_rows;
 mod menu;
+mod metadata;
 mod packages;
 mod playlist_menu;
 mod status;
@@ -673,14 +674,12 @@ impl UiState {
                                     ),
                             )
                             .child(track_cover(t))
-                            .child(
-                                gpui::div()
-                                    .flex_none()
-                                    .w(px(COL_TITLE))
-                                    .text_color(theme::TEXT)
-                                    .truncate()
-                                    .child(t.title.clone()),
-                            )
+                            .child(metadata::cell(
+                                format!("track-title-{row_ix}"),
+                                t.title.clone(),
+                                COL_TITLE,
+                                theme::TEXT,
+                            ))
                             .child(crate::wave::preview::element(
                                 &previews,
                                 t,
@@ -692,25 +691,19 @@ impl UiState {
                                         .flatten()
                                 }),
                             ))
-                            .child(
-                                gpui::div()
-                                    .flex_none()
-                                    .w(px(COL_ARTIST))
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_color(theme::TEXT)
-                                    .child(t.artist.clone()),
-                            )
+                            .child(metadata::cell(
+                                format!("track-artist-{row_ix}"),
+                                t.artist.clone(),
+                                COL_ARTIST,
+                                theme::TEXT,
+                            ))
                             .when(!compact, |el| {
-                                el.child(
-                                    gpui::div()
-                                        .flex_none()
-                                        .w(px(COL_ALBUM))
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .text_color(theme::MUTED)
-                                        .child(t.album.clone().unwrap_or_else(|| "—".into())),
-                                )
+                                el.child(metadata::cell(
+                                    format!("track-album-{row_ix}"),
+                                    t.album.clone().unwrap_or_else(|| "—".into()),
+                                    COL_ALBUM,
+                                    theme::MUTED,
+                                ))
                             })
                             .child(
                                 gpui::div()

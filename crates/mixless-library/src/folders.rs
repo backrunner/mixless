@@ -220,6 +220,7 @@ mod tests {
             .external_playlist("spotify", "remote", "Set")
             .unwrap();
         let item = |position, track_id, status: &str| ImportItem {
+            album: None,
             position,
             external_id: format!("remote-{position}"),
             title: "Song".into(),

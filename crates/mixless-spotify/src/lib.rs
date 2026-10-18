@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod album;
 mod artwork;
+pub use album::AlbumClient;
 mod page;
 pub use artwork::ArtworkClient;
 
@@ -24,6 +26,8 @@ pub struct SpotifyTrackMeta {
     pub id: String,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub album: Option<String>,
     pub duration_ms: u32,
     #[serde(default)]
     pub isrc: Option<String>,
@@ -183,6 +187,7 @@ fn parse_embed(html: &str, fallback_id: &str) -> Result<SpotifyPlaylistMeta, Spo
         // Keep unavailable rows instead of silently shortening the playlist.
         let id = uri.strip_prefix("spotify:track:").unwrap_or("");
         tracks.push(SpotifyTrackMeta {
+            album: track["album"]["name"].as_str().map(String::from),
             id: id.into(),
             title: track["title"]
                 .as_str()
@@ -247,6 +252,7 @@ fn fetch_api(
                 &item["item"]
             };
             tracks.push(SpotifyTrackMeta {
+                album: t["album"]["name"].as_str().map(String::from),
                 id: if t["type"].as_str() == Some("track") {
                     t["id"].as_str().unwrap_or("").into()
                 } else {
@@ -331,8 +337,10 @@ mod tests {
     #[test]
     fn api_follows_pages_and_retains_unavailable_rows() {
         let mut calls = 0;
-        let p = fetch_api("id", |_| { calls+=1; Ok(if calls==1 { serde_json::json!({"name":"List","tracks":{"items":[{"track":{"type":"track","id":"a","name":"Song","duration_ms":120000}}],"total":2,"next":"https://api.spotify.com/v1/page2"}}) } else { serde_json::json!({"items":[{"track":null}],"total":2,"next":null}) }) }).unwrap();
+        let p = fetch_api("id", |_| { calls+=1; Ok(if calls==1 { serde_json::json!({"name":"List","tracks":{"items":[{"track":{"type":"track","id":"a","name":"Song","album":{"name":"Album"},"duration_ms":120000}}],"total":2,"next":"https://api.spotify.com/v1/page2"}}) } else { serde_json::json!({"items":[{"track":null}],"total":2,"next":null}) }) }).unwrap();
         assert_eq!(calls, 2);
+        assert_eq!(p.tracks[0].album.as_deref(), Some("Album"));
+        assert_eq!(p.tracks[1].album, None);
         assert_eq!(p.tracks.len(), 2);
         assert!(p.tracks[1].id.is_empty());
         assert!(p.warning.is_none());

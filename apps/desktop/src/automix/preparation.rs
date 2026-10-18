@@ -1,4 +1,5 @@
 //! Prepare one continuous set and publish its dependent decisions together.
+mod order_cache;
 mod ordering;
 mod preview;
 use super::*;
@@ -19,6 +20,7 @@ pub(super) struct ScheduledPair {
 
 pub struct Preparation {
     playlist: Mutex<Vec<TrackId>>,
+    selected: Mutex<Vec<TrackId>>,
     revision: AtomicU64,
     input_revision: AtomicU64,
     sender: OnceLock<Sender<(u64, Vec<TrackId>)>>,
@@ -27,9 +29,8 @@ pub struct Preparation {
     sequence: Mutex<Sequence>,
     pub preview_revision: AtomicU64,
     best: std::sync::atomic::AtomicBool,
-    /// Last arranged set: (playlist order, best mixing order, whether every
-    /// track was analysed and separated when it was measured).
-    arranged: Mutex<Option<(Vec<TrackId>, Vec<TrackId>, bool)>>,
+    /// Last displayed order and the evidence revision it was validated against.
+    arranged: Mutex<Option<order_cache::Arranged>>,
     /// The playlist a worker is arranging now, so it is measured only once.
     arranging: Mutex<Option<Arc<OrderingJob>>>,
     /// The user has picked an order; AUTO leaves it alone from then on.
@@ -40,6 +41,7 @@ impl Default for Preparation {
     fn default() -> Self {
         Self {
             playlist: Mutex::default(),
+            selected: Mutex::default(),
             revision: AtomicU64::default(),
             input_revision: AtomicU64::default(),
             sender: OnceLock::default(),
@@ -102,6 +104,12 @@ pub(super) fn following(
 }
 
 pub fn prepare_playlist(core: &Arc<AppCore>, tracks: Vec<TrackId>) {
+    let mut selected = core
+        .mix_preparation
+        .selected
+        .lock()
+        .expect("selected playlist");
+    *selected = tracks.clone();
     prepare(core, arrange(core, tracks), false, true);
 }
 

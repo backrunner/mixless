@@ -77,23 +77,26 @@ pub(super) fn element(
                     .bg(theme::PANEL_RAISED),
             ),
         )
-        .child(
-            gpui::div()
-                .flex_none()
-                .w(px(COL_TITLE))
-                .truncate()
-                .child(item.title.clone()),
-        )
+        .child(metadata::cell(
+            format!("import-title-{position}"),
+            item.title.clone(),
+            COL_TITLE,
+            theme::TEXT,
+        ))
         .child(gpui::div().flex_1().min_w(px(280.)))
-        .child(
-            gpui::div()
-                .flex_none()
-                .w(px(COL_ARTIST))
-                .truncate()
-                .child(item.artist.clone()),
-        )
+        .child(metadata::cell(
+            format!("import-artist-{position}"),
+            item.artist.clone(),
+            COL_ARTIST,
+            theme::TEXT,
+        ))
         .when(!compact, |el| {
-            el.child(gpui::div().flex_none().w(px(COL_ALBUM)).child("—"))
+            el.child(metadata::cell(
+                format!("import-album-{position}"),
+                item.album.clone().unwrap_or_else(|| "—".into()),
+                COL_ALBUM,
+                theme::MUTED,
+            ))
         })
         .child(
             gpui::div()
@@ -200,6 +203,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(position, status)| ImportItem {
+                album: None,
                 position,
                 external_id: "a".into(),
                 title: "Song".into(),

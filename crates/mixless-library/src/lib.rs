@@ -1,5 +1,6 @@
 //! Local library: import, metadata, cues. No tokens, no PCM.
 
+mod best_order;
 mod cues;
 mod editing;
 mod folders;
@@ -9,12 +10,14 @@ mod ordering;
 pub mod portable;
 mod schema;
 mod sources;
+mod spotify_album;
 mod spotify_artwork;
 mod storage;
 mod verification;
 mod waveform;
 pub use imports::ImportItem;
 pub use schema::SCHEMA_VERSION;
+pub use spotify_album::SpotifyAlbumTarget;
 pub use spotify_artwork::SpotifyArtworkTarget;
 pub use storage::CacheUsage;
 
@@ -142,6 +145,11 @@ impl Library {
                 PRIMARY KEY (track_id, idx),
                 FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS best_orders (
+                cache_key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                last_used INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS track_analysis (
                 track_id INTEGER PRIMARY KEY,
                 content_hash TEXT NOT NULL,
@@ -218,6 +226,16 @@ impl Library {
             if !has_artwork_path {
                 conn.execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT", [])?;
             }
+            let has_import_album = {
+                let mut stmt = conn.prepare("PRAGMA table_info(import_items)")?;
+                let columns = stmt
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                columns.iter().any(|name| name == "album")
+            };
+            if !has_import_album {
+                conn.execute("ALTER TABLE import_items ADD COLUMN album TEXT", [])?;
+            }
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         let artwork_dir = path
@@ -260,7 +278,9 @@ impl Library {
                     THEN tracks.artwork_path ELSE excluded.artwork_path END,
                 title=excluded.title,
                 artist=excluded.artist,
-                album=excluded.album,
+                album=CASE
+                    WHEN tracks.content_hash=excluded.content_hash AND NULLIF(TRIM(excluded.album),'') IS NULL
+                    THEN tracks.album ELSE excluded.album END,
                 duration_ms=excluded.duration_ms,
                 isrc=excluded.isrc,
                 bpm=CASE WHEN tracks.content_hash=excluded.content_hash THEN tracks.bpm ELSE NULL END,

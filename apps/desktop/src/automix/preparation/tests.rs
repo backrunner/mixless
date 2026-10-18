@@ -45,8 +45,11 @@ fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
     });
     let reordered = vec![tracks[2], tracks[1], tracks[0]];
     core.mix_preparation.best.store(true, Ordering::Release);
-    *core.mix_preparation.arranged.lock().unwrap() =
-        Some((tracks.clone(), reordered.clone(), true));
+    *core.mix_preparation.arranged.lock().unwrap() = Some(order_cache::Arranged {
+        input: tracks.clone(),
+        order: reordered.clone(),
+        stamp: Some(order_cache::Stamp::current(&core)),
+    });
     state.read_with(cx, |s, _| {
         assert_eq!(
             s.shown_tracks().iter().map(|t| t.id).collect::<Vec<_>>(),

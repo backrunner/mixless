@@ -37,6 +37,7 @@ impl UiState {
 
     pub fn refresh_tracks(&mut self) {
         self.artwork_fetch.refresh();
+        self.album_fetch.refresh();
         if self.library_refresh.rx.is_some() {
             self.library_refresh.again = true;
             return;

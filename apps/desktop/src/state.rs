@@ -1,6 +1,7 @@
 //! Shared app core + UI state. The engine/library live behind `Arc` so
 //! background threads can import and load tracks without blocking the UI.
 
+mod album_fetch;
 mod artwork;
 mod artwork_fetch;
 mod audio;
@@ -428,6 +429,7 @@ pub struct UiState {
     active_playlist_sync: Option<i64>,
     import_retries: import_retries::Retries,
     artwork_fetch: artwork_fetch::ArtworkFetch,
+    album_fetch: album_fetch::AlbumFetch,
     pub automix_active: bool,
     /// Running source, independent of the browsed playlist. None is All tracks.
     automix_playlist: Option<i64>,
@@ -459,6 +461,7 @@ impl UiState {
         cx.on_release(|state, _| state.flush_library_order())
             .detach();
         let artwork_fetch = artwork_fetch::ArtworkFetch::start(core.clone());
+        let album_fetch = album_fetch::AlbumFetch::start(core.clone());
         let owner = cx.entity().downgrade();
         let library_view = cx.new(|_| crate::views::library::LibraryView { owner });
         Self {
@@ -542,6 +545,7 @@ impl UiState {
             active_playlist_sync: None,
             import_retries: Default::default(),
             artwork_fetch,
+            album_fetch,
             automix_active: false,
             automix_playlist: None,
             automix_tracks: Vec::new(),

@@ -197,6 +197,7 @@ mod tests {
             .save_import_items(
                 playlist,
                 &[ImportItem {
+                    album: None,
                     position: 0,
                     external_id: id.into(),
                     title: "Song".into(),

@@ -74,6 +74,12 @@ empty, selected, expanded and error states where relevant. Follow the
 [mixless brand guide](.agents/skills/mixless-brand/SKILL.md) for typography,
 colors and screenshot evidence. A successful build alone is not a UI review.
 
+Best order results persist in the library. Bump `mixless_mixplan::order::ORDER_VERSION`
+when changing ordering, transition scoring or planner behavior that can change the
+result. Cache keys already include the actual analysis payloads, analysis/stem
+versions, source hashes, playlist occurrences and planner options. Unfinished playlist
+preparation or changing evidence must not produce a persistent result.
+
 ## Module boundaries
 
 Controller presets and adapters follow the

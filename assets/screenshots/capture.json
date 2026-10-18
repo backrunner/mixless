@@ -2237,6 +2237,42 @@
       "macOS": "27.0.1 (26A434)",
       "audioDevice": "Offline",
       "scope": "Isolated offline native instance with real Ghost Voices and Platinum tracks loaded. Native KEY drag sets Platinum to -3 semitones: deck and top waveform show 10B, while the library retains source key 7B. The isolated instance has no stem cache. Rendering and control evidence only, not AutoMix playback or listening evidence. The original live playback instance was not restarted."
+    },
+    "cache-album-library": {
+      "file": "cache-album/library.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T12:28:25.015727+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-11-gc63b388-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T12:23:10Z"
+      },
+      "binarySha256": "d0ee03263681fa9c207b43aec147c5fb7fe58bfa2b3dd4fee345a8edefa41e60",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Current native library after album metadata backfill from exact Spotify track pages. ShadyShady album is clamped to two lines with an ellipsis. Audited on an isolated backup of the existing library: missing albums changed from 63 to 2; existing nonblank albums were preserved. Best order persisted on first run and the same cache key and permutation were loaded after restarting the audit instance (last_used changed from 1 to 2). Isolated app identity app.mixless.audit.cachealbum with an SQLite backup and offline audio; the original live playback instance was not restarted and its library was not migrated. Rendering and cache/metadata verification only, not listening evidence."
+    },
+    "cache-album-tooltip": {
+      "file": "cache-album/long-album-tooltip.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-17T12:28:44.605829+00:00",
+      "build": {
+        "version": "0.1.0-beta.4",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.4-11-gc63b388-dirty",
+        "profile": "debug",
+        "built": "2026-10-17T12:23:10Z"
+      },
+      "binarySha256": "d0ee03263681fa9c207b43aec147c5fb7fe58bfa2b3dd4fee345a8edefa41e60",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Hovering the ellipsized ShadyShady album shows the complete Tone Sphere Original Soundtracks - Luminous Sun text. Title, artist and album use the same two-line metadata cell and full-text tooltip. Isolated app identity app.mixless.audit.cachealbum with an SQLite backup and offline audio; the original live playback instance was not restarted and its library was not migrated. Rendering and cache/metadata verification only, not listening evidence."
     }
   }
 }

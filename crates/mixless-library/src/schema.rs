@@ -18,12 +18,13 @@ use super::LibraryError;
 /// file with [`LibraryError::NewerSchema`]; the app then sets the file
 /// aside and starts a fresh library instead of corrupting rows or
 /// crash-looping on every launch.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Every column this build's statements name, per table. Extend the list
 /// when a query starts using a new column so downgrades keep detecting
 /// non-additive changes.
 const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
+    ("best_orders", &["cache_key", "payload", "last_used"]),
     ("library_identity", &["singleton", "identity"]),
     ("package_tracks", &["source", "source_id", "track_id"]),
     (
@@ -73,6 +74,7 @@ const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
             "playlist_id",
             "position",
             "external_id",
+            "album",
             "title",
             "artist",
             "duration_ms",

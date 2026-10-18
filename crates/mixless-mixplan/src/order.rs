@@ -2,7 +2,8 @@
 //! by planning the real transition between each pair and keeping the cycle
 //! whose transitions score best. Pure and deterministic; computed once per
 //! playlist, then played round and round in that order.
-/// Increment when ordering or the transition planner changes cached Best results.
+/// Bump when ordering, pair scoring, or planner behavior can change Best order.
+/// Persisted orders also fingerprint the actual analyses and all planner options.
 pub const ORDER_VERSION: u32 = 3;
 
 use crate::{Planner, PlannerOptions};
@@ -146,7 +147,11 @@ pub fn best_cycle_with_progress(
 }
 
 fn order_starts(n: usize) -> usize {
-    if n > PLANNED_TRACKS { 1 } else { n.min(16) }
+    if n > PLANNED_TRACKS {
+        1
+    } else {
+        n.min(16)
+    }
 }
 
 /// The cheapest loop under `cost[from][to]`, opened after its most
@@ -364,11 +369,9 @@ mod tests {
         let total = reports[0].1;
         assert_eq!(reports.first(), Some(&(0, total)));
         assert_eq!(reports.last(), Some(&(total, total)));
-        assert!(
-            reports
-                .iter()
-                .all(|&(done, count)| done <= count && count == total)
-        );
+        assert!(reports
+            .iter()
+            .all(|&(done, count)| done <= count && count == total));
         reports.sort_unstable();
         assert_eq!(
             reports,
