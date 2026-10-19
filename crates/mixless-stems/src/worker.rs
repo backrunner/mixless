@@ -18,8 +18,7 @@ use std::{
 
 enum Request {
     Run {
-        name: String,
-        input: Tensor<f32>,
+        inputs: Vec<(String, Tensor<f32>)>,
         outputs: Vec<String>,
         cancelled: Arc<AtomicBool>,
         reply: mpsc::SyncSender<(Result<Vec<DynValue>>, &'static str)>,
@@ -96,14 +95,13 @@ impl ModelSession {
                 while let Ok(request) = receiver.recv() {
                     match request {
                         Request::Run {
-                            name,
-                            input,
+                            inputs,
                             outputs,
                             cancelled,
                             reply,
                         } => {
                             let names: Vec<_> = outputs.iter().map(String::as_str).collect();
-                            let result = state.run(&name, &input, &names, &|| {
+                            let result = state.run_inputs(&inputs, &names, &|| {
                                 !cancelled.load(Ordering::Acquire)
                             });
                             let _ = reply.send((result, state.backend()));
@@ -138,12 +136,20 @@ impl ModelSession {
         outputs: &[&str],
         active: &impl Fn() -> bool,
     ) -> Result<Vec<DynValue>> {
+        self.run_inputs(vec![(name.into(), input)], outputs, active)
+    }
+
+    pub fn run_inputs(
+        &mut self,
+        inputs: Vec<(String, Tensor<f32>)>,
+        outputs: &[&str],
+        active: &impl Fn() -> bool,
+    ) -> Result<Vec<DynValue>> {
         check(active)?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let (reply, receiver) = mpsc::sync_channel(1);
         self.send(Request::Run {
-            name: name.into(),
-            input,
+            inputs,
             outputs: outputs.iter().map(|s| (*s).into()).collect(),
             cancelled: cancelled.clone(),
             reply,

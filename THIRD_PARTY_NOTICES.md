@@ -41,12 +41,17 @@ the application. Apple Silicon builds also bundle ONNX Runtime 1.29 and
 libraries and Metal kernels. Their licenses and the 1.29 third-party notices
 are included in `third-party/`. These components do not require Python.
 Model artifacts are included in the installer with models, or
-downloaded on first use by the standard installer: HTDemucs exported
-by [StemSplit](https://github.com/StemSplit/demucs-onnx) (MIT), based on
-[Meta Demucs](https://github.com/facebookresearch/demucs) (MIT), and
+downloaded on first use by the standard installer: the single four-stem BS-RoFormer ONNX graph exported
+by [Silverdaw](https://huggingface.co/silverdaw/bs-roformer-rhythm-onnx), based on
+[MSST](https://github.com/ZFTurbo/Music-Source-Separation-Training) and
+[lucidrains BS-RoFormer](https://github.com/lucidrains/BS-RoFormer) (MIT code), and
 [Spotify Basic Pitch](https://github.com/spotify/basic-pitch) (Apache-2.0).
 The model I/O and windowing implementation consults these upstream projects;
-note event decoding is implemented in Rust. Their licenses and the ONNX Runtime
+note event decoding is implemented in Rust. MSST and BS-RoFormer code licenses
+are retained as `MSST-LICENSE.txt` and `BS-RoFormer-LICENSE.txt`. The chosen
+export labels the weights MIT; an explicit upstream grant for redistributing
+the original checkpoint is still pending in MSST issue 249. No public model
+release is established by this development change. The licenses and ONNX Runtime
 third-party notices are retained in `third-party/` and copied into the local app
 bundle by `mixless-tools`. Pinned artifacts and inference boundaries are recorded
 in `.agents/reference/native-inference.md`. The old Python evaluation environment

@@ -13,7 +13,7 @@ imageType: image/png
 
 资料库数据库保存曲目元数据、分析结果、Cue 点和歌单顺序，偏好设置与 MIDI 映射保存在旁边。音频、封面、分轨与模型文件保留在磁盘上。
 
-mixless 不上传音频进行推理。标准版在首次使用时下载经过校验的 HTDemucs 和 Basic Pitch ONNX 模型。[内置模型版](https://mixless.alkinum.com/download?variant=bundled)携带相同模型，直接从应用中读取，无须下载，也不产生第二份模型缓存。分轨与音符推理在 Apple Silicon 上本地运行，不需要 Python 或云模型 API；Intel Mac 暂不支持这项推理。
+mixless 不上传音频进行推理。标准版在首次使用时下载经过校验的 BS-RoFormer 4stem 和 Basic Pitch ONNX 模型。[内置模型版](https://mixless.alkinum.com/download?variant=bundled)携带相同模型，直接从应用中读取，无须下载，也不产生第二份模型缓存。分轨与音符推理在 Apple Silicon 上本地运行，不需要 Python 或云模型 API；Intel Mac 暂不支持这项推理。
 
 ## 分轨存储格式
 
@@ -46,3 +46,13 @@ mixless 不上传音频进行推理。标准版在首次使用时下载经过校
 卸载 mixless 不会自动删除应用支持目录。移除该目录前，请备份需要保留的资料库和下载音频。Storage 设置提供查看本地数据位置的入口。
 
 完整网络行为见[隐私说明](/privacy)。
+
+## 下载命名与音频标签
+
+在偏好设置中，为新下载选择 **Artist - Title（艺人 - 曲名）**、**Title（曲名）** 或 **Recording ID（录音 ID）**。可读文件名会附带录音 ID，以区分同名版本。已有文件保持原名。
+
+mixless 会将已知的曲名、艺人、专辑、ISRC、BPM 和调性写入支持的音频文件。回写会保留其他标签，并在替换文件前验证音频流没有改变。只读或不支持的文件仍在曲库中保留这些元数据。
+
+stems 缓存使用音频流和解码配置的内容 hash，并包含模型身份。改名、移动文件或编辑标签可以复用 stems；音频或模型变化时重新生成。源文件与曲库包仍使用完整文件 hash 校验。
+
+BS-RoFormer 4stem 使用一个模型同时生成鼓、贝斯、其他乐器和人声四轨。音频分块、频谱转换与缓存由 Rust 在后台处理，推理默认使用 MLX，失败时降级到 CPU。全开时直接播放原曲；声部调整使用同一播放时钟，分离残差归入 Other。

@@ -13,7 +13,7 @@ imageType: image/png
 
 Your library database stores track metadata, analysis, cue points, and playlist order. Preferences and MIDI mappings live beside it. Audio, artwork, stem data, and model artifacts remain on your disk.
 
-mixless does not upload audio for inference. The standard installer downloads verified HTDemucs and Basic Pitch ONNX models on first use. The [installer with models](https://mixless.alkinum.com/download?variant=bundled) includes those same models and loads them directly from the app, without a model download or a second cached copy. Stem and note inference runs locally on Apple Silicon without Python or a cloud model API; Intel Macs do not support this inference.
+mixless does not upload audio for inference. The standard installer downloads verified BS-RoFormer 4stem and Basic Pitch ONNX models on first use. The [installer with models](https://mixless.alkinum.com/download?variant=bundled) includes those same models and loads them directly from the app, without a model download or a second cached copy. Stem and note inference runs locally on Apple Silicon without Python or a cloud model API; Intel Macs do not support this inference.
 
 ## Stem storage format
 
@@ -46,3 +46,13 @@ For a new Mac that will stay offline, transfer the installer with models and you
 Uninstalling mixless does not automatically remove its application support directory. Back up the library and any downloaded audio you want to keep before removing that directory. The Storage preferences provide controls for inspecting local data locations.
 
 See the [privacy page](/privacy) for a complete explanation of network activity.
+
+## Download names and audio tags
+
+In Preferences, choose **Artist - Title**, **Title**, or **Recording ID** for new downloads. Readable names include the recording ID to distinguish versions with the same name. Existing files keep their names.
+
+mixless writes known title, artist, album, ISRC, BPM and musical key to supported audio files. It preserves unrelated tags and verifies that the encoded audio is unchanged before replacing the file. Read-only or unsupported files retain their library metadata.
+
+Stem caches use a hash of the encoded audio and decoder configuration, together with the model identity. Renaming, moving or editing tags reuses the same stems; changing the audio or the model requires new stems. Full-file hashes continue to verify source files and packages.
+
+BS-RoFormer 4stem uses one model to predict drums, bass, other instruments and vocals together. Rust handles chunking, spectral transforms and caching on background workers. Inference uses MLX with CPU fallback. Unity playback uses the original audio; stem adjustments share one playback clock, with the separation residual included in Other.

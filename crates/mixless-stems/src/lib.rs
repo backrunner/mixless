@@ -19,6 +19,8 @@ mod runtime;
 mod separation;
 #[cfg(stems_ort)]
 mod session;
+#[cfg(stems_ort)]
+mod spectral;
 mod storage;
 #[cfg(stems_ort)]
 mod worker;
@@ -41,10 +43,24 @@ pub fn verify_bundled_models(dir: &std::path::Path) -> Result<()> {
     {
         let mut inference =
             Inference::load_with_cache(dir, Some(dir), false, None, &mut |_| {}, &|| true)?;
-        inference.separator.run(
-            "mix",
-            ort::value::Tensor::from_array(([1usize, 2, 343980], vec![0f32; 2 * 343980]))?,
-            &["stems"],
+        inference.separator.run_inputs(
+            vec![
+                (
+                    "spec_real".into(),
+                    ort::value::Tensor::from_array((
+                        [1usize, 2, spectral::BINS, spectral::STEPS],
+                        vec![0.; spectral::SPECTRUM],
+                    ))?,
+                ),
+                (
+                    "spec_imag".into(),
+                    ort::value::Tensor::from_array((
+                        [1usize, 2, spectral::BINS, spectral::STEPS],
+                        vec![0.; spectral::SPECTRUM],
+                    ))?,
+                ),
+            ],
+            &["out_spec_real", "out_spec_imag"],
             &|| true,
         )?;
         inference.notes.run(
@@ -138,7 +154,7 @@ pub struct Inference {
 pub struct Stems {
     /// Interleaved stereo at 44.1 kHz, in vocals / drums / instruments order.
     pub audio: [Vec<f32>; 3],
-    /// Independent model bass, also included in audio[2] for legacy evidence.
+    /// Independent bass output from the same graph, also included in audio[2] for evidence.
     pub bass: Vec<f32>,
     pub residual_rms: f32,
 }
@@ -170,8 +186,17 @@ impl Inference {
         progress: &mut impl FnMut(Progress),
         active: &impl Fn() -> bool,
     ) -> Result<Self> {
-        let backend = session::Backend::environment()?;
         let paths = models::ensure(model_dir, bundled, download, progress, active)?;
+        Self::from_paths(paths, coreml_cache, progress, active)
+    }
+
+    fn from_paths(
+        paths: models::Paths,
+        coreml_cache: Option<&Path>,
+        progress: &mut impl FnMut(Progress),
+        active: &impl Fn() -> bool,
+    ) -> Result<Self> {
+        let backend = session::Backend::environment()?;
         progress(Progress::Loading);
         // Each pooled session gets a share of the same CPU budget as basic
         // analysis; the override remains available for throughput benchmarks.
@@ -182,9 +207,9 @@ impl Inference {
             .clamp(1, 16);
         tracing::info!(threads = intra, "Loading stem inference sessions");
         let separator = worker::ModelSession::load(
-            &paths.separator,
+            &paths.separators[0],
             intra,
-            "separator",
+            "separator-bs-roformer",
             backend,
             coreml_cache,
             active,

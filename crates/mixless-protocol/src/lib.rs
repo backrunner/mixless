@@ -23,7 +23,9 @@ pub use event::*;
 pub use fx::*;
 pub use ids::*;
 pub use mixplan::*;
-pub use models::{ModelArtifact, STEM_MODELS, STEM_NOTES, STEM_SEPARATOR};
+pub use models::{
+    ModelArtifact, STEM_MODELS, STEM_NOTES, STEM_SEPARATOR, STEM_SEPARATORS, STEM_SEPARATOR_HASH,
+};
 pub use phrases::{
     drop_suspension, main_peak, major_peaks, peak_ranges, peak_units, percussion_release,
     released_peak,

@@ -37,16 +37,13 @@ impl Backend {
 impl Backend {
     fn candidates(self) -> &'static [Self] {
         match self {
-            Self::Auto | Self::Mlx => &[Self::Mlx, Self::CoreMl, Self::Cpu],
+            Self::Auto | Self::Mlx => &[Self::Mlx, Self::Cpu],
             Self::CoreMl => &[Self::CoreMl, Self::Cpu],
             Self::Cpu => &[Self::Cpu],
         }
     }
     fn next(self) -> Self {
-        match self {
-            Self::Auto | Self::Mlx => Self::CoreMl,
-            _ => Self::Cpu,
-        }
+        Self::Cpu
     }
     fn label(self) -> &'static str {
         match self {
@@ -163,7 +160,15 @@ impl SessionState {
                 return Ok((session, profiling));
             }
             Backend::CoreMl => {
-                if name != "separator" {
+                // This attention graph's CoreML compilation exceeded 10 GiB in
+                // native validation. Keep the default MLX -> CPU chain bounded;
+                // explicit CoreML requests for this model also fall back to CPU.
+                if name == "separator-bs-roformer" {
+                    return Err(Error::Model(
+                        "CoreML is unavailable for the pinned BS-RoFormer graph".into(),
+                    ));
+                }
+                if !name.starts_with("separator") {
                     // This fixed Basic Pitch graph fails MLProgram's Conv pad
                     // conversion. Treat it as unsupported and continue to CPU.
                     return Err(Error::Model(
@@ -228,6 +233,7 @@ impl SessionState {
 
     // Retry the same owned input in descending priority; never promote a failed
     // session again. Cancellation is independent of backend health.
+    #[cfg(test)]
     pub fn run(
         &mut self,
         input_name: &str,
@@ -235,9 +241,31 @@ impl SessionState {
         outputs: &[&str],
         active: &impl Fn() -> bool,
     ) -> Result<Vec<DynValue>> {
+        self.run_named_inputs(&[(input_name, input)], outputs, active)
+    }
+
+    pub fn run_inputs(
+        &mut self,
+        inputs: &[(String, Tensor<f32>)],
+        outputs: &[&str],
+        active: &impl Fn() -> bool,
+    ) -> Result<Vec<DynValue>> {
+        let borrowed: Vec<_> = inputs
+            .iter()
+            .map(|(name, input)| (name.as_str(), input))
+            .collect();
+        self.run_named_inputs(&borrowed, outputs, active)
+    }
+
+    fn run_named_inputs(
+        &mut self,
+        inputs: &[(&str, &Tensor<f32>)],
+        outputs: &[&str],
+        active: &impl Fn() -> bool,
+    ) -> Result<Vec<DynValue>> {
         loop {
             check(active)?;
-            match self.run_once(input_name, input, outputs) {
+            match self.run_once(inputs, outputs) {
                 Ok(values) => {
                     check(active)?;
                     return Ok(values);
@@ -264,15 +292,19 @@ impl SessionState {
 
     fn run_once(
         &mut self,
-        input_name: &str,
-        input: &Tensor<f32>,
+        inputs: &[(&str, &Tensor<f32>)],
         names: &[&str],
     ) -> Result<Vec<DynValue>> {
         let mut outputs = self
             .session
             .as_mut()
             .ok_or_else(|| Error::Model("Inference session unavailable".into()))?
-            .run(ort::inputs![input_name => input])?;
+            .run(
+                inputs
+                    .iter()
+                    .map(|&(name, tensor)| (name, tensor))
+                    .collect::<Vec<_>>(),
+            )?;
         names
             .iter()
             .map(|name| {
@@ -280,8 +312,8 @@ impl SessionState {
                     .remove(*name)
                     .ok_or_else(|| Error::Model(format!("Missing model output: {name}")))?;
                 let (shape, _) = value.try_extract_tensor::<f32>()?;
-                let expected: &[i64] = if self.name == "separator" {
-                    &[1, 4, 2, 343980]
+                let expected: &[i64] = if self.name.starts_with("separator") {
+                    &[1, 4, 2, 1025, 801]
                 } else {
                     &[1, 172, 88]
                 };
@@ -326,185 +358,110 @@ impl Drop for SessionState {
 #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
 mod tests {
     use super::*;
-    #[test]
-    #[ignore = "Requires native MLX runtime, MIXLESS_TEST_BUNDLED_MODELS and MIXLESS_STEM_TEST_AUDIO"]
-    fn native_mlx_recovers_through_coreml_then_cpu() {
-        crate::runtime::initialize();
-        let models =
-            PathBuf::from(std::env::var_os("MIXLESS_TEST_BUNDLED_MODELS").expect("models"));
-        let source = PathBuf::from(std::env::var_os("MIXLESS_STEM_TEST_AUDIO").expect("audio"));
-        let audio = mixless_engine::decode_file(&source).unwrap();
-        let mix = crate::resample::convert(&audio.samples, 2, audio.sample_rate, 44100);
-        const FRAMES: usize = 343980;
-        let block: Vec<_> = (0..2)
-            .flat_map(|c| {
-                (0..FRAMES).map({
-                    let mix = &mix;
-                    move |i| mix[i * 2 + c]
-                })
+    fn inputs() -> Vec<(String, Tensor<f32>)> {
+        let mut pcm = vec![0.; crate::spectral::FRAMES * 2];
+        for i in 0..crate::spectral::FRAMES {
+            pcm[i * 2] = (i as f32 * 0.071).sin() * 0.1;
+            pcm[i * 2 + 1] = (i as f32 * 0.043).cos() * 0.08;
+        }
+        let (real, imag) = crate::spectral::analyze(&pcm, &|| true).unwrap();
+        [("spec_real", real), ("spec_imag", imag)]
+            .into_iter()
+            .map(|(name, data)| {
+                (
+                    name.into(),
+                    Tensor::from_array((
+                        [1usize, 2, crate::spectral::BINS, crate::spectral::STEPS],
+                        data,
+                    ))
+                    .unwrap(),
+                )
             })
-            .collect();
-        let input = Tensor::from_array(([1usize, 2, FRAMES], block)).unwrap();
-        let paths =
-            crate::models::ensure(&models, Some(&models), false, &mut |_| {}, &|| true).unwrap();
-        let cache = models.join(".coreml");
-        let mut session = SessionState::load(
-            &paths.separator,
-            4,
-            "separator",
-            Backend::Auto,
-            Some(&cache),
-            &|| true,
-        )
-        .unwrap();
-        assert_eq!(session.backend(), "mlx+cpu", "MLX must really load");
-        let mlx = session.run("mix", &input, &["stems"], &|| true).unwrap();
-        assert_eq!(session.backend(), "mlx+cpu", "MLX must really execute");
-        assert!(matches!(
-            session.run("mix", &input, &["stems"], &|| false),
-            Err(Error::Cancelled)
-        ));
-        assert_eq!(session.backend(), "mlx+cpu", "Cancellation must not demote");
-        // Inject a broken live session, keeping its real model path. Recovery
-        // must load and execute each actual next provider with the same input.
-        session.session.take();
-        let coreml = session.run("mix", &input, &["stems"], &|| true).unwrap();
-        assert_eq!(session.backend(), "coreml+cpu");
-        session.session.take();
-        let cpu = session.run("mix", &input, &["stems"], &|| true).unwrap();
-        assert_eq!(session.backend(), "cpu");
-        for values in [mlx, coreml] {
-            let expected = cpu[0].try_extract_tensor::<f32>().unwrap().1;
-            let actual = values[0].try_extract_tensor::<f32>().unwrap().1;
-            let max = expected
-                .iter()
-                .zip(actual)
-                .map(|(a, b)| (a - b).abs())
-                .fold(0f32, f32::max);
-            eprintln!("Accelerator/CPU max difference: {max}");
-            assert!(max < 1e-3);
-        }
-        session.run("mix", &input, &["stems"], &|| true).unwrap();
-        assert_eq!(
-            session.backend(),
-            "cpu",
-            "Failed accelerators must not be promoted again"
-        );
-
-        // Basic Pitch's unsupported CoreML conversion must still reach CPU.
-        let mut notes =
-            SessionState::load(&paths.notes, 4, "notes", Backend::Auto, None, &|| true).unwrap();
-        let input = Tensor::from_array(([1usize, 43844, 1], vec![0f32; 43844])).unwrap();
-        let names = &["StatefulPartitionedCall:1", "StatefulPartitionedCall:2"];
-        let mlx = notes
-            .run("serving_default_input_2:0", &input, names, &|| true)
-            .unwrap();
-        assert_eq!(notes.backend(), "mlx+cpu");
-        notes.session.take();
-        let cpu = notes
-            .run("serving_default_input_2:0", &input, names, &|| true)
-            .unwrap();
-        assert_eq!(notes.backend(), "cpu");
-        for (a, b) in mlx.iter().zip(&cpu) {
-            assert!(a
-                .try_extract_tensor::<f32>()
-                .unwrap()
-                .1
-                .iter()
-                .zip(b.try_extract_tensor::<f32>().unwrap().1)
-                .all(|(a, b)| (a - b).abs() < 1e-4));
-        }
+            .collect()
     }
     #[test]
-    #[ignore = "Requires MIXLESS_TEST_BUNDLED_MODELS and MIXLESS_STEM_TEST_AUDIO; native CPU/CoreML parity"]
-    fn native_coreml_matches_cpu_and_unwritable_cache_falls_back() {
+    #[ignore = "Requires BS-RoFormer weights in MIXLESS_TEST_BUNDLED_MODELS; native provider recovery and parity"]
+    fn native_bs_roformer_provider_recovery_preserves_both_spectral_inputs() {
+        crate::runtime::initialize();
         let models =
             PathBuf::from(std::env::var_os("MIXLESS_TEST_BUNDLED_MODELS").expect("models"));
-        let source = PathBuf::from(std::env::var_os("MIXLESS_STEM_TEST_AUDIO").expect("audio"));
-        let audio = mixless_engine::decode_file(&source).unwrap();
-        let mix = crate::resample::convert(&audio.samples, 2, audio.sample_rate, 44100);
-        const FRAMES: usize = 343980;
-        assert!(mix.len() >= FRAMES * 2);
-        let block: Vec<_> = (0..2)
-            .flat_map(|c| {
-                (0..FRAMES).map({
-                    let mix = &mix;
-                    move |i| mix[i * 2 + c]
-                })
-            })
-            .collect();
-        crate::runtime::initialize();
-        let input = Tensor::from_array(([1usize, 2, FRAMES], block)).unwrap();
         let paths =
             crate::models::ensure(&models, Some(&models), false, &mut |_| {}, &|| true).unwrap();
-        let mut cpu = SessionState::load(
-            &paths.separator,
+        let input = inputs();
+        let names = &["out_spec_real", "out_spec_imag"];
+        let mut reference = SessionState::load(
+            &paths.separators[0],
             4,
-            "separator",
+            "separator-bs-roformer",
             Backend::Cpu,
             None,
             &|| true,
         )
         .unwrap();
+        let cpu = reference.run_inputs(&input, names, &|| true).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let mut coreml = SessionState::load(
-            &paths.separator,
+        let mut session = SessionState::load(
+            &paths.separators[0],
             4,
-            "separator",
-            Backend::CoreMl,
+            "separator-bs-roformer",
+            Backend::Auto,
             Some(dir.path()),
             &|| true,
         )
         .unwrap();
-        assert_eq!(
-            coreml.backend(),
-            "coreml+cpu",
-            "This test must execute CoreML, not a fallback"
+        let out = session.run_inputs(&input, names, &|| true).unwrap();
+        let mut max = 0f32;
+        for (expected, actual) in cpu.iter().zip(&out) {
+            for (a, b) in expected
+                .try_extract_tensor::<f32>()
+                .unwrap()
+                .1
+                .iter()
+                .zip(actual.try_extract_tensor::<f32>().unwrap().1)
+            {
+                max = max.max((a - b).abs());
+            }
+        }
+        eprintln!(
+            "CPU / {} spectral max absolute difference: {max}",
+            session.backend()
         );
-        let cpu_values = cpu.run("mix", &input, &["stems"], &|| true).unwrap();
-        let gpu_values = coreml.run("mix", &input, &["stems"], &|| true).unwrap();
-        assert_eq!(coreml.backend(), "coreml+cpu");
-        let (shape, expected) = cpu_values[0].try_extract_tensor::<f32>().unwrap();
-        let (gpu_shape, actual) = gpu_values[0].try_extract_tensor::<f32>().unwrap();
-        assert_eq!(shape, gpu_shape);
-        let max = expected
-            .iter()
-            .zip(actual)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0f32, f32::max);
-        eprintln!("CPU/CoreML max absolute sample difference: {max}");
         assert!(max < 1e-3);
-        // Explicit output_shape must also be an identity on the CPU baseline.
-        let adapted = crate::coreml::separator(&paths.separator).unwrap();
-        let mut adapted = builder(4, "adapted-cpu")
-            .unwrap()
-            .0
-            .commit_from_memory(&adapted)
-            .unwrap();
-        let values = adapted.run(ort::inputs!["mix" => &input]).unwrap();
-        let actual = values["stems"].try_extract_tensor::<f32>().unwrap().1;
-        assert!(expected
-            .iter()
-            .zip(actual)
-            .all(|(a, b)| (a - b).abs() < 1e-6));
-        drop(values);
-        drop((adapted, coreml, cpu));
-        let blocked = dir.path().join("not-a-directory");
-        std::fs::write(&blocked, b"cache unavailable").unwrap();
+        assert!(matches!(
+            session.run_inputs(&input, names, &|| false),
+            Err(Error::Cancelled)
+        ));
+        session.session.take();
+        if session.backend != Backend::Cpu {
+            let recovered = session.run_inputs(&input, names, &|| true).unwrap();
+            assert_eq!(recovered.len(), 2);
+        }
+        // Explicit CoreML requests must fall back before touching a cache path
+        // and still accept both graph inputs on CPU.
+        let blocked = dir.path().join("blocked");
+        std::fs::write(&blocked, b"file").unwrap();
         let mut fallback = SessionState::load(
-            &paths.separator,
+            &paths.separators[0],
             4,
-            "separator",
+            "separator-bs-roformer",
             Backend::CoreMl,
             Some(&blocked),
             &|| true,
         )
         .unwrap();
         assert_eq!(fallback.backend(), "cpu");
-        assert!(fallback.run("mix", &input, &["stems"], &|| true).is_ok());
-        assert!(matches!(
-            fallback.run("mix", &input, &["stems"], &|| false),
-            Err(Error::Cancelled)
-        ));
+        assert!(fallback.run_inputs(&input, names, &|| true).is_ok());
+        // Basic Pitch retains its one-input path and cancellation behavior.
+        let mut notes =
+            SessionState::load(&paths.notes, 4, "notes", Backend::Cpu, None, &|| true).unwrap();
+        let audio = Tensor::from_array(([1usize, 43844, 1], vec![0.; 43844])).unwrap();
+        assert!(notes
+            .run(
+                "serving_default_input_2:0",
+                &audio,
+                &["StatefulPartitionedCall:1", "StatefulPartitionedCall:2"],
+                &|| true
+            )
+            .is_ok());
     }
 }

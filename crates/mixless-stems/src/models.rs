@@ -11,14 +11,14 @@ use std::{
     time::Duration,
 };
 
-pub const SEPARATOR_HASH: &str = mixless_protocol::STEM_SEPARATOR.sha256;
+pub const SEPARATOR_HASH: &str = mixless_protocol::STEM_SEPARATOR_HASH;
 pub const NOTES_HASH: &str = mixless_protocol::STEM_NOTES.sha256;
 #[cfg(stems_ort)]
-use mixless_protocol::{ModelArtifact, STEM_NOTES, STEM_SEPARATOR};
+use mixless_protocol::{ModelArtifact, STEM_NOTES, STEM_SEPARATORS};
 
 #[cfg(stems_ort)]
 pub struct Paths {
-    pub separator: PathBuf,
+    pub separators: Vec<PathBuf>,
     pub notes: PathBuf,
 }
 
@@ -35,14 +35,20 @@ pub fn ensure(
     // Never put locks or temporary downloads inside the bundle.
     if let Some(bundled) = bundled {
         return Ok(Paths {
-            separator: bundled_artifact(bundled, &STEM_SEPARATOR)?,
+            separators: STEM_SEPARATORS
+                .iter()
+                .map(|model| bundled_artifact(bundled, model))
+                .collect::<Result<_>>()?,
             notes: bundled_artifact(bundled, &STEM_NOTES)?,
         });
     }
     std::fs::create_dir_all(dir)?;
     let _lock = crate::lock::acquire(&dir.join(".models.lock"), active)?;
     Ok(Paths {
-        separator: artifact(dir, &STEM_SEPARATOR, download, progress, active)?,
+        separators: STEM_SEPARATORS
+            .iter()
+            .map(|model| artifact(dir, model, download, progress, active))
+            .collect::<Result<_>>()?,
         notes: artifact(dir, &STEM_NOTES, download, progress, active)?,
     })
 }
@@ -151,9 +157,19 @@ fn artifact(
 mod tests {
     use super::*;
     #[test]
+    fn cache_identity_addresses_one_four_stem_graph() {
+        assert_eq!(mixless_protocol::STEM_SEPARATORS.len(), 1);
+        assert_eq!(SEPARATOR_HASH, mixless_protocol::STEM_SEPARATOR.sha256);
+    }
+
+    #[test]
     fn damaged_weights_never_reach_runtime_or_require_network_in_offline_mode() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("htdemucs-fp16.onnx"), b"broken").unwrap();
+        std::fs::write(
+            dir.path().join(mixless_protocol::STEM_SEPARATOR.name),
+            b"broken",
+        )
+        .unwrap();
         assert!(ensure(dir.path(), None, false, &mut |_| {}, &|| true).is_err());
         assert!(matches!(
             ensure(dir.path(), None, true, &mut |_| {}, &|| false),
