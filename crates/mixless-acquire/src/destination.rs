@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// A single, portable folder component below the user's download directory.
@@ -91,5 +92,56 @@ mod tests {
         assert_eq!(playlist_download_dir(root, "  Set...  "), root.join("Set"));
         let long = playlist_download_dir(root, &"音乐🎧".repeat(100));
         assert!(long.file_name().unwrap().to_str().unwrap().len() <= 180);
+    }
+}
+
+/// Naming applies to newly downloaded files. Remote IDs remain in provenance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadFilename {
+    #[default]
+    ArtistTitle,
+    Title,
+    RecordingId,
+}
+impl DownloadFilename {
+    pub fn filename(self, job: &crate::ResolveJob) -> String {
+        let label = match self {
+            Self::ArtistTitle => format!("{} - {}", job.artist, job.title),
+            Self::Title => job.title.clone(),
+            Self::RecordingId => return format!("{}.m4a", job.spotify_id),
+        };
+        let safe = playlist_download_dir(Path::new(""), &label);
+        // The ID distinguishes recordings with identical titles, including
+        // collisions introduced by sanitizing or truncating Unicode names.
+        format!("{} [{}].m4a", safe.display(), job.spotify_id)
+    }
+}
+
+#[cfg(test)]
+mod filename_tests {
+    use super::*;
+    #[test]
+    fn readable_names_are_portable_and_distinguish_same_titles() {
+        let mut job = crate::ResolveJob {
+            spotify_id: "a".repeat(22),
+            title: "../../音乐?".repeat(100),
+            artist: "Artist".into(),
+            duration_ms: 1,
+            isrc: None,
+        };
+        for naming in [
+            DownloadFilename::ArtistTitle,
+            DownloadFilename::Title,
+            DownloadFilename::RecordingId,
+        ] {
+            let name = naming.filename(&job);
+            assert_eq!(Path::new(&name).components().count(), 1);
+            assert!(name.len() < 255);
+            let first = name;
+            job.spotify_id = "b".repeat(22);
+            assert_ne!(first, naming.filename(&job));
+            job.spotify_id = "a".repeat(22);
+        }
     }
 }

@@ -256,6 +256,38 @@ impl Preferences {
                             .text_color(theme::MUTED)
                             .child("New stems only."),
                     ),
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .child(div().text_size(px(12.)).child("Download filename"))
+                    .child(self.segmented(
+                        "download-filename",
+                        &[
+                            (
+                                mixless_acquire::DownloadFilename::ArtistTitle,
+                                "Artist - Title",
+                            ),
+                            (mixless_acquire::DownloadFilename::Title, "Title"),
+                            (
+                                mixless_acquire::DownloadFilename::RecordingId,
+                                "Recording ID",
+                            ),
+                        ],
+                        settings.download_filename,
+                        |s, value| s.save_general(|p| p.download_filename = value),
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .line_height(px(16.))
+                            .text_color(theme::MUTED)
+                            .child("New downloads only. Readable names include the recording ID."),
+                    ),
                 row(
                     "Library & preferences",
                     self.button(

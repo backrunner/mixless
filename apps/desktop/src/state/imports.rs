@@ -378,7 +378,9 @@ fn import_spotify_blocking(
         let fetch = |job: &mixless_acquire::ResolveJob| {
             // Local-only imports work even if no downloader is installed.
             match provider.get_or_init(YoutubeMusicAcquire::detect) {
-                Ok(provider) => provider.fetch(job, &dest),
+                Ok(provider) => {
+                    provider.fetch_named(job, &dest, core.settings.get().download_filename)
+                }
                 Err(error) => Err(mixless_acquire::AcquireError::Msg(error.to_string())),
             }
         };
@@ -411,7 +413,9 @@ pub(super) fn retry_spotify_blocking(
         |job, name| {
             let dest = mixless_acquire::playlist_download_dir(&core.download_dir(), name);
             match provider.get_or_init(YoutubeMusicAcquire::detect) {
-                Ok(provider) => provider.fetch(job, &dest),
+                Ok(provider) => {
+                    provider.fetch_named(job, &dest, core.settings.get().download_filename)
+                }
                 Err(error) => Err(mixless_acquire::AcquireError::Msg(error.to_string())),
             }
         },

@@ -3730,6 +3730,7 @@ name = "mixless-acquire-yt"
 version = "0.1.0-beta.4"
 dependencies = [
  "libc",
+ "lofty",
  "mixless-acquire",
  "mixless-net",
  "mixless-protocol",

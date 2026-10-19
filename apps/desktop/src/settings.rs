@@ -48,6 +48,7 @@ pub struct Settings {
     pub automix_follow_playlist: bool,
     /// Custom folder for downloaded audio. None uses the managed data dir.
     pub download_dir: Option<PathBuf>,
+    pub download_filename: mixless_acquire::DownloadFilename,
 }
 
 impl Default for Settings {
@@ -78,6 +79,7 @@ impl Default for Settings {
             live_moves: LiveMoves::Subtle,
             automix_follow_playlist: true,
             download_dir: None,
+            download_filename: Default::default(),
         }
     }
 }

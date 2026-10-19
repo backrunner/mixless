@@ -2,6 +2,7 @@
 //! identity/duration gates. Child processes have one bounded job deadline.
 use mixless_acquire::{candidate_score, primary_artist, AcquireError, ResolveJob};
 use serde_json::Value;
+mod metadata;
 mod pacing;
 use std::{
     ffi::OsString,
@@ -54,6 +55,14 @@ impl YoutubeMusicAcquire {
         })
     }
     pub fn fetch(&self, job: &ResolveJob, dest: &Path) -> Result<PathBuf, AcquireError> {
+        self.fetch_named(job, dest, mixless_acquire::DownloadFilename::RecordingId)
+    }
+    pub fn fetch_named(
+        &self,
+        job: &ResolveJob,
+        dest: &Path,
+        naming: mixless_acquire::DownloadFilename,
+    ) -> Result<PathBuf, AcquireError> {
         if job.spotify_id.len() != 22
             || !job.spotify_id.bytes().all(|b| b.is_ascii_alphanumeric())
             || job.duration_ms == 0
@@ -64,7 +73,7 @@ impl YoutubeMusicAcquire {
         let dest = dest.canonicalize().map_err(|e| err(e.to_string()))?;
         // Each TempDir owns its own cleanup. A similarly named directory
         // may belong to another active download or to the user.
-        let final_path = dest.join(format!("{}.m4a", job.spotify_id));
+        let final_path = dest.join(naming.filename(job));
         // The importer revalidates the actual decoder duration even on reuse.
         if final_path.is_file() && fs::metadata(&final_path).is_ok_and(|m| m.len() > 0) {
             return Ok(final_path);
@@ -245,6 +254,7 @@ impl YoutubeMusicAcquire {
         {
             return Err(err("downloader returned an invalid audio file"));
         }
+        metadata::write(&path, job)?;
         // Stable remote IDs avoid non-ASCII title collisions and prefix matches
         // accidentally loading a thumbnail or JSON sidecar as audio. Staging
         // lives inside `dest`, so rename stays on one volume and also works on
@@ -253,10 +263,7 @@ impl YoutubeMusicAcquire {
             .or_else(|_| fs::hard_link(&path, &final_path))
             .map_err(|e| err(format!("publish audio: {e}")))?;
         let provenance = serde_json::json!({"spotify_id":job.spotify_id,"source_url":format!("https://www.youtube.com/watch?v={}",chosen.id),"title":chosen.title,"artist":chosen.artist,"duration_ms":chosen.duration_ms,"score":chosen.score});
-        let _ = fs::write(
-            dest.join(format!("{}.json", job.spotify_id)),
-            provenance.to_string(),
-        );
+        let _ = fs::write(final_path.with_extension("json"), provenance.to_string());
         Ok(final_path.to_path_buf())
     }
     fn base_args(&self) -> Vec<OsString> {
@@ -699,6 +706,27 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake-yt-dlp");
+        let fixture = dir.path().join("fixture.m4a");
+        // A minimal MP4 tag container keeps this process/metadata regression
+        // independent of FFmpeg. Actual decoding is covered by audio imports.
+        let atom = |kind: &[u8; 4], data: &[u8]| {
+            let mut bytes = ((data.len() + 8) as u32).to_be_bytes().to_vec();
+            bytes.extend_from_slice(kind);
+            bytes.extend_from_slice(data);
+            bytes
+        };
+        let mut mdhd = vec![0; 12]; // version/flags and creation/modification times
+        mdhd.extend_from_slice(&44100u32.to_be_bytes());
+        mdhd.extend_from_slice(&4410u32.to_be_bytes());
+        mdhd.extend_from_slice(&[0; 4]); // language and reserved
+        let mut hdlr = vec![0; 8];
+        hdlr.extend_from_slice(b"soun");
+        hdlr.extend_from_slice(&[0; 13]);
+        let mut mdia = atom(b"mdhd", &mdhd);
+        mdia.extend(atom(b"hdlr", &hdlr));
+        let mut container = atom(b"ftyp", b"M4A \0\0\0\0M4A isom");
+        container.extend(atom(b"moov", &atom(b"trak", &atom(b"mdia", &mdia))));
+        fs::write(&fixture, container).unwrap();
         fs::write(
             &script,
             r#"#!/bin/sh
@@ -715,7 +743,7 @@ case "$format" in
 esac
 path="${template%.*}.m4a"
 [ "$template" = 'audio.%(ext)s' ] || exit 2
-printf 'fixture audio' > "$path"
+cp "$(dirname "$0")/fixture.m4a" "$path"
 printf '%s\n' "$path"
 "#,
         )
@@ -747,7 +775,11 @@ printf '%s\n' "$path"
             )
             .unwrap();
         assert_eq!(path, final_path);
-        assert_eq!(fs::read(&path).unwrap(), b"fixture audio");
+        use lofty::{file::TaggedFileExt, prelude::Accessor};
+        let tagged = lofty::probe::Probe::open(&path).unwrap().read().unwrap();
+        let tag = tagged.primary_tag().unwrap();
+        assert_eq!(tag.title().as_deref(), Some(job.title.as_str()));
+        assert_eq!(tag.artist().as_deref(), Some(job.artist.as_str()));
         assert!(dest.join(format!("{}.json", job.spotify_id)).is_file());
         assert_eq!(
             fs::read_to_string(dir.path().join("formats"))

@@ -1,7 +1,7 @@
 mod destination;
 pub mod imports;
 pub mod local_paths;
-pub use destination::playlist_download_dir;
+pub use destination::{playlist_download_dir, DownloadFilename};
 mod matching;
 pub use matching::{
     candidate_score, could_match, job_key, local_match, normalize, primary_artist, track_key,

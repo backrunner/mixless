@@ -139,3 +139,43 @@ fn jog_sensitivity_fits_and_persists(cx: &mut TestAppContext) {
         click(cx, "jog-sensitivity-2");
     }
 }
+
+#[gpui::test]
+fn download_filename_choice_fits_and_persists(cx: &mut TestAppContext) {
+    use mixless_acquire::DownloadFilename;
+    let (_temp, view, cx) = fixture(cx);
+    view.update(cx, |s, cx| {
+        s.tab = Tab::General;
+        cx.notify();
+    });
+    for (width, height) in [(940., 820.), (720., 540.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.run_until_parked();
+        let content = cx.debug_bounds("settings-content").unwrap();
+        let choice = cx.debug_bounds("download-filename-switcher").unwrap();
+        assert!(choice.left() >= content.left() && choice.right() <= content.right());
+        if choice.bottom() > content.bottom() {
+            scroll(
+                cx,
+                content.center(),
+                f32::from(content.bottom() - choice.bottom()) - 60.,
+            );
+        }
+        for (id, value) in [
+            ("download-filename-1", DownloadFilename::Title),
+            ("download-filename-2", DownloadFilename::RecordingId),
+            ("download-filename-0", DownloadFilename::ArtistTitle),
+        ] {
+            click(cx, id);
+            view.read_with(cx, |s, _| {
+                assert_eq!(s.core.settings.get().download_filename, value);
+                assert_eq!(
+                    crate::settings::SettingsStore::load(s.core.settings.path.clone())
+                        .get()
+                        .download_filename,
+                    value
+                );
+            });
+        }
+    }
+}
