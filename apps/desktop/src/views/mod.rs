@@ -1,6 +1,8 @@
 pub mod about;
 mod audio;
 mod automix;
+#[cfg(debug_assertions)]
+pub(crate) use automix::preview::run as preview_automix;
 pub mod deck;
 mod ellipsized_text;
 pub mod library;

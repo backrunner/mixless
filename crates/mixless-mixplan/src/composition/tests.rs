@@ -253,3 +253,85 @@ fn a_loud_chord_reveal_gets_time_instead_of_an_instant_power_handoff() {
     }
     assert!(maximum < 0.5, "instrument gain changed at {maximum}/s");
 }
+
+#[test]
+fn synchronized_stems_describe_the_actual_track_fade_or_cut() {
+    for scale in [0.25, 1., 2.] {
+        let (a, b, mut p) = fixture(scale);
+        let frames = evidence::frames(&p, &ctx(&a, &b)).unwrap();
+        let mut shape = [[Fade { start: 6., end: 8. }; 4]; 2];
+        render::apply(&mut p, &frames, &shape).unwrap();
+        assert_eq!(
+            p.summary.as_ref().unwrap().strategy,
+            StrategyId::PhraseBlend
+        );
+        assert_eq!(p.stages[0].label, "Wait for incoming entry");
+        assert_eq!(p.stages[0].end_bar, 6.);
+        assert_eq!(p.stages[1].label, "Crossfade tracks");
+        for s in 0..4 {
+            assert!((heard(&p, 0, s, 7.) - 0.5).abs() < 1e-5);
+            assert!((heard(&p, 1, s, 7.) - 0.5).abs() < 1e-5);
+        }
+        shape[1] = [Fade { start: 8., end: 9. }; 4];
+        render::apply(&mut p, &frames, &shape).unwrap();
+        assert_eq!(
+            p.summary.as_ref().unwrap().strategy,
+            StrategyId::PhraseBlend
+        );
+        assert_eq!(p.stages[1].label, "Fade between tracks");
+        shape = [[Fade { start: 8., end: 8. }; 4]; 2];
+        render::apply(&mut p, &frames, &shape).unwrap();
+        assert_eq!(p.summary.as_ref().unwrap().strategy, StrategyId::DryCut);
+        assert_eq!(p.stages[1].label, "Switch tracks");
+    }
+}
+
+#[test]
+fn a_silent_lead_in_does_not_disqualify_a_later_real_stem_exchange() {
+    let (a, b, mut p) = fixture(1.);
+    let frames = evidence::frames(&p, &ctx(&a, &b)).unwrap();
+    let mut shape = [[Fade {
+        start: 8.,
+        end: 10.,
+    }; 4]; 2];
+    shape[0][1] = Fade { start: 6., end: 7. };
+    shape[1][1] = shape[0][1];
+    render::apply(&mut p, &frames, &shape).unwrap();
+    assert_eq!(p.summary.as_ref().unwrap().strategy, StrategyId::StemSwap);
+    for s in 0..4 {
+        assert_eq!(heard(&p, 1, s, 4.), 0.);
+    }
+    assert_eq!(
+        p.stage_at_elapsed(8.).unwrap().label,
+        "Wait for incoming entry"
+    );
+    assert!(heard(&p, 1, 1, 7.5) > 0.99);
+    assert!(heard(&p, 0, 2, 7.5) > 0.99);
+    assert_eq!(heard(&p, 1, 2, 7.5), 0.);
+}
+
+#[test]
+fn moving_an_absent_vocal_does_not_turn_a_track_blend_into_a_stem_swap() {
+    let (mut a, mut b, mut p) = fixture(1.);
+    for t in [&mut a, &mut b] {
+        for f in &mut t.stems.as_mut().unwrap().frames {
+            f.vocal_activity = 0.;
+            f.band_db[0] = [-120.; 3];
+        }
+    }
+    let frames = evidence::frames(&p, &ctx(&a, &b)).unwrap();
+    let mut shape = [[Fade { start: 6., end: 8. }; 4]; 2];
+    shape[0][0] = Fade {
+        start: 11.,
+        end: 11.25,
+    };
+    shape[1][0] = Fade {
+        start: 11.25,
+        end: 11.5,
+    };
+    render::apply(&mut p, &frames, &shape).unwrap();
+    assert_eq!(
+        p.summary.as_ref().unwrap().strategy,
+        StrategyId::PhraseBlend
+    );
+}

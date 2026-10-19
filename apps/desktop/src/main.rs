@@ -38,6 +38,10 @@ const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
     #[cfg(debug_assertions)]
+    if views::preview_automix() {
+        return;
+    }
+    #[cfg(debug_assertions)]
     if preferences::preview::run() {
         return;
     }

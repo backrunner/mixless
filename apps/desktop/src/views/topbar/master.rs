@@ -10,6 +10,7 @@ impl UiState {
     pub(super) fn render_master_controls(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
         let mut panel = gpui::div()
             .id("master-control")
+            .debug_selector(|| "master-control".into())
             .flex()
             .flex_none()
             .items_center()

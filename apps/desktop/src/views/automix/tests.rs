@@ -47,6 +47,7 @@ fn transition_details_preserve_windows_stages_and_playback_status() {
         let ready = Transition::new(out, &plan(), &snapshot);
         assert_eq!(ready.name, "Phrase blend");
         assert_eq!(ready.phase, "Starts in 0:10");
+        assert_eq!(ready.status, "In 0:10");
         assert_eq!(ready.windows, ["0:10–0:18", "0:02–0:10"]);
         assert_eq!(ready.stages.len(), 3);
         assert!(ready.stages.iter().all(|s| !s.contains('·')));
@@ -56,10 +57,93 @@ fn transition_details_preserve_windows_stages_and_playback_status() {
         snapshot.automix_progress = 0.625;
         let active = Transition::new(out, &plan(), &snapshot);
         assert_eq!(active.phase, "Transition 62%");
+        assert_eq!(active.status, "Phrase blend");
         assert_eq!(active.active_stage, Some(1));
         assert!(active.echo.is_some());
         snapshot.automix_paused = true;
         assert_eq!(Transition::new(out, &plan(), &snapshot).phase, "Paused");
+        assert_eq!(Transition::new(out, &plan(), &snapshot).status, "Paused");
+    }
+}
+
+#[test]
+fn stem_swap_status_follows_waiting_exchange_and_completion_on_either_deck() {
+    let mut plan = plan();
+    plan.summary.as_mut().unwrap().strategy = S::StemSwap;
+    for out in [DeckId::A, DeckId::B] {
+        let incoming = 1 - out.index();
+        let mut snapshot = EngineSnapshot::default();
+        snapshot.decks[out.index()].frame = 12 * 44_100;
+        snapshot.automix_progress = 0.25;
+        snapshot.decks[incoming].stems_ready = true;
+        snapshot.decks[incoming].playing = true;
+        snapshot.decks[incoming].stem_gain = [0.; 4];
+        let waiting = Transition::new(out, &plan, &snapshot);
+        assert_eq!(waiting.status, "Waiting");
+        assert_eq!(
+            waiting.phase,
+            format!(
+                "Waiting for {} entry",
+                label(if out == DeckId::A {
+                    DeckId::B
+                } else {
+                    DeckId::A
+                })
+            )
+        );
+        assert_eq!(
+            waiting.name, "Stem swap",
+            "detail retains the scheduled technique"
+        );
+        snapshot.decks[incoming].stem_gain[1] = 1.;
+        assert_eq!(Transition::new(out, &plan, &snapshot).status, "Stem swap");
+        snapshot.decks[incoming].fader = 0.;
+        assert_eq!(Transition::new(out, &plan, &snapshot).status, "Waiting");
+        snapshot.decks[incoming].fader = 1.;
+        snapshot.decks[out.index()].fader = 0.;
+        assert_eq!(Transition::new(out, &plan, &snapshot).status, "Finishing");
+        snapshot.automix_paused = true;
+        assert_eq!(Transition::new(out, &plan, &snapshot).status, "Paused");
+    }
+}
+
+#[gpui::test]
+fn lifecycle_status_keeps_the_entire_master_control_inside_the_toolbar(cx: &mut TestAppContext) {
+    struct Header(gpui::Entity<UiState>);
+    impl gpui::Render for Header {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            self.0.update(cx, |s, cx| {
+                s.render_topbar(window.viewport_size().width.into(), cx)
+            })
+        }
+    }
+    let (_temp, core, _) = crate::automix::tests::fixture();
+    let state = cx.new(|cx| UiState::new(core, cx));
+    let (header, cx) = cx.add_window_view(|_, _| Header(state.clone()));
+    for width in [1180., 1280., 1440.] {
+        for scene in 0..5 {
+            state.update(cx, |s, _| {
+                s.automix_active = true;
+                s.automix_plan = Some((DeckId::B, plan().into()));
+                s.snapshot = EngineSnapshot::default();
+                s.snapshot.decks[1].frame = if scene == 0 { 0 } else { 12 * 44_100 };
+                s.snapshot.decks[0].fader = if scene == 1 { 0. } else { 1. };
+                s.snapshot.decks[1].fader = if scene == 3 { 0. } else { 1. };
+                s.snapshot.automix_paused = scene == 4;
+            });
+            header.update(cx, |_, cx| cx.notify());
+            cx.simulate_resize(size(px(width), px(900.)));
+            cx.run_until_parked();
+            let master = cx.debug_bounds("master-control").unwrap();
+            assert!(
+                master.right() <= px(width - 8.),
+                "width={width}, scene={scene}, master={master:?}"
+            );
+        }
     }
 }
 

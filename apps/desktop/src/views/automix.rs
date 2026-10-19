@@ -7,6 +7,8 @@ use super::TextTip;
 mod loading;
 mod tooltip;
 use tooltip::AutomixTip;
+#[cfg(debug_assertions)]
+pub(crate) mod preview;
 
 fn time(seconds: f32) -> String {
     let seconds = seconds.max(0.).round() as u32;
@@ -41,6 +43,7 @@ struct Transition {
     out: DeckId,
     incoming: DeckId,
     name: &'static str,
+    status: String,
     paused: bool,
     phase: String,
     windows: [String; 2],
@@ -67,7 +70,7 @@ impl Transition {
                 stage.and_then(|active| plan.stages.iter().position(|s| std::ptr::eq(s, active)))
             })
             .flatten();
-        let phase = if snapshot.automix_paused {
+        let mut phase = if snapshot.automix_paused {
             "Paused".into()
         } else if until > 0. {
             format!("Starts in {}", time(until))
@@ -79,6 +82,25 @@ impl Transition {
             .as_ref()
             .map(|s| technique(s.strategy))
             .unwrap_or("Transition");
+        // A published technique describes the whole plan. Its incoming deck
+        // may still be cued, or playing a silent lead-in with all stems shut.
+        // Do not present either state as an exchange already in progress.
+        let closed = |deck: &mixless_protocol::DeckSnapshot| {
+            deck.fader <= 0. || (deck.stems_ready && deck.stem_gain.iter().all(|gain| *gain <= 0.))
+        };
+        let status = if snapshot.automix_paused {
+            "Paused".into()
+        } else if until > 0. {
+            format!("In {}", time(until))
+        } else if closed(b) {
+            phase = format!("Waiting for {} entry", label(incoming));
+            "Waiting".into()
+        } else if closed(a) {
+            phase = "Completing transition".into();
+            "Finishing".into()
+        } else {
+            name.into()
+        };
         let windows = [
             format!("{}–{}", time(plan.t_in_a), time(plan.t_out_a)),
             format!("{}–{}", time(plan.t_in_b), time(plan.t_end_b)),
@@ -108,6 +130,7 @@ impl Transition {
             out,
             incoming,
             name,
+            status,
             paused: snapshot.automix_paused,
             phase,
             windows,
@@ -184,17 +207,17 @@ impl UiState {
             .flex_none()
             .items_center()
             .justify_center()
-            .gap(px(6.))
+            .gap(px(if compact { 4. } else { 6. }))
             .h(px(20.))
             .max_w(px(200.))
             .overflow_hidden()
             .whitespace_nowrap()
-            .px(px(9.))
+            .px(px(if compact { 5. } else { 9. }))
             .rounded(px(10.))
             .border_1()
             .border_color(theme::with_alpha(live, 0.3))
             .bg(theme::with_alpha(live, 0.06))
-            .text_size(px(10.))
+            .text_size(px(if compact { 8. } else { 10. }))
             .hover(|s| {
                 s.border_color(theme::with_alpha(live, 0.55))
                     .bg(theme::with_alpha(live, 0.12))
@@ -205,7 +228,7 @@ impl UiState {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(4.))
+                    .gap(px(if compact { 3. } else { 4. }))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .child(segment(
                         theme::deck_color(transition.out),
@@ -216,11 +239,13 @@ impl UiState {
                         theme::deck_color(transition.incoming),
                         label(transition.incoming),
                     ))
-                    .when(!compact, |row| {
+                    .when(!compact || transition.status != transition.name, |row| {
                         row.child(
-                            div()
-                                .ml(px(3.))
-                                .child(segment(theme::TEXT, transition.name)),
+                            div().ml(px(if compact { 1. } else { 3. })).child(
+                                div()
+                                    .text_color(theme::TEXT)
+                                    .child(transition.status.clone()),
+                            ),
                         )
                     }),
             )

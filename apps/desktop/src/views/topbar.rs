@@ -190,7 +190,13 @@ impl UiState {
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
+            .gap(px(if width < 1280. {
+                2.
+            } else if width < 1400. {
+                6.
+            } else {
+                8.
+            }))
             .h(px(44.))
             .pl(px(90.))
             .pr(px(12.))

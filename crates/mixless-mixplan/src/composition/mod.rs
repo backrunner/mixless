@@ -1,12 +1,13 @@
 //! Fit independently timed parts to the two arrangements before ranking a mix.
 //! The callback only plays the resulting control curves.
+mod description;
 mod evidence;
 mod render;
 #[cfg(test)]
 mod tests;
 
 use crate::PlanContext;
-use evidence::{Frame, frames, voice_windows};
+use evidence::{frames, voice_windows, Frame};
 use mixless_protocol::{MixPlan, Polyline};
 
 #[derive(Clone, Copy, Debug)]
@@ -29,7 +30,11 @@ fn gains(shape: &Shape, u: f32) -> [[f32; 4]; 2] {
     std::array::from_fn(|d| {
         std::array::from_fn(|s| {
             let x = shape[d][s].at(u);
-            if d == 0 { 1. - x } else { x }
+            if d == 0 {
+                1. - x
+            } else {
+                x
+            }
         })
     })
 }

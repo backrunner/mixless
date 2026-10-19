@@ -1,5 +1,5 @@
-use super::{Frame, Shape, ease, gains, highpass, power};
-use mixless_protocol::{MixPlan, MixStage, Polyline, StemMix, StrategyId};
+use super::{ease, gains, highpass, power, Frame, Shape};
+use mixless_protocol::{MixPlan, Polyline, StemMix};
 
 fn db(x: f32) -> f32 {
     if x <= 0.000016 {
@@ -145,36 +145,10 @@ pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<
     }
     p.stem_mix = Some(mix);
     p.handoff_bar = Some(shape[1][3].start);
-    let vocal_carry = shape[0][0].start > shape[1][2].end + 0.5;
+    let (strategy, stages) = super::description::describe(frames, shape, n);
     let s = p.summary.as_mut()?;
-    s.strategy = if vocal_carry {
-        StrategyId::VocalRide
-    } else {
-        StrategyId::StemSwap
-    };
+    s.strategy = strategy;
     s.used_fallback = false;
-    p.stages = vec![
-        MixStage {
-            start_bar: 0.,
-            end_bar: shape[1][3].start,
-            label: "Layer selected parts".into(),
-        },
-        MixStage {
-            start_bar: shape[1][3].start,
-            end_bar: shape[1][3].end,
-            label: "Exchange bass".into(),
-        },
-        MixStage {
-            start_bar: shape[1][3].end,
-            end_bar: n,
-            label: if vocal_carry {
-                "Carry vocal to its release"
-            } else {
-                "Exchange foreground and release layer"
-            }
-            .into(),
-        },
-    ];
-    p.stages.retain(|s| s.end_bar > s.start_bar);
+    p.stages = stages;
     Some(())
 }
