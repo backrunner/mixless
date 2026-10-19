@@ -26,7 +26,14 @@ pub fn attach_stems(core: &Arc<AppCore>, deck: DeckId, id: TrackId, hash: &str) 
     if core.engine.stems_ready(deck) {
         return;
     }
-    match processor.playback(hash, source.frames, source.sample_rate) {
+    let stem_hash = core
+        .library
+        .get_track(id)
+        .and_then(|track| core.library.stem_hash(Path::new(&track.path)));
+    let Ok(stem_hash) = stem_hash else {
+        return;
+    };
+    match processor.playback(&stem_hash, source.frames, source.sample_rate) {
         Ok(Some(stems)) => {
             if let Err(error) = core.engine.attach_stems(deck, id, &source, stems) {
                 tracing::warn!(%error,"Cannot attach stem playback");

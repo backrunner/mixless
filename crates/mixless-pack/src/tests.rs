@@ -78,12 +78,14 @@ fn track(lib: &Library, root: &Path, name: &str, seed: f32) -> TrackId {
     id
 }
 fn stems(lib: &Library, processor: &Processor, id: TrackId) {
-    let hash = lib.get_track(id).unwrap().content_hash;
+    let hash = lib
+        .stem_hash(Path::new(&lib.get_track(id).unwrap().path))
+        .unwrap();
     let dir = processor.cache_path(&hash);
     fs::create_dir_all(&dir).unwrap();
     let analysis = StemAnalysis {
         version: mixless_stems::VERSION,
-        separator_sha256: mixless_protocol::STEM_SEPARATOR.sha256.into(),
+        separator_sha256: mixless_protocol::STEM_SEPARATOR_HASH.into(),
         notes_sha256: mixless_protocol::STEM_NOTES.sha256.into(),
         duration_sec: 0.1,
         residual_rms: 0.,
@@ -125,8 +127,12 @@ fn stems(lib: &Library, processor: &Processor, id: TrackId) {
         .unwrap()
         .unwrap();
     base.stems = Some(analysis);
-    lib.finish_analysis(&base, &hash, mixless_analyze::ANALYSIS_VERSION)
-        .unwrap();
+    lib.finish_analysis(
+        &base,
+        &lib.get_track(id).unwrap().content_hash,
+        mixless_analyze::ANALYSIS_VERSION,
+    )
+    .unwrap();
 }
 fn export_all(lib: &Library, p: &Processor, path: &Path) -> Report {
     export(lib, p, path, Selection::Library, |_| {}, || true).unwrap()
@@ -188,13 +194,17 @@ fn roundtrip_multiple_playlists_order_cues_analysis_waveforms_and_stems_without_
         [256, 512]
     );
     assert!(playback
-        .playback(&a.content_hash, 4410, 44100)
+        .playback(
+            &restored.stem_hash(Path::new(&a.path)).unwrap(),
+            4410,
+            44100
+        )
         .unwrap()
         .is_some());
     // Cached analysis returns before attempting the deliberately failing loader.
     assert!(playback
         .analyze(
-            &a.content_hash,
+            &restored.stem_hash(Path::new(&a.path)).unwrap(),
             0.1,
             || panic!("must not run inference"),
             &mut |_| {},
@@ -552,7 +562,9 @@ fn non_finite_stems_cannot_replace_a_valid_package_snapshot() {
     stems(&lib, &p, id);
     let path = root.path().join("test.mixpack");
     export_all(&lib, &p, &path);
-    let hash = lib.get_track(id).unwrap().content_hash;
+    let hash = lib
+        .stem_hash(Path::new(&lib.get_track(id).unwrap().path))
+        .unwrap();
     let mut wav = hound::WavWriter::create(
         p.cache_path(&hash).join("vocals.wav"),
         hound::WavSpec {
@@ -587,7 +599,9 @@ fn compressed_stems_roundtrip_with_their_format_and_exact_playback_length() {
         let p = processor(root.path());
         let id = track(&lib, root.path(), "compressed", 0.2);
         stems(&lib, &p, id);
-        let hash = lib.get_track(id).unwrap().content_hash;
+        let hash = lib
+            .stem_hash(Path::new(&lib.get_track(id).unwrap().path))
+            .unwrap();
         let dir = p.cache_path(&hash);
         let mut metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(dir.join("analysis.json")).unwrap()).unwrap();

@@ -74,6 +74,7 @@ impl ImportService<'_> {
             .update_import_items(playlist, &[row])
             .map_err(|e| e.to_string())?;
         progress(ImportProgress::Changed(playlist, report.summary()));
+        self.write_playlist_metadata(playlist);
         Ok(report)
     }
 }

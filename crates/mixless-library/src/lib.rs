@@ -1,5 +1,6 @@
 //! Local library: import, metadata, cues. No tokens, no PCM.
 
+mod audio_identity;
 mod best_order;
 mod cues;
 mod editing;
@@ -8,11 +9,13 @@ mod hash;
 mod imports;
 mod ordering;
 pub mod portable;
+mod recording_metadata;
 mod schema;
 mod sources;
 mod spotify_album;
 mod spotify_artwork;
 mod storage;
+mod tag_writeback;
 mod verification;
 mod waveform;
 pub use imports::ImportItem;
@@ -33,6 +36,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use thiserror::Error;
 
+pub use audio_identity::stem_content_hash;
 pub use hash::content_hash;
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +53,8 @@ pub struct PlaylistSummary {
 pub enum LibraryError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("audio metadata: {0}")]
+    Metadata(#[from] lofty::error::LoftyError),
     #[error("sql: {0}")]
     Sql(#[from] rusqlite::Error),
     #[error("not found")]
@@ -135,6 +141,10 @@ impl Library {
                 path TEXT PRIMARY KEY,
                 fingerprint TEXT NOT NULL,
                 content_hash TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stem_identities (
+                file_hash TEXT PRIMARY KEY,
+                audio_hash TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS cues (
                 track_id INTEGER NOT NULL,
@@ -247,6 +257,7 @@ impl Library {
             db_path: path.to_path_buf(),
             artwork_dir,
         };
+        library.restore_import_metadata()?;
         library.backfill_folder_playlists(&path.with_file_name("acquired"))?;
         Ok(library)
     }
@@ -255,7 +266,8 @@ impl Library {
         let canon = fs::canonicalize(path)?;
         let path_str = canon.to_string_lossy().to_string();
         let hash = self.verified_content_hash(&canon)?;
-        let meta = read_meta(&canon);
+        let mut meta = read_meta(&canon);
+        self.protect_import_metadata(&canon, &mut meta)?;
         let artwork_path = self.cache_artwork(&hash, meta.artwork.as_ref())?;
         // Empty means "checked, no embedded artwork". It avoids reparsing the
         // same coverless file on every launch; row mapping turns it back into

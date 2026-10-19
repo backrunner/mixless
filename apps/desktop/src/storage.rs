@@ -71,6 +71,13 @@ pub fn report(core: &AppCore) -> Result<StorageReport, String> {
             .cache_keys(Some(id))
             .map_err(|e| e.to_string())?;
         let hashes: Vec<String> = keys.into_iter().map(|(_, hash)| hash).collect();
+        let stem_hashes: Vec<String> = core
+            .library
+            .stem_cache_keys(Some(id))
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|(_, hash)| hash)
+            .collect();
         let usage = core
             .library
             .cache_usage(Some(id))
@@ -84,7 +91,7 @@ pub fn report(core: &AppCore) -> Result<StorageReport, String> {
                 + core
                     .stems
                     .as_ref()
-                    .map_or(0, |s| s.cache_usage(Some(&hashes)))
+                    .map_or(0, |s| s.cache_usage(Some(&stem_hashes)))
                 + core.library.artwork_bytes(Some(&hashes)),
         });
     }
@@ -143,8 +150,15 @@ pub fn clear(core: &AppCore, kind: ClearKind) -> Result<u64, String> {
                     .clear_artwork(Some(&hashes))
                     .map_err(|e| e.to_string())?;
             if let Some(stems) = &core.stems {
+                let stem_hashes: Vec<String> = core
+                    .library
+                    .stem_cache_keys(Some(playlist))
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|(_, hash)| hash)
+                    .collect();
                 freed += stems
-                    .clear_cache(Some(&hashes))
+                    .clear_cache(Some(&stem_hashes))
                     .map_err(|e| e.to_string())?;
             }
             forget(core, keys);

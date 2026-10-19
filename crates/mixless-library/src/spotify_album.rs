@@ -65,6 +65,10 @@ impl Library {
                 params![album,target.track_id.0,target.spotify_id])?;
         }
         tx.commit()?;
+        drop(conn);
+        if changed > 0 {
+            self.write_track_metadata_if_possible(target.track_id);
+        }
         Ok(changed > 0)
     }
 }

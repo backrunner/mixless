@@ -154,7 +154,7 @@ pub fn import(
         };
         if entry.stems.as_ref().is_some_and(|s| s.len() == 5) {
             stems.install_portable_cache(
-                &record.track.content_hash,
+                &library.stem_hash(Path::new(&record.track.path))?,
                 *duration,
                 &dir.join("stems"),
                 &active,

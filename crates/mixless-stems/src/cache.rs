@@ -1,7 +1,7 @@
-use crate::Result;
 use crate::storage::{Manifest, NAMES};
 #[cfg(stems_ort)]
-use crate::storage::{RATE, Storage, StorageFormat};
+use crate::storage::{Storage, StorageFormat, RATE};
+use crate::Result;
 #[cfg(stems_ort)]
 use crate::{Error, Stems};
 use mixless_protocol::StemAnalysis;
@@ -323,6 +323,25 @@ mod tests {
         // The process lock and a foreign file survive a full clear.
         assert!(root.path().join("cache/.analysis.lock").exists());
         assert_eq!(processor.cache_usage(None), 0);
+    }
+
+    #[test]
+    fn pruning_keeps_referenced_current_cache_and_foreign_data() {
+        let root = tempfile::tempdir().unwrap();
+        let processor =
+            crate::Processor::new(root.path().join("models"), root.path().join("cache"), false);
+        for hash in ["keep", "orphan"] {
+            let dir = processor.cache_path(hash);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("vocals.wav"), [0; 7]).unwrap();
+        }
+        let foreign = root.path().join("cache/user-folder");
+        fs::create_dir(&foreign).unwrap();
+        fs::write(foreign.join("keep"), [0; 3]).unwrap();
+        assert_eq!(processor.prune_cache(&["keep".into()]).unwrap(), 7);
+        assert!(processor.cache_path("keep").exists());
+        assert!(!processor.cache_path("orphan").exists());
+        assert!(foreign.join("keep").exists());
     }
 
     #[test]

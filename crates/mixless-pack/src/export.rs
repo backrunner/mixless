@@ -78,7 +78,7 @@ pub fn export(
             .map_or(track.duration_ms as f32 / 1000., |(_, a)| a.duration_sec);
         let cached = stems
             .with_portable_cache(
-                &record.track.content_hash,
+                &library.stem_hash(Path::new(&record.track.path))?,
                 duration,
                 &active,
                 |dir| -> Result<Vec<Blob>> {

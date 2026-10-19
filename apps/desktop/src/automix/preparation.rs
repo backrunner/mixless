@@ -251,8 +251,14 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool, input: bool) 
 
 fn stem_playback_ready(core: &AppCore, track: &crate::analysis::PreparedTrack) -> bool {
     core.stems.as_ref().is_some_and(|processor| {
+        let Ok(hash) = core
+            .library
+            .stem_hash(std::path::Path::new(&track.track.path))
+        else {
+            return false;
+        };
         processor
-            .cached(&track.track.content_hash, track.analysis.duration_sec)
+            .cached(&hash, track.analysis.duration_sec)
             .ok()
             .flatten()
             .as_ref()

@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let processor = mixless_stems::Processor::new((&args[2]).into(), (&args[3]).into(), false);
     for (track, path) in tracks.iter().zip(paths) {
-        let hash = format!("blake3-{}", blake3::hash(&std::fs::read(&path)?).to_hex());
+        let hash = mixless_library::stem_content_hash(std::path::Path::new(&path))?;
         let at = std::time::Instant::now();
         processor.analyze(
             &hash,
@@ -26,6 +26,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut |_| {},
             &|| true,
         )?;
+        let source = mixless_engine::decode_file(std::path::Path::new(&path))?;
+        let playback = processor
+            .playback(&hash, source.frames, source.sample_rate)?
+            .ok_or("Generated cache cannot be loaded for playback")?;
+        if !playback.has_bass() {
+            return Err("Generated cache has no independent bass".into());
+        }
+        println!(
+            "{} PCM playback ready at {} Hz ({} bytes)",
+            track.track_id.0,
+            source.sample_rate,
+            playback.bytes()
+        );
         println!(
             "{} four-stem cache ready in {:.1}s",
             track.track_id.0,

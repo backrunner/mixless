@@ -2,7 +2,7 @@
 //! filesystem revision metadata only permits reusing a previously computed hash.
 use super::*;
 
-fn fingerprint(path: &Path) -> Result<Option<String>, LibraryError> {
+pub(super) fn fingerprint(path: &Path) -> Result<Option<String>, LibraryError> {
     let meta = fs::metadata(path)?;
     #[cfg(unix)]
     {

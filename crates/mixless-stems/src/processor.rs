@@ -1,6 +1,6 @@
 #[cfg(stems_ort)]
 use crate::Inference;
-use crate::{Error, Progress, Result, cache, check};
+use crate::{cache, check, Error, Progress, Result};
 use mixless_protocol::StemAnalysis;
 #[cfg(stems_ort)]
 use mixless_protocol::{StemKind, StemNote};
@@ -295,6 +295,35 @@ impl Processor {
         Ok(freed)
     }
 
+    /// Explicit maintenance only. Retain referenced current-model entries; remove
+    /// orphaned/retired entries and abandoned staging while publishers are idle.
+    pub fn prune_cache(&self, hashes: &[String]) -> Result<u64> {
+        std::fs::create_dir_all(&self.cache)?;
+        let until = Instant::now() + LOCK_WAIT;
+        let _process = crate::lock::acquire(&self.cache.join(".analysis.lock"), &|| {
+            Instant::now() < until
+        })
+        .map_err(busy)?;
+        let keep: HashSet<_> = hashes.iter().map(|h| cache::key(h)).collect();
+        let mut freed = 0;
+        for entry in std::fs::read_dir(&self.cache)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let published = name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit());
+            let staged = name.starts_with(".stems-")
+                || name.starts_with(".import-")
+                || name.ends_with(".partial");
+            if entry.file_type()?.is_dir() && ((published && !keep.contains(name)) || staged) {
+                freed += cache::dir_bytes(&entry.path());
+                std::fs::remove_dir_all(entry.path())?;
+            }
+        }
+        Ok(freed)
+    }
+
     pub fn invalidate(&self, content_hash: &str) -> Result<()> {
         std::fs::create_dir_all(&self.cache)?;
         let _process = crate::lock::acquire(&self.cache.join(".analysis.lock"), &|| true)?;
@@ -364,21 +393,17 @@ mod tests {
             .unwrap();
         assert!(crate::is_current(&result));
         assert!(progress.contains(&Progress::Saving));
-        assert!(
-            !progress
-                .iter()
-                .any(|p| matches!(p, Progress::Downloading { .. }))
-        );
+        assert!(!progress
+            .iter()
+            .any(|p| matches!(p, Progress::Downloading { .. })));
         assert!(
             !downloads.exists(),
             "bundled inference must not populate downloaded models"
         );
         assert_eq!(processor.clear_models().unwrap(), 0);
-        assert!(
-            bundled
-                .join(mixless_protocol::STEM_SEPARATOR.name)
-                .is_file()
-        );
+        assert!(bundled
+            .join(mixless_protocol::STEM_SEPARATORS[0].name)
+            .is_file());
         crate::verify_bundled_models(&bundled).unwrap();
     }
 }

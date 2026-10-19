@@ -429,6 +429,8 @@ fn prepare_inner(core: &AppCore, id: TrackId) -> Result<PreparedTrack, String> {
             .replace_auto_cues(id, &mixless_analyze::automatic_cues(&analysis))
             .map_err(|e| e.to_string())?;
     }
+    core.library.write_track_metadata_if_possible(id);
+    let track = core.library.get_track(id).map_err(|e| e.to_string())?;
     let prepared = PreparedTrack {
         track,
         analysis: Arc::new(analysis),
@@ -478,7 +480,14 @@ pub fn ready_load(core: &Arc<AppCore>, id: TrackId) -> Result<ReadyLoad, String>
     let buf = decode(core, &prepared)?;
     let stems = core.stems.as_ref().and_then(|processor| {
         processor
-            .playback(&prepared.track.content_hash, buf.frames, buf.sample_rate)
+            .playback(
+                &core
+                    .library
+                    .stem_hash(Path::new(&prepared.track.path))
+                    .ok()?,
+                buf.frames,
+                buf.sample_rate,
+            )
             .ok()
             .flatten()
     });

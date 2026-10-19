@@ -227,13 +227,17 @@ fn run(core: &AppCore, id: TrackId, generation: u64) -> Result<PreparedTrack, St
     else {
         return Ok(prepared);
     };
+    let stem_hash = core
+        .library
+        .stem_hash(Path::new(&prepared.track.path))
+        .map_err(|e| e.to_string())?;
     if prepared
         .analysis
         .stems
         .as_ref()
         .is_some_and(|s| mixless_stems::is_current(s) && s.valid(prepared.analysis.duration_sec))
         && processor
-            .cached(&prepared.track.content_hash, prepared.analysis.duration_sec)
+            .cached(&stem_hash, prepared.analysis.duration_sec)
             .is_ok_and(|s| s.is_some())
     {
         core.analysis.set_stems(id, StemStatus::Ready);
@@ -246,7 +250,7 @@ fn run(core: &AppCore, id: TrackId, generation: u64) -> Result<PreparedTrack, St
     core.analysis
         .set_stems(track.id, StemStatus::Running("Stems · Waiting".into()));
     let result = processor.analyze(
-        &track.content_hash,
+        &stem_hash,
         prepared.analysis.duration_sec,
         || playback::pcm(core, track).map_err(mixless_stems::Error::Model),
         &mut |progress| {

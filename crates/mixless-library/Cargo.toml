@@ -16,6 +16,8 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tempfile = "3"
 
+symphonia.workspace = true
+
 [dev-dependencies]
 mixless-mixplan = { workspace = true }
 mixless-analyze = { workspace = true }

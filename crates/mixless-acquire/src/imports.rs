@@ -118,6 +118,16 @@ impl ImportService<'_> {
             .map_err(|e| e.to_string())?;
         Ok(id)
     }
+    fn write_playlist_metadata(&self, playlist: PlaylistId) {
+        if let Ok(tracks) = self.library.playlist_tracks(playlist) {
+            let mut seen = std::collections::HashSet::new();
+            for track in tracks {
+                if seen.insert(track.id) {
+                    self.library.write_track_metadata_if_possible(track.id);
+                }
+            }
+        }
+    }
     pub fn import_local_file(&self, path: &Path) -> Result<TrackId, String> {
         self.local_audio(path).map(|(track, _)| track)
     }
@@ -127,6 +137,7 @@ impl ImportService<'_> {
             .library
             .add_to_folder_playlist(track)
             .map_err(|e| e.to_string())?;
+        self.library.write_track_metadata_if_possible(track);
         Ok((track, playlist))
     }
     pub fn local_files(&self, paths: &[PathBuf], mut progress: impl FnMut(String)) -> ImportReport {
@@ -384,6 +395,9 @@ impl ImportService<'_> {
             }
             let _ = self.library.update_import_items(pid, &rows);
             return Err(error);
+        }
+        if let Some(playlist) = report.playlist {
+            self.write_playlist_metadata(playlist);
         }
         Ok(report)
     }
