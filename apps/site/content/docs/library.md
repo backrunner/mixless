@@ -33,7 +33,7 @@ The library shows full-track waveforms and numbered cue flags. During AutoMix it
 
 The **Spotify** entry imports playlist metadata and shows import progress. Spotify does **not** provide decoded audio for mixing. Tracks must match local files or be obtained through a configured acquisition provider before playback.
 
-Optional acquisition uses separately installed tools such as `yt-dlp` and `FFmpeg`; availability depends on your setup and the selected service. Use only audio you have the right to use. Acquisition failures do not turn metadata-only rows into playable tracks.
+Optional acquisition uses separately installed `yt-dlp` for downloads. Audio processing is built into mixless; you do not need to install FFmpeg or ffprobe. Availability still depends on the selected service. Use only audio you have the right to use. Acquisition failures do not turn metadata-only rows into playable tracks.
 
 For imported Spotify tracks, missing covers can be fetched from Spotify and cached locally. Embedded artwork from local audio is also supported. See [privacy](/privacy) for network activity.
 

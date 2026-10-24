@@ -2,7 +2,11 @@
 
 mixless currently targets macOS. Install current stable Rust and full Xcode
 with the Metal compiler and CMake (for the bundled FLAC encoder), then run
-`./dev.sh --check` and `./dev.sh`.
+`./dev.sh --check` and `./dev.sh`. Audio acquisition compiles a pinned, audio-only
+FFmpeg library through Cargo using Git, Make and Clang; its first build fetches
+the verified source revision. Neither builds nor runtime conversion require an
+installed ffmpeg or ffprobe. See [native audio builds](third-party/FFmpeg-BUILD.md)
+for offline builds and rebuilding with modified FFmpeg sources.
 
 `dev.sh` builds and refreshes `target/app/Mixless.app` with the workspace
 version and the `dev` channel, then launches that bundle. `--build` refreshes

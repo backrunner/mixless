@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["third-party/rust/block-0.1.6", "third-party/rust/proc-macro-error2-2.0.1"]
+exclude = ["third-party/rust/ffmpeg-sys-next-9.0.1", "third-party/rust/block-0.1.6", "third-party/rust/proc-macro-error2-2.0.1"]
 members = [
     "crates/mixless-protocol",
     "crates/mixless-engine",
@@ -27,6 +27,7 @@ repository = "https://github.com/backrunner/mixless"
 rust-version = "1.88"
 
 [patch.crates-io]
+ffmpeg-sys-next = { path = "third-party/rust/ffmpeg-sys-next-9.0.1" }
 block = { path = "third-party/rust/block-0.1.6" }
 proc-macro-error2 = { path = "third-party/rust/proc-macro-error2-2.0.1" }
 

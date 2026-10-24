@@ -14,6 +14,9 @@ use thiserror::Error;
 pub enum AcquireError {
     #[error("{0}")]
     Msg(String),
+    /// A local tool must be repaired before another source can be attempted.
+    #[error("{0}")]
+    ToolUnavailable(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

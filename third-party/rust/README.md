@@ -1,10 +1,10 @@
 # Rust compatibility patches
 
-These two crates are pinned copies of the published registry packages and are
+These crates are pinned copies of the published registry packages and are
 selected with `[patch.crates-io]`. `UPSTREAM.json` retains each original package
 checksum. Original authorship, license metadata and upstream source are retained.
-The patches address Rust 1.99 future-incompatibility diagnostics without changing
-dependency APIs or increasing mixless's Rust 1.88 minimum.
+The first two patches address Rust 1.99 future-incompatibility diagnostics.
+The FFmpeg patch fixes the source revision and the audio build configuration.
 
 - [`block` 0.1.6](https://github.com/SSheldon/rust-block), MIT: declare the foreign
   `_NSConcreteStackBlock` symbol with an inhabited byte type and obtain its
@@ -23,3 +23,11 @@ into the app bundle by mixless-tools.
 
 Remove these overrides when compatible upstream releases become available.
 Do not edit Cargo's shared registry cache to apply these changes.
+
+- [`ffmpeg-sys-next` 9.0.1](https://github.com/zmwangx/rust-ffmpeg-sys),
+  WTFPL as declared upstream: verify FFmpeg 9.0.2 against a fixed Git commit,
+  compile only local audio processing with portable CPU settings, avoid legacy
+  Apple video framework links, select the SDK for macOS cross compilation, and
+  export corresponding sources for bundling. The build recipe invalidates its
+  native cache when changed. `MIXLESS_FFMPEG_SOURCE_DIR` supports modified-source
+  rebuilds without network access. See [FFmpeg-BUILD.md](../FFmpeg-BUILD.md).

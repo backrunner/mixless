@@ -70,6 +70,8 @@ fn option<'a>(
 struct BuildInfo {
     version: String,
     channel: String,
+    #[serde(default)]
+    audio_source_archive: Option<PathBuf>,
 }
 
 fn binary_identity(binary: &Path) -> Result<BuildInfo, Box<dyn std::error::Error>> {
@@ -177,6 +179,11 @@ fn bundle(root: &Path, args: &[String]) -> Result<(), Box<dyn std::error::Error>
         &resources.join("THIRD_PARTY_NOTICES.md"),
     )?;
     let licenses = root.join("third-party");
+    if let Some(source) = &identity.audio_source_archive {
+        let dest = resources.join("Sources");
+        fs::create_dir_all(&dest)?;
+        atomic_copy(source, &dest.join("ffmpeg-9.0.2-source.tar.gz"))?;
+    }
     if licenses.exists() {
         let dest = resources.join("Licenses");
         fs::create_dir_all(&dest)?;

@@ -16,3 +16,11 @@ ureq = { version = "2", features = ["json", "tls"] }
 tempfile = "3"
 libc = "0.2"
 lofty = { workspace = true }
+
+# Compile the pinned audio-only FFmpeg libraries into Rust. Never link Homebrew.
+ffmpeg-next = { version = "=9.0.0", default-features = false, features = ["build", "codec", "format", "filter", "software-resampling"] }
+ffmpeg-sys-next = { version = "=9.0.1", default-features = false, features = ["build-portable"] }
+
+[dev-dependencies]
+hound = "3"
+mixless-engine.workspace = true

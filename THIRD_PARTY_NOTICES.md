@@ -14,11 +14,23 @@ notices are included in `third-party/` and copied into the app bundle.
 This document is not a complete transitive dependency license audit. Review
 licenses and required notices for the actual binaries before publishing releases.
 
-Optional acquisition and conversion use separately installed yt-dlp
-(Unlicense) and FFmpeg (LGPL or GPL depending on the build configuration).
-They are not bundled by this repository, and their use is governed by the
-terms of the services they access. Imported audio remains subject to its own
-rights.
+Optional acquisition uses separately installed yt-dlp (Unlicense), with Deno
+(MIT) when available, for service metadata and downloads. Audio extraction and
+conversion run inside Rust using statically linked FFmpeg 9.0.2 libraries
+(LGPL-2.1-or-later), through ffmpeg-next 9.0.0 and ffmpeg-sys-next 9.0.1
+(both declare WTFPL). No external ffmpeg or ffprobe executable is required.
+The build disables GPL/nonfree components, external codecs (including x265),
+network protocols and FFmpeg programs. FFmpeg source files remain unmodified.
+The FFmpeg license and component notices are included in `third-party/`;
+this software is based in part on the work of the Independent JPEG Group.
+
+Each app bundle includes the exact corresponding FFmpeg source archive under
+`Contents/Resources/Sources/`. `third-party/FFmpeg-BUILD.md` documents the pinned
+revision, build configuration and rebuilding/relinking with modified sources.
+Preserve the source archive, these notices and the complete mixless source and
+build materials when redistributing the statically linked application.
+Service access remains governed by each service's terms, and imported audio
+remains subject to its own rights.
 
 Stem cache encoding uses [libflac-sys](https://github.com/mgeier/libflac-sys)
 0.3.4 with its bundled libFLAC 1.5.0 (BSD-3-Clause) and [mp3lame-encoder](https://github.com/DoumanAsh/mp3lame-encoder)

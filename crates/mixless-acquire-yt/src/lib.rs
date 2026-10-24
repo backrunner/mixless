@@ -2,20 +2,28 @@
 //! identity/duration gates. Child processes have one bounded job deadline.
 use mixless_acquire::{candidate_score, primary_artist, AcquireError, ResolveJob};
 use serde_json::Value;
+mod errors;
+mod media;
 mod metadata;
 mod pacing;
+mod process;
+mod toolchain;
 use std::{
     ffi::OsString,
     fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     time::{Duration, Instant},
 };
+use toolchain::locate;
+
+/// Corresponding native sources copied into the app by the packaging tool.
+pub fn audio_source_archive() -> &'static str {
+    env!("MIXLESS_AUDIO_SOURCE_ARCHIVE")
+}
 
 pub struct YoutubeMusicAcquire {
     ytdlp: PathBuf,
-    ffmpeg: PathBuf,
     deno: Option<PathBuf>,
 }
 #[derive(Debug, Clone)]
@@ -30,29 +38,17 @@ fn err(message: impl Into<String>) -> AcquireError {
     AcquireError::Msg(message.into())
 }
 
-fn locate(name: &str) -> Option<PathBuf> {
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.join(name)));
-    beside
-        .filter(|p| p.is_file())
-        .or_else(|| which::which(name).ok())
-        .or_else(|| {
-            ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-                .iter()
-                .map(|dir| Path::new(dir).join(name))
-                .find(|p| p.is_file())
-        })
-}
 impl YoutubeMusicAcquire {
     pub fn detect() -> Result<Self, AcquireError> {
-        Ok(Self {
-            ytdlp: locate("yt-dlp")
-                .ok_or_else(|| err("yt-dlp is missing. Install yt-dlp and ffmpeg, then retry."))?,
-            ffmpeg: locate("ffmpeg")
-                .ok_or_else(|| err("ffmpeg is missing. Install ffmpeg, then retry."))?,
+        let provider = Self {
+            ytdlp: locate("yt-dlp").ok_or_else(|| {
+                AcquireError::ToolUnavailable(
+                    "yt-dlp is missing. Install yt-dlp, then retry.".into(),
+                )
+            })?,
             deno: locate("deno"),
-        })
+        };
+        Ok(provider)
     }
     pub fn fetch(&self, job: &ResolveJob, dest: &Path) -> Result<PathBuf, AcquireError> {
         self.fetch_named(job, dest, mixless_acquire::DownloadFilename::RecordingId)
@@ -98,7 +94,7 @@ impl YoutubeMusicAcquire {
             match result {
                 Ok(found) => candidates.extend(found),
                 Err(error) => {
-                    if pacing::is_rate_limit(&error.to_string()) {
+                    if errors::stops_retries(&error) {
                         return Err(error);
                     }
                     errors.push(error.to_string());
@@ -108,14 +104,13 @@ impl YoutubeMusicAcquire {
         rank_candidates(&mut candidates);
         let mut attempted = std::collections::HashSet::new();
         for pass in 0..2 {
-            if let Some(path) = try_candidates(&candidates, &mut attempted, &mut errors, |chosen| {
-                let attempt_deadline = deadline.min(Instant::now() + Duration::from_secs(45));
-                self.download(job, chosen, &dest, &final_path, attempt_deadline)
-            }) {
+            if let Some(path) =
+                try_candidates(&candidates, &mut attempted, &mut errors, |chosen| {
+                    let attempt_deadline = deadline.min(Instant::now() + Duration::from_secs(45));
+                    self.download(job, chosen, &dest, &final_path, attempt_deadline)
+                })?
+            {
                 return Ok(path);
-            }
-            if errors.iter().any(|error| pacing::is_rate_limit(error)) {
-                break;
             }
             if pass == 0 && Instant::now() < deadline {
                 // A simpler query recovers songs obscured by collaborator
@@ -128,6 +123,9 @@ impl YoutubeMusicAcquire {
                 ) {
                     Ok(found) => candidates = found,
                     Err(error) => {
+                        if errors::stops_retries(&error) {
+                            return Err(error);
+                        }
                         candidates.clear();
                         errors.push(error.to_string());
                     }
@@ -139,12 +137,12 @@ impl YoutubeMusicAcquire {
             Err(err(if errors.is_empty() {
                 "No matching audio found for this artist, version and duration".into()
             } else {
-                format!("Audio search failed: {}", errors.join("; "))
+                format!("Audio search failed: {}", errors::summary(&errors))
             }))
         } else {
             Err(err(format!(
                 "Matching audio could not be downloaded: {}",
-                errors.join("; ")
+                errors::summary(&errors)
             )))
         }
     }
@@ -171,7 +169,7 @@ impl YoutubeMusicAcquire {
             match self.download_format(job, chosen, dest, final_path, format, deadline) {
                 Ok(path) => return Ok(path),
                 Err(error) => {
-                    if pacing::is_rate_limit(&error.to_string()) {
+                    if errors::stops_retries(&error) {
                         return Err(error);
                     }
                     errors.push(error.to_string());
@@ -181,7 +179,7 @@ impl YoutubeMusicAcquire {
         Err(err(if errors.is_empty() {
             "Audio download timed out".into()
         } else {
-            errors.join("; ")
+            errors::summary(&errors)
         }))
     }
 
@@ -218,18 +216,17 @@ impl YoutubeMusicAcquire {
                 "http:exp=2:20",
                 "-f",
                 format,
-                "-x",
-                "--audio-format",
-                "m4a",
-                "--ffmpeg-location",
+                "--fixup",
+                "never",
+                "--downloader",
+                "native",
             ]
             .map(OsString::from),
         );
-        args.push(self.ffmpeg.clone().into_os_string());
         args.extend(["--print", "after_move:filepath", "-o"].map(OsString::from));
         // Keep playlist names out of yt-dlp's template/environment expansion.
         // Names such as "100%", "%(title)s" and "$HOME" stay literal folders.
-        args.push("audio.%(ext)s".into());
+        args.push("source.%(ext)s".into());
         args.push(format!("https://www.youtube.com/watch?v={}", chosen.id).into());
         let output = self.run_in(&args, deadline, Some(staging.path()))?;
         let printed = String::from_utf8_lossy(&output);
@@ -248,19 +245,18 @@ impl YoutubeMusicAcquire {
             .path()
             .canonicalize()
             .map_err(|e| err(e.to_string()))?;
-        if !path.starts_with(&root)
-            || path.extension().and_then(|s| s.to_str()) != Some("m4a")
-            || !fs::metadata(&path).is_ok_and(|m| m.len() > 0)
-        {
+        if !path.starts_with(&root) || !fs::metadata(&path).is_ok_and(|m| m.len() > 0) {
             return Err(err("downloader returned an invalid audio file"));
         }
-        metadata::write(&path, job)?;
+        let prepared = staging.path().join("audio.m4a");
+        media::prepare(&path, &prepared, deadline)?;
+        metadata::write(&prepared, job)?;
         // Stable remote IDs avoid non-ASCII title collisions and prefix matches
         // accidentally loading a thumbnail or JSON sidecar as audio. Staging
         // lives inside `dest`, so rename stays on one volume and also works on
         // filesystems without hard links (exFAT/FAT32 removable drives).
-        fs::rename(&path, &final_path)
-            .or_else(|_| fs::hard_link(&path, &final_path))
+        fs::rename(&prepared, &final_path)
+            .or_else(|_| fs::hard_link(&prepared, &final_path))
             .map_err(|e| err(format!("publish audio: {e}")))?;
         let provenance = serde_json::json!({"spotify_id":job.spotify_id,"source_url":format!("https://www.youtube.com/watch?v={}",chosen.id),"title":chosen.title,"artist":chosen.artist,"duration_ms":chosen.duration_ms,"score":chosen.score});
         let _ = fs::write(final_path.with_extension("json"), provenance.to_string());
@@ -355,75 +351,21 @@ impl YoutubeMusicAcquire {
         working_dir: Option<&Path>,
         proxy: &str,
     ) -> Result<Vec<u8>, AcquireError> {
-        if Instant::now() >= deadline {
-            return Err(err("Audio search/download timed out"));
-        }
-        let mut stdout = tempfile::tempfile().map_err(|e| err(e.to_string()))?;
-        let mut stderr = tempfile::tempfile().map_err(|e| err(e.to_string()))?;
         let mut command = Command::new(&self.ytdlp);
-        // Pass an explicit route, including direct mode, so yt-dlp and Rust
-        // metadata requests use the same system/environment proxy policy.
-        command.arg("--proxy").arg(proxy);
+        // Keep yt-dlp on the same explicit proxy route as Rust metadata requests.
+        command.arg("--proxy").arg(proxy).args(args);
         if let Some(dir) = working_dir {
             command.current_dir(dir);
         }
-        command
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(stdout.try_clone().map_err(|e| err(e.to_string()))?)
-            .stderr(stderr.try_clone().map_err(|e| err(e.to_string()))?);
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|e| err(format!("start downloader: {e}")))?;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {}
-                Err(error) => {
-                    terminate(&mut child);
-                    return Err(err(error.to_string()));
-                }
-            }
-            if Instant::now() >= deadline
-                || stdout.metadata().is_ok_and(|m| m.len() > 8 * 1024 * 1024)
-                || stderr.metadata().is_ok_and(|m| m.len() > 8 * 1024 * 1024)
-            {
-                terminate(&mut child);
-                return Err(err(
-                    "audio search/download timed out or returned excessive output; retry later",
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        };
-        use std::io::{Seek, SeekFrom};
-        stdout
-            .seek(SeekFrom::Start(0))
-            .map_err(|e| err(e.to_string()))?;
-        stderr
-            .seek(SeekFrom::Start(0))
-            .map_err(|e| err(e.to_string()))?;
-        if !status.success() {
-            let mut message = String::new();
-            let _ = stderr.take(8192).read_to_string(&mut message);
+        let output = process::run(command, deadline)?;
+        if !output.status.success() {
+            let message = String::from_utf8_lossy(&output.stderr);
             if pacing::is_rate_limit(&message) {
                 pacing::rate_limited(60);
             }
-            return Err(err(format!(
-                "downloader failed: {}",
-                message.chars().take(1200).collect::<String>()
-            )));
+            return Err(errors::downloader_error(&message));
         }
-        let mut bytes = Vec::new();
-        stdout
-            .take(8 * 1024 * 1024)
-            .read_to_end(&mut bytes)
-            .map_err(|e| err(e.to_string()))?;
-        Ok(bytes)
+        Ok(output.stdout)
     }
 }
 fn try_candidates(
@@ -431,7 +373,7 @@ fn try_candidates(
     attempted: &mut std::collections::HashSet<String>,
     errors: &mut Vec<String>,
     mut download: impl FnMut(&Candidate) -> Result<PathBuf, AcquireError>,
-) -> Option<PathBuf> {
+) -> Result<Option<PathBuf>, AcquireError> {
     let choices: Vec<_> = candidates
         .iter()
         .filter(|c| c.score >= 0.72 && !attempted.contains(&c.id))
@@ -440,17 +382,16 @@ fn try_candidates(
     for chosen in choices {
         attempted.insert(chosen.id.clone());
         match download(chosen) {
-            Ok(path) => return Some(path),
+            Ok(path) => return Ok(Some(path)),
             Err(error) => {
-                let limited = pacing::is_rate_limit(&error.to_string());
-                errors.push(error.to_string());
-                if limited {
-                    break;
+                if errors::stops_retries(&error) {
+                    return Err(error);
                 }
+                errors.push(error.to_string());
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn rank_candidates(candidates: &mut Vec<Candidate>) {
@@ -472,14 +413,6 @@ fn find_duration(value: &Value) -> Option<u32> {
     }
 }
 
-fn terminate(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
 fn candidate(
     job: &ResolveJob,
     id: &str,
@@ -602,7 +535,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let provider = YoutubeMusicAcquire {
             ytdlp: "unused".into(),
-            ffmpeg: "unused".into(),
             deno: None,
         };
         let job = ResolveJob {
@@ -685,7 +617,7 @@ mod tests {
         let first = try_candidates(&candidates, &mut attempted, &mut errors, |_| {
             Err(err("source unavailable"))
         });
-        assert!(first.is_none());
+        assert!(first.unwrap().is_none());
         assert_eq!(errors.len(), 3);
         let mut calls = Vec::new();
         let next = try_candidates(&candidates, &mut attempted, &mut errors, |c| {
@@ -696,7 +628,7 @@ mod tests {
                 Ok("audio.m4a".into())
             }
         });
-        assert_eq!(next, Some(PathBuf::from("audio.m4a")));
+        assert_eq!(next.unwrap(), Some(PathBuf::from("audio.m4a")));
         assert_eq!(calls, ["00000000003", "00000000004"]);
     }
 
@@ -707,26 +639,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake-yt-dlp");
         let fixture = dir.path().join("fixture.m4a");
-        // A minimal MP4 tag container keeps this process/metadata regression
-        // independent of FFmpeg. Actual decoding is covered by audio imports.
-        let atom = |kind: &[u8; 4], data: &[u8]| {
-            let mut bytes = ((data.len() + 8) as u32).to_be_bytes().to_vec();
-            bytes.extend_from_slice(kind);
-            bytes.extend_from_slice(data);
-            bytes
-        };
-        let mut mdhd = vec![0; 12]; // version/flags and creation/modification times
-        mdhd.extend_from_slice(&44100u32.to_be_bytes());
-        mdhd.extend_from_slice(&4410u32.to_be_bytes());
-        mdhd.extend_from_slice(&[0; 4]); // language and reserved
-        let mut hdlr = vec![0; 8];
-        hdlr.extend_from_slice(b"soun");
-        hdlr.extend_from_slice(&[0; 13]);
-        let mut mdia = atom(b"mdhd", &mdhd);
-        mdia.extend(atom(b"hdlr", &hdlr));
-        let mut container = atom(b"ftyp", b"M4A \0\0\0\0M4A isom");
-        container.extend(atom(b"moov", &atom(b"trak", &atom(b"mdia", &mdia))));
-        fs::write(&fixture, container).unwrap();
+        media::tests::write_wav(&fixture, 44_100, 2, 0.2);
         fs::write(
             &script,
             r#"#!/bin/sh
@@ -742,7 +655,8 @@ case "$format" in
     *m4a*) echo 'HTTP Error 403: Forbidden' >&2; exit 1 ;;
 esac
 path="${template%.*}.m4a"
-[ "$template" = 'audio.%(ext)s' ] || exit 2
+[ "$template" = 'source.%(ext)s' ] || exit 2
+# yt-dlp must only download; all conversion belongs to the Rust library.
 cp "$(dirname "$0")/fixture.m4a" "$path"
 printf '%s\n' "$path"
 "#,
@@ -751,7 +665,6 @@ printf '%s\n' "$path"
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
         let provider = YoutubeMusicAcquire {
             ytdlp: script,
-            ffmpeg: "unused".into(),
             deno: None,
         };
         let job = &reported_jobs()[2];
@@ -877,43 +790,12 @@ printf '%s\n' "$path"
                     let path = provider
                         .fetch(job, dest)
                         .unwrap_or_else(|e| panic!("{}: {e}", job.title));
-                    let probe = Command::new(provider.ffmpeg.with_file_name("ffprobe"))
-                        .args([
-                            "-v",
-                            "error",
-                            "-show_entries",
-                            "format=duration",
-                            "-of",
-                            "default=nw=1:nk=1",
-                        ])
-                        .arg(&path)
-                        .output()
-                        .unwrap();
-                    assert!(probe.status.success());
-                    let seconds: f64 = String::from_utf8_lossy(&probe.stdout)
-                        .trim()
-                        .parse()
-                        .unwrap();
-                    assert!(
-                        mixless_acquire::duration_ok(
-                            (seconds * 1000.).round() as u32,
-                            job.duration_ms
-                        ),
-                        "{}: {seconds}s",
-                        job.title
-                    );
-                    let decode = Command::new(&provider.ffmpeg)
-                        .args(["-v", "error", "-nostdin", "-i"])
-                        .arg(&path)
-                        .args(["-f", "null", "-"])
-                        .output()
-                        .unwrap();
-                    assert!(
-                        decode.status.success(),
-                        "{}: {}",
-                        job.title,
-                        String::from_utf8_lossy(&decode.stderr)
-                    );
+                    let decoded = mixless_engine::decode_file(&path).unwrap();
+                    let seconds = decoded.frames as f64 / decoded.sample_rate as f64;
+                    assert!(mixless_acquire::duration_ok(
+                        (seconds * 1000.).round() as u32,
+                        job.duration_ms
+                    ));
                     eprintln!(
                         "{}: downloaded and decoded {:.2}s in {:.1}s",
                         job.title,
@@ -928,7 +810,7 @@ printf '%s\n' "$path"
     #[test]
     #[ignore = "live Fire Away regression: search, download and full decode into a temporary directory"]
     fn live_fire_away_download() {
-        let provider = YoutubeMusicAcquire::detect().unwrap();
+        let mut provider = YoutubeMusicAcquire::detect().unwrap();
         let job = ResolveJob {
             spotify_id: "6Mu3CIPbtoPh1kEyBMLRJz".into(),
             title: "Fire Away (feat. Slayyyter) - Frost Children Remix".into(),
@@ -937,39 +819,45 @@ printf '%s\n' "$path"
             isrc: None,
         };
         let dir = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let quote =
+                |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+            let trap = dir.path().join("forbidden-tool-calls");
+            for tool in ["ffmpeg", "ffprobe"] {
+                let path = dir.path().join(tool);
+                fs::write(
+                    &path,
+                    format!("#!/bin/sh\necho {tool} >> {}\nexit 91\n", quote(&trap)),
+                )
+                .unwrap();
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let wrapper = dir.path().join("download-only");
+            fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/sh\nexport PATH={}:\"/usr/bin:/bin\"\nexec {} \"$@\"\n",
+                    quote(dir.path()),
+                    quote(&provider.ytdlp)
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+            provider.ytdlp = wrapper;
+        }
         let path = provider.fetch(&job, dir.path()).unwrap();
-        let probe = Command::new(provider.ffmpeg.with_file_name("ffprobe"))
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=nw=1:nk=1",
-            ])
-            .arg(&path)
-            .output()
-            .unwrap();
-        assert!(probe.status.success());
-        let seconds: f64 = String::from_utf8_lossy(&probe.stdout)
-            .trim()
-            .parse()
-            .unwrap();
+        assert!(
+            !dir.path().join("forbidden-tool-calls").exists(),
+            "download invoked external ffmpeg/ffprobe"
+        );
+        let decoded = mixless_engine::decode_file(&path).unwrap();
+        let seconds = decoded.frames as f64 / decoded.sample_rate as f64;
         assert!(mixless_acquire::duration_ok(
             (seconds * 1000.).round() as u32,
             job.duration_ms
         ));
-        let decoded = Command::new(&provider.ffmpeg)
-            .args(["-v", "error", "-nostdin", "-i"])
-            .arg(&path)
-            .args(["-f", "null", "-"])
-            .output()
-            .unwrap();
-        assert!(
-            decoded.status.success(),
-            "{}",
-            String::from_utf8_lossy(&decoded.stderr)
-        );
         eprintln!(
             "Fire Away: downloaded and decoded {seconds:.3}s; {}",
             fs::read_to_string(path.with_extension("json")).unwrap()
@@ -980,7 +868,6 @@ printf '%s\n' "$path"
     fn unsafe_ids_are_rejected_before_writing() {
         let provider = YoutubeMusicAcquire {
             ytdlp: "unused".into(),
-            ffmpeg: "unused".into(),
             deno: None,
         };
         let job = ResolveJob {
@@ -1002,7 +889,6 @@ printf '%s\n' "$path"
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
         let provider = YoutubeMusicAcquire {
             ytdlp: script,
-            ffmpeg: "unused".into(),
             deno: None,
         };
         let now = Instant::now();

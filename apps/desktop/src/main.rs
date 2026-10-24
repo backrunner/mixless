@@ -78,6 +78,7 @@ fn main() {
                 "revision": env!("MIXLESS_REVISION"),
                 "profile": env!("MIXLESS_BUILD_PROFILE"),
                 "built": env!("MIXLESS_BUILD_TIME"),
+                "audio_source_archive": mixless_acquire_yt::audio_source_archive(),
             })
         );
         return;

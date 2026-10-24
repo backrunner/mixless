@@ -21,6 +21,31 @@ plutil -lint "${mount}/Mixless.app/Contents/Info.plist" >/dev/null || fail "Info
 # The updater runs this exact check before installing; keep the pipeline
 # honest so a detritus xattr can never ship again.
 codesign --verify --deep --strict "${mount}/Mixless.app" || fail "app fails strict codesign"
+python3 - "${mount}/Mixless.app" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+import tarfile
+
+app = Path(sys.argv[1])
+binary = app / "Contents/MacOS/mixless"
+architectures = subprocess.check_output(["lipo", "-archs", str(binary)], text=True).split()
+assert set(architectures) == {"arm64", "x86_64"}, architectures
+for architecture in architectures:
+    links = subprocess.check_output(["otool", "-arch", architecture, "-L", str(binary)], text=True)
+    for line in links.splitlines()[1:]:
+        assert not any(part in line for part in (
+            "/opt/homebrew/", "/usr/local/", "libavcodec", "libavformat",
+            "libavutil", "libavfilter", "libswresample", "libx265",
+        )), f"External audio dependency in {architecture}: {line}"
+resources = app / "Contents/Resources"
+for name in ("FFmpeg-COPYING.LGPLv2.1.txt", "FFmpeg-LICENSE.md.txt", "FFmpeg-BUILD.md"):
+    assert (resources / "Licenses" / name).stat().st_size > 0, name
+with tarfile.open(resources / "Sources/ffmpeg-9.0.2-source.tar.gz") as archive:
+    for name in ("COPYING.LGPLv2.1", "configure", "libavcodec/aacenc.c"):
+        assert archive.getmember(f"ffmpeg-9.0.2/{name}").size > 0, name
+print("verify-macos-dmg: universal built-in audio and corresponding sources OK")
+PY
 models="${mount}/Mixless.app/Contents/Resources/models"
 case "${variant}" in
   standard) [ ! -e "${models}" ] || fail "standard installer contains models" ;;
