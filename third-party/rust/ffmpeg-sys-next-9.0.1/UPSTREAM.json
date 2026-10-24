@@ -5,5 +5,5 @@
   "repository": "https://github.com/zmwangx/rust-ffmpeg-sys",
   "ffmpeg_tag": "n9.0.2",
   "ffmpeg_revision": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
-  "changes": "Pin and verify FFmpeg source; portable audio-only static configuration; omit unused Apple video frameworks; macOS cross SDK discovery; native recipe cache invalidation; modified-source override and corresponding-source archive export."
+  "changes": "Pin and verify FFmpeg source; portable audio-only static configuration targeting macOS 12; omit unused Apple video frameworks; macOS cross SDK discovery; native recipe cache invalidation; modified-source override and corresponding-source archive export."
 }

@@ -29,6 +29,8 @@ instructions so the application can be rebuilt and relinked with changed code.
 The complete executable build recipe is in
 `third-party/rust/ffmpeg-sys-next-9.0.1/build.rs`. It enables avcodec, avformat,
 avutil, avfilter and swresample, with baseline CPU settings for the Cargo target.
+Both macOS architectures compile the static objects for macOS 12.0, matching
+the app's minimum system version regardless of the build machine's OS.
 It disables autodetection, programs, documentation, network access, GPL/nonfree
 components and optional external codecs. No x264, x265 or system codec packages
 are linked. No video decoder or encoder is enabled.

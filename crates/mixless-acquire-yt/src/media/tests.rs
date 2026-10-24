@@ -148,6 +148,8 @@ fn linked_library_has_only_the_expected_portable_audio_configuration() {
     }
     assert!(!config.contains("-march=native"));
     assert!(!config.contains("--enable-libx265"));
+    #[cfg(target_os = "macos")]
+    assert!(config.contains("-mmacosx-version-min=12.0"));
     assert!(license.contains("LGPL"));
     assert!(av::encoder::find(av::codec::Id::AAC).is_some());
     assert!(av::decoder::find(av::codec::Id::OPUS).is_some());

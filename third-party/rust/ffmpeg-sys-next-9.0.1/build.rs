@@ -399,6 +399,13 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
 
     configure.current_dir(&source_dir);
     configure.arg(format!("--prefix={}", search().to_string_lossy()));
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // Match mixless's LSMinimumSystemVersion for both native and cross
+        // builds. Clang otherwise stamps static objects with the host OS,
+        // even when the final Rust executable advertises an older target.
+        configure.arg("--extra-cflags=-mmacosx-version-min=12.0");
+        configure.arg("--extra-ldflags=-mmacosx-version-min=12.0");
+    }
 
     let target = env::var("TARGET").unwrap();
     let host = env::var("HOST").unwrap();
