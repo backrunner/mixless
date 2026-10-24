@@ -8,6 +8,10 @@ the verified source revision. Neither builds nor runtime conversion require an
 installed ffmpeg or ffprobe. See [native audio builds](third-party/FFmpeg-BUILD.md)
 for offline builds and rebuilding with modified FFmpeg sources.
 
+Cargo sets the macOS deployment target to 12.0 for both Apple Silicon and Intel,
+matching the app bundle and native audio libraries. Release installer checks
+verify both executable targets and start both slices on Apple Silicon with Rosetta.
+
 `dev.sh` builds and refreshes `target/app/Mixless.app` with the workspace
 version and the `dev` channel, then launches that bundle. `--build` refreshes
 it without launching. Development builds do not install public updates.

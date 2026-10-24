@@ -1,0 +1,5 @@
+[env]
+# Match Info.plist and the bundled FFmpeg libraries on both architectures.
+# Rust's older Intel default can make current SDKs link Swift compatibility
+# libraries without the search paths required to load them.
+MACOSX_DEPLOYMENT_TARGET = "12.0"

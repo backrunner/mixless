@@ -23,28 +23,44 @@ plutil -lint "${mount}/Mixless.app/Contents/Info.plist" >/dev/null || fail "Info
 codesign --verify --deep --strict "${mount}/Mixless.app" || fail "app fails strict codesign"
 python3 - "${mount}/Mixless.app" <<'PY'
 from pathlib import Path
+import json
+import os
+import plistlib
+import re
 import subprocess
 import sys
 import tarfile
 
 app = Path(sys.argv[1])
 binary = app / "Contents/MacOS/mixless"
+with (app / "Contents/Info.plist").open("rb") as source:
+    info = plistlib.load(source)
+assert info["LSMinimumSystemVersion"] == "12.0", info["LSMinimumSystemVersion"]
 architectures = subprocess.check_output(["lipo", "-archs", str(binary)], text=True).split()
 assert set(architectures) == {"arm64", "x86_64"}, architectures
 for architecture in architectures:
+    load_commands = subprocess.check_output(["otool", "-arch", architecture, "-l", str(binary)], text=True)
+    minimum = re.search(r"cmd LC_BUILD_VERSION\s+cmdsize \d+\s+platform \S+\s+minos (\S+)", load_commands)
+    assert minimum and minimum[1] == "12.0", f"Incorrect deployment target in {architecture}"
     links = subprocess.check_output(["otool", "-arch", architecture, "-L", str(binary)], text=True)
     for line in links.splitlines()[1:]:
         assert not any(part in line for part in (
             "/opt/homebrew/", "/usr/local/", "libavcodec", "libavformat",
             "libavutil", "libavfilter", "libswresample", "libx265",
         )), f"External audio dependency in {architecture}: {line}"
+    # Exercise both slices without a developer shell masking missing libraries.
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("DYLD_")}
+    build = json.loads(subprocess.check_output(
+        ["arch", f"-{architecture}", str(binary), "--build-info"], text=True, env=environment,
+    ))
+    assert build["version"] == info["CFBundleShortVersionString"], build
 resources = app / "Contents/Resources"
 for name in ("FFmpeg-COPYING.LGPLv2.1.txt", "FFmpeg-LICENSE.md.txt", "FFmpeg-BUILD.md"):
     assert (resources / "Licenses" / name).stat().st_size > 0, name
 with tarfile.open(resources / "Sources/ffmpeg-9.0.2-source.tar.gz") as archive:
     for name in ("COPYING.LGPLv2.1", "configure", "libavcodec/aacenc.c"):
         assert archive.getmember(f"ffmpeg-9.0.2/{name}").size > 0, name
-print("verify-macos-dmg: universal built-in audio and corresponding sources OK")
+print("verify-macos-dmg: both architectures start with the macOS 12 target; built-in audio and sources OK")
 PY
 models="${mount}/Mixless.app/Contents/Resources/models"
 case "${variant}" in

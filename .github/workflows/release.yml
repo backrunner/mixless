@@ -210,6 +210,8 @@ jobs:
             target/x86_64-apple-darwin/release/mixless \
             -output target/universal-apple-darwin/release/mixless
           lipo target/universal-apple-darwin/release/mixless -verify_arch arm64 x86_64
+          arch -arm64 target/universal-apple-darwin/release/mixless --build-info
+          arch -x86_64 target/universal-apple-darwin/release/mixless --build-info
 
       - name: Cache pinned inference runtime
         uses: actions/cache@v4
