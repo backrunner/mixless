@@ -1,12 +1,16 @@
 //! Memoize local evidence only while the planner holds immutable input borrows.
-//! Nothing survives a call: pointer reuse, reanalysis and edited test fixtures
-//! cannot inherit another source's vocal classification.
+//! Request ownership prevents pointer reuse and edited analyses inheriting
+//! another source's vocal classification.
+use crate::evidence::cache::{Local, Shared};
 use mixless_protocol::{TrackAnalysis, VocalPattern};
-use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
+use std::{cell::RefCell, marker::PhantomData, rc::Rc, sync::Arc};
+type Cache = Local<Option<VocalPattern>>;
 
-struct Cache {
-    tracks: [usize; 2],
-    values: HashMap<(usize, usize), Option<VocalPattern>>,
+pub(crate) fn shared(
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+) -> Option<Arc<Shared<Option<VocalPattern>>>> {
+    CACHE.with(|c| c.borrow().as_ref().and_then(|c| c.shared(a, b)))
 }
 thread_local! { static CACHE: RefCell<Option<Cache>> = const { RefCell::new(None) }; }
 
@@ -16,14 +20,17 @@ pub(crate) struct Scope<'a> {
     borrowed: PhantomData<(&'a TrackAnalysis, Rc<()>)>,
 }
 impl<'a> Scope<'a> {
+    #[cfg(test)]
     pub(crate) fn new(a: &'a TrackAnalysis, b: &'a TrackAnalysis) -> Self {
+        Self::with_cache(a, b, Arc::default())
+    }
+    pub(crate) fn with_cache(
+        a: &'a TrackAnalysis,
+        b: &'a TrackAnalysis,
+        shared: Arc<Shared<Option<VocalPattern>>>,
+    ) -> Self {
         Self {
-            previous: CACHE.with(|c| {
-                c.replace(Some(Cache {
-                    tracks: [a as *const _ as usize, b as *const _ as usize],
-                    values: HashMap::new(),
-                }))
-            }),
+            previous: CACHE.with(|c| c.replace(Some(Cache::new(a, b, shared)))),
             borrowed: PhantomData,
         }
     }
@@ -39,21 +46,13 @@ pub(crate) fn at(t: &TrackAnalysis, sec: f32) -> Option<VocalPattern> {
     let i = stems.frames.partition_point(|f| f.end_sec <= sec);
     let frame = stems.frames.get(i).filter(|f| f.start_sec <= sec)?;
     let key = (t as *const _ as usize, i);
-    if let Some(value) = CACHE.with(|c| {
-        c.borrow()
-            .as_ref()
-            .and_then(|c| c.values.get(&key).copied())
-    }) {
+    if let Some(value) = CACHE.with(|c| c.borrow_mut().as_mut().and_then(|c| c.get(key))) {
         return value;
     }
     let value = mixless_protocol::vocal_pattern(t, (frame.start_sec + frame.end_sec) * 0.5);
     CACHE.with(|c| {
-        if let Some(c) = c
-            .borrow_mut()
-            .as_mut()
-            .filter(|c| c.tracks.contains(&key.0))
-        {
-            c.values.insert(key, value);
+        if let Some(c) = c.borrow_mut().as_mut() {
+            c.insert(key, value);
         }
     });
     value

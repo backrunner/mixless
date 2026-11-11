@@ -1,11 +1,12 @@
 //! Source-time queries recur across candidate lengths and part arrangements.
 //! Keep exact float keys only for the lifetime of immutable analysis borrows.
 use super::{Continuation, TrackAnalysis};
-use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
+use crate::evidence::cache::{Local, Shared};
+use std::{cell::RefCell, marker::PhantomData, rc::Rc, sync::Arc};
+type Cache = Local<Continuation>;
 
-struct Cache {
-    tracks: [usize; 2],
-    values: HashMap<(usize, u32), Continuation>,
+pub(crate) fn shared(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<Arc<Shared<Continuation>>> {
+    CACHE.with(|c| c.borrow().as_ref().and_then(|c| c.shared(a, b)))
 }
 thread_local! { static CACHE: RefCell<Option<Cache>> = const { RefCell::new(None) }; }
 
@@ -14,14 +15,17 @@ pub(crate) struct Scope<'a> {
     borrowed: PhantomData<(&'a TrackAnalysis, Rc<()>)>,
 }
 impl<'a> Scope<'a> {
+    #[cfg(test)]
     pub(crate) fn new(a: &'a TrackAnalysis, b: &'a TrackAnalysis) -> Self {
+        Self::with_cache(a, b, Arc::default())
+    }
+    pub(crate) fn with_cache(
+        a: &'a TrackAnalysis,
+        b: &'a TrackAnalysis,
+        shared: Arc<Shared<Continuation>>,
+    ) -> Self {
         Self {
-            previous: CACHE.with(|c| {
-                c.replace(Some(Cache {
-                    tracks: [a as *const _ as usize, b as *const _ as usize],
-                    values: HashMap::new(),
-                }))
-            }),
+            previous: CACHE.with(|c| c.replace(Some(Cache::new(a, b, shared)))),
             borrowed: PhantomData,
         }
     }
@@ -37,29 +41,14 @@ pub(super) fn continuation(
     sec: f32,
     compute: impl FnOnce() -> Continuation,
 ) -> Continuation {
-    let key = (t as *const _ as usize, sec.to_bits());
-    let enabled = CACHE.with(|c| {
-        c.borrow()
-            .as_ref()
-            .is_some_and(|c| c.tracks.contains(&key.0))
-    });
-    if !enabled {
-        return compute();
-    }
-    if let Some(value) = CACHE.with(|c| {
-        c.borrow()
-            .as_ref()
-            .and_then(|c| c.values.get(&key).copied())
-    }) {
+    let key = (t as *const _ as usize, sec.to_bits() as usize);
+    if let Some(value) = CACHE.with(|c| c.borrow_mut().as_mut().and_then(|c| c.get(key))) {
         return value;
     }
     let value = compute();
     CACHE.with(|c| {
         if let Some(c) = c.borrow_mut().as_mut() {
-            if c.values.len() >= 32768 {
-                c.values.clear();
-            }
-            c.values.insert(key, value);
+            c.insert(key, value);
         }
     });
     value
@@ -68,6 +57,62 @@ pub(super) fn continuation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(not(feature = "trace"))]
+    fn request_evidence_crosses_workers_pairs_and_repeated_preparations() {
+        let mut a = crate::tests::track(
+            1,
+            120.,
+            "8A",
+            mixless_protocol::SectionLabel::Outro,
+            32,
+            0.8,
+            0.2,
+        );
+        let b = a.clone();
+        let c = a.clone(); // Identical IDs/payloads still have distinct identities.
+        fn context<'a>(a: &'a TrackAnalysis, b: &'a TrackAnalysis) -> crate::PlanContext<'a> {
+            crate::PlanContext {
+                outgoing: a,
+                incoming: b,
+                cues_out: &[],
+                cues_in: &[],
+                offset_a: Default::default(),
+                offset_b: Default::default(),
+            }
+        }
+        {
+            let session = crate::memo::Session::new(&[&a, &b, &c]);
+            let _scope = session.enter();
+            crate::evidence::Prepared::new(&context(&a, &b), true).run(|| {
+                assert_eq!(
+                    continuation(&a, 1., || Continuation::Continuing),
+                    Continuation::Continuing
+                );
+            });
+            let evidence = crate::evidence::Prepared::new(&context(&a, &c), true);
+            let values = crate::order::parallel::map(40, |_| {
+                evidence.run(|| {
+                    assert_eq!(
+                        continuation(&c, 1., || Continuation::Uncertain),
+                        Continuation::Uncertain
+                    );
+                    continuation(&a, 1., || panic!("request evidence lost on a worker"))
+                })
+            });
+            assert_eq!(values, vec![Continuation::Continuing; 40]);
+        }
+        a.duration_sec = 12.;
+        let session = crate::memo::Session::new(&[&a, &b]);
+        let _scope = session.enter();
+        crate::evidence::Prepared::new(&context(&a, &b), true).run(|| {
+            assert_eq!(
+                continuation(&a, 1., || Continuation::Released),
+                Continuation::Released
+            );
+        });
+    }
+
     #[test]
     fn exact_times_nested_scopes_and_unborrowed_tracks_are_isolated() {
         let mut a = crate::tests::track(

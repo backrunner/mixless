@@ -2,7 +2,7 @@
 use mixless_protocol::{StemFrame, StemKind, StemNote, TrackAnalysis};
 use std::cell::Cell;
 mod cache;
-pub(crate) use cache::Scope;
+pub(crate) use cache::{shared, Scope};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Continuation {

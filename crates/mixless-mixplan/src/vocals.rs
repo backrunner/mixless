@@ -3,7 +3,7 @@ use mixless_protocol::{BarFeature, TrackAnalysis};
 
 mod evidence;
 pub(crate) mod pattern;
-pub(crate) use evidence::{continuation, held_note, note_supported, Continuation, Scope};
+pub(crate) use evidence::{continuation, held_note, note_supported, shared, Continuation, Scope};
 
 pub(crate) fn continues(t: &TrackAnalysis, sec: f32) -> bool {
     continuation(t, sec) == Continuation::Continuing

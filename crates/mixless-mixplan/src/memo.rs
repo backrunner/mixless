@@ -32,6 +32,7 @@ struct Values {
 struct Shared {
     tracks: HashSet<usize>,
     values: Mutex<Values>,
+    sources: crate::evidence::Sources,
 }
 thread_local! { static CURRENT: RefCell<Option<Arc<Shared>>> = const { RefCell::new(None) }; }
 
@@ -61,6 +62,7 @@ impl<'a> Session<'a> {
                 Arc::new(Shared {
                     tracks: tracks.iter().map(|t| *t as *const _ as usize).collect(),
                     values: Mutex::new(Values::default()),
+                    sources: crate::evidence::Sources::default(),
                 })
             }),
             _tracks: tracks.to_vec(),
@@ -100,6 +102,22 @@ impl Workers {
 pub(crate) fn with_workers<T>(f: impl FnOnce(&Workers) -> T) -> T {
     let workers = Workers(CURRENT.with(|c| c.borrow().clone()));
     f(&workers)
+}
+
+pub(crate) fn sources(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<crate::evidence::Sources> {
+    if cfg!(feature = "trace") {
+        return None;
+    }
+    CURRENT.with(|c| {
+        c.borrow()
+            .as_ref()
+            .filter(|s| {
+                [a, b]
+                    .iter()
+                    .all(|t| s.tracks.contains(&(*t as *const _ as usize)))
+            })
+            .map(|s| s.sources.clone())
+    })
 }
 
 pub(crate) fn plans(
