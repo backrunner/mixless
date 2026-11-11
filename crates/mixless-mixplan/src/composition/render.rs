@@ -1,4 +1,4 @@
-use super::{gains, highpass, power, Frame, Shape};
+use super::{gains, highpass, power_with_filters, Frame, Shape};
 use mixless_protocol::{MixPlan, Polyline, StemMix};
 
 /// Source-clock observations shared by every shape of one arrangement.
@@ -114,9 +114,10 @@ pub(super) fn apply_prepared(
         let dt = sec - prev_sec;
         let remaining = p.clock.sample(n) - sec;
         let g = gains(shape, u);
-        let band = power(f, g);
-        l.filter_a.hp_hz.nodes.push((u, highpass(g[0], g[1])));
-        l.filter_b.hp_hz.nodes.push((u, highpass(g[1], g[0])));
+        let cutoff = [highpass(g[0], g[1]), highpass(g[1], g[0])];
+        let band = power_with_filters(f, g, cutoff);
+        l.filter_a.hp_hz.nodes.push((u, cutoff[0]));
+        l.filter_b.hp_hz.nodes.push((u, cutoff[1]));
         let progress = shape[1][2].at(u);
         for b in 0..3 {
             // Keep a single sung foreground; otherwise follow the selected

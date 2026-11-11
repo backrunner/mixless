@@ -16,16 +16,14 @@ pub(super) fn key(shape: &Shape) -> [u32; 16] {
 }
 
 pub(super) struct Costs<'a> {
-    frames: &'a [Frame],
-    tonality: Tonality,
+    prepared: super::cost::Prepared<'a>,
     values: [Mutex<HashMap<[u32; 16], Option<f32>>>; 32],
 }
 
 impl<'a> Costs<'a> {
     pub(super) fn new(frames: &'a [Frame], tonality: Tonality) -> Self {
         Self {
-            frames,
-            tonality,
+            prepared: super::cost::Prepared::new(frames, tonality),
             values: std::array::from_fn(|_| Mutex::new(HashMap::new())),
         }
     }
@@ -42,7 +40,7 @@ impl<'a> Costs<'a> {
         // `cost` is a leaf calculation: no other locks, evidence queries or
         // nested worker jobs. Keeping this shard locked coalesces identical
         // cold seeds without blocking unrelated shapes or risking pool starvation.
-        let value = super::cost(self.frames, shape, self.tonality);
+        let value = self.prepared.score(shape);
         if values.len() >= 128 {
             values.clear();
         }
