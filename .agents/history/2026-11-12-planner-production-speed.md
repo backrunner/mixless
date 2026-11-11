@@ -1,5 +1,9 @@
 # Production planner acceleration
 
+Historical snapshot. The planner Metal experiment and `gpu-audit` feature
+were subsequently removed after the [restructured GPU feasibility check](2026-11-12-planner-gpu-feasibility.md).
+The CPU optimizations described here remain in production.
+
 Date: 2026-11-12. Baseline: `5f2180f24653c75fd58957111f71a9fbf6ccb543`.
 The user requested a measured production speedup after the
 [Metal comparison](2026-11-12-planner-gpu-shadow.md).

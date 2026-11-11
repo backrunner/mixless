@@ -1,5 +1,9 @@
 # Batched scoring and Metal comparison
 
+Historical snapshot. The planner Metal experiment and `gpu-audit` feature
+were subsequently removed after the [restructured GPU feasibility check](2026-11-12-planner-gpu-feasibility.md).
+The CPU optimizations described here remain in production.
+
 Date: 2026-11-12. Baseline: `86d8fa0863013c91a535416762dd84d2d61c6e78`.
 The user authorized the batched scoring backend and CPU/GPU comparison proposed
 after the [exact-power investigation](2026-11-11-planner-algorithm-and-routes.md).

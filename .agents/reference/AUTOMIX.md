@@ -1,6 +1,6 @@
 # AutoMix 实现与试用
 
-更新：2026-11-12。当前行为以代码和测试为准；最近验证见 [生产评分提速](../history/2026-11-12-planner-production-speed.md)、[批量评分与 Metal 对照](../history/2026-11-12-planner-gpu-shadow.md)、[精确功率复用与路由覆盖](../history/2026-11-11-planner-algorithm-and-routes.md)、[搜索修复与提交前复核](../history/2026-11-11-planner-repair-and-review.md)、[独奏回原速与移调上限](../history/2026-11-10-tempo-key-return.md)、[实际声部入场与短交接排序](../history/2026-10-29-content-aware-handoffs.md)、[声部分时与后续曲对约束](../history/2026-10-28-joint-stem-scheduling.md)、 [复音追踪与 BEST 退化分析](../history/2026-10-27-instrument-voice-leading.md)、 [DnB 逐例处理](../history/2026-10-25-dnb-case-remediation.md)、[DnB 新音频补充验证](../history/2026-10-25-dnb-audio-followup.md)、[完整链路与六歌单审计](../history/2026-10-24-automix-full-audit.md) 和 [前景与能量连续性记录](../history/2026-10-24-set-foreground-continuity.md)，教学及模型研究见 [研究依据](automix-research.md)。早期设计稿不是已实现功能清单。
+更新：2026-11-12。当前行为以代码和测试为准；最近验证见 [GPU 重组核验与清理](../history/2026-11-12-planner-gpu-feasibility.md)、[生产评分提速](../history/2026-11-12-planner-production-speed.md)、[批量评分与 Metal 对照](../history/2026-11-12-planner-gpu-shadow.md)、[精确功率复用与路由覆盖](../history/2026-11-11-planner-algorithm-and-routes.md)、[搜索修复与提交前复核](../history/2026-11-11-planner-repair-and-review.md)、[独奏回原速与移调上限](../history/2026-11-10-tempo-key-return.md)、[实际声部入场与短交接排序](../history/2026-10-29-content-aware-handoffs.md)、[声部分时与后续曲对约束](../history/2026-10-28-joint-stem-scheduling.md)、 [复音追踪与 BEST 退化分析](../history/2026-10-27-instrument-voice-leading.md)、 [DnB 逐例处理](../history/2026-10-25-dnb-case-remediation.md)、[DnB 新音频补充验证](../history/2026-10-25-dnb-audio-followup.md)、[完整链路与六歌单审计](../history/2026-10-24-automix-full-audit.md) 和 [前景与能量连续性记录](../history/2026-10-24-set-foreground-continuity.md)，教学及模型研究见 [研究依据](automix-research.md)。早期设计稿不是已实现功能清单。
 
 ## 使用与显示
 
@@ -19,7 +19,7 @@
 - 当前普通、原调、保持速度及准备交接路径都失败后，自动前瞻路径才补搜缺失的 4–16 整小节 BeatBlend/LoopRoll 窗口。用户指定技法不走此补搜，已有有效方案保持优先；新增窗口仍通过全部原有安全检查。冷曲对代价继续使用原有有界搜索，补搜不写入它的候选缓存。当前 `ORDER_VERSION=28`。
 - 前瞻选择保留已生成的原调、保持速度方案：出入点及最终速度、音高相同，不代表声部路由、EQ 或评分相同。完成速度恢复后，按精确的已建立入场、结束时间、速度和音高复用下一段预测；同状态且当前代价不更好的备选不会增加无效预测。
 - 前景边界和桥接采样复用当前不可变分析的线性功率，保留原有取帧、采样密度、浮点累加顺序及安全规则。宽度试探的剪枝与局部增量评分实验未获得可靠提速，因此未保留。
-- 独立宽度试探使用固定批次，CPU 保持原有评分、缓存和严格择优顺序。可选 `gpu-audit` 仅供离线 Metal 全评分对照，不参与方案选择或剪枝；默认应用不启用它。完整模式保留全部观察，尽力模式必须报告遗漏，GPU 数值接近不等于 planner 决策相同。
+- 独立宽度试探使用固定批次，CPU 保持原有评分、缓存和严格择优顺序。跨种子合批并将两轮宽度搜索移入 GPU 后，实测仍有择优差异和端到端耗时增加，planner 的 Metal 实验与 `gpu-audit` 已移除；共享拒绝证明、SIMD 和其他 CPU 提速保留。详见 [可行性核验](../history/2026-11-12-planner-gpu-feasibility.md)。
 - 生产评分复用鼓声部变化无法修复的人声、调性及前景失败，键保留其余六条包络的全部精确端点；电平失败及有效分数仍使用完整形状键。AArch64 NEON 并行计算四条淡变包络，保留除法、运算顺序及严格择优规则；其他目标继续使用标量包络。见 [生产评分提速验证](../history/2026-11-12-planner-production-speed.md)。
 - **DropCut** 需要完整出碟 build-up 直接衔接入碟 drop 的证据。结构和声音接点允许时，也可在一个完整 drop 后瞬切到另一首 break。瞬切计划长度为零，不提前一小节启动入碟；引擎仍做短去点击处理。
 - Bass Swap 是持续重叠中的低频交接阶段，不等于整个混音时长。高频、低频、中频、Level、filter 和 crossfader 可分阶段迁移，包络使用平滑曲线。提前铺入低能量素材时，通过频段和音量保留出碟高潮的主导地位。
