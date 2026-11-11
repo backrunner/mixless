@@ -1,6 +1,8 @@
 //! Source-only reductions are shared by every shape; accumulation order is unchanged.
-use super::{gains, power, Frame, Shape};
+use super::{power, Frame, Shape};
 use crate::score::Tonality;
+mod envelopes;
+use envelopes::gains;
 
 #[derive(Debug)]
 pub(super) enum Rejection {
