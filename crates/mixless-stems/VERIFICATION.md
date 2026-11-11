@@ -1,4 +1,4 @@
-# Stem storage verification
+# Stem processing verification
 
 The storage setting defaults to 32-bit float WAV. Newly started analysis jobs
 snapshot the setting before separation; cached entries retain their format.
@@ -99,3 +99,43 @@ claim is made.
   This used the installed rustup stable compiler/target (Rust 1.99.0) and
   `DYLD_FALLBACK_LIBRARY_PATH=/usr/lib/swift` for the macOS test harness.
   It is x86_64 runtime evidence under translation, not physical Intel hardware.
+
+## Resource-aware separation concurrency
+
+The recording pool now scales from one to four independent model sessions using
+both logical CPU count and physical RAM. Additional resident model sets are
+budgeted at 6 GiB each after retaining CPU and RAM headroom; every recording also
+passes a live admission check before model loading or full-track PCM allocation.
+On macOS this uses free plus inactive VM pages and memory-pressure state, without
+double-counting speculative or purgeable pages. Reservations include estimated
+future model/activation, decoded audio and cache-verification memory.
+
+Warning pressure admits at most one new recording; critical pressure starts none.
+Missing resource information falls back to one. Running native calls finish
+normally. Waiting tasks are cancellable, release idle models and show a waiting
+status. A recording whose estimate cannot fit the machine fails clearly rather
+than waiting forever. Model loading and predictions share the existing process
+CPU budget with basic analysis. Session creation/execution/destruction remain on
+their dedicated utility-QoS threads; content locks and atomic cache publication
+are unchanged.
+
+Local native validation used four distinct synthetic 16-second recordings on
+macOS 27.0.1, 18 logical CPUs and 64 GiB RAM. The old two-session pool completed
+the batch in 35.42 s (peak footprint 9.29 GiB); the new pool reached four active
+recordings and completed in 17.20 s (peak footprint 16.73 GiB). These are single
+local wall-clock observations with other apps running, not a general speedup
+guarantee. All 16 WAV lanes and all four analysis/notes payloads were identical.
+
+A separate paced offline playback run used cached separated stems, a loop and
+two-semitone pitch shift while new native inference ran. Resource admission
+limited that run to three active recordings and held one waiting until memory
+was available. After 128 initial warmup blocks, all 6,846 measured 128-frame
+callbacks at 48 kHz finished below 2.667 ms (p99 0.138 ms, max 0.262 ms), with
+finite bounded PCM. An earlier un-warmed diagnostic included a 132 ms startup
+outlier; the final run describes an already running deck. This is offline
+evidence, not physical-device or subjective listening validation. Estimates
+are admission reserves, not hard allocator limits or GPU preemption.
+
+Artifacts and comparisons are under ignored `target/stem-concurrency-20261024/`.
+The `parallel-benchmark` example exercises production admission and cache paths;
+`MIXLESS_BENCH_PLAYBACK_CACHE` enables its paced playback diagnostic.

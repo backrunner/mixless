@@ -126,6 +126,19 @@ impl Processor {
         if let Some(a) = self.cached(content_hash, duration)? {
             return Ok(a);
         }
+        if !duration.is_finite() || duration > 20. * 60. || duration <= 0. {
+            return Err(Error::Model(
+                "Deep analysis supports tracks up to 20 minutes".into(),
+            ));
+        }
+        let mut waiting = false;
+        let _memory = crate::resources::acquire(duration, active, || {
+            if !waiting {
+                progress(Progress::WaitingForResources);
+                waiting = true;
+            }
+            self.release_models();
+        })?;
         let mut state = loop {
             check(active)?;
             let mut available = None;
@@ -149,11 +162,14 @@ impl Processor {
                 return Err(Error::Model(error.clone()));
             }
         }
-        if !duration.is_finite() || duration > 20. * 60. || duration <= 0. {
-            return Err(Error::Model(
-                "Deep analysis supports tracks up to 20 minutes".into(),
-            ));
-        }
+        // Model initialization also consumes CPU and memory. Reserve its CPU
+        // share before loading, not only before the first prediction.
+        let threads = state
+            .inference
+            .as_ref()
+            .map_or_else(Inference::configured_threads, |i| i.threads);
+        let _cpu = mixless_protocol::BackgroundWorkers::acquire_cpu(threads, active)
+            .ok_or(Error::Cancelled)?;
         cache::reserve(&self.cache, (duration as f64 * 44100. * 32.).ceil() as u64)?;
         if state.inference.is_none() {
             match Inference::load_with_cache(
@@ -178,8 +194,6 @@ impl Processor {
         }
         check(active)?;
         let inference = state.inference.as_mut().unwrap();
-        let _cpu = mixless_protocol::BackgroundWorkers::acquire_cpu(inference.threads, active)
-            .ok_or(Error::Cancelled)?;
         let audio = load()?;
         if (audio.frames as f64 / audio.sample_rate.max(1) as f64 - duration as f64).abs() > 0.05 {
             return Err(Error::Model(

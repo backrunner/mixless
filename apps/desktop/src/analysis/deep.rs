@@ -248,7 +248,7 @@ fn run(core: &AppCore, id: TrackId, generation: u64) -> Result<PreparedTrack, St
         return Err("Stem separation cancelled".into());
     }
     core.analysis
-        .set_stems(track.id, StemStatus::Running("Stems · Waiting".into()));
+        .set_stems(track.id, StemStatus::Running("Stems (waiting)".into()));
     let result = processor.analyze(
         &stem_hash,
         prepared.analysis.duration_sec,
@@ -256,11 +256,12 @@ fn run(core: &AppCore, id: TrackId, generation: u64) -> Result<PreparedTrack, St
         &mut |progress| {
             use mixless_stems::Progress::*;
             let label = match progress {
-                Downloading { percent, .. } => format!("Stems · Downloading model · {percent}%"),
-                Loading => "Stems · Loading models".into(),
-                Separating(p) => format!("Stems · Separating · {p}%"),
-                Notes { stem, percent } => format!("Stems · {stem} notes · {percent}%"),
-                Saving => "Stems · Saving".into(),
+                WaitingForResources => "Stems (waiting for resources)".into(),
+                Downloading { percent, .. } => format!("Stems (downloading model, {percent}%)"),
+                Loading => "Stems (loading models)".into(),
+                Separating(p) => format!("Stems (separating, {p}%)"),
+                Notes { stem, percent } => format!("Stems ({stem} notes, {percent}%)"),
+                Saving => "Stems (saving)".into(),
             };
             if active() {
                 core.analysis
@@ -363,7 +364,8 @@ mod tests {
             false,
         ));
         let workers = core.stems.as_ref().unwrap().parallelism();
-        for id in tracks.iter().take(workers) {
+        let jobs = workers.min(tracks.len());
+        for id in tracks.iter().take(jobs) {
             schedule(&core, *id);
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -374,7 +376,7 @@ mod tests {
                 .values()
                 .filter(|status| matches!(status, StemStatus::Running(_)))
                 .count();
-            if running == workers {
+            if running == jobs {
                 break;
             }
             assert!(

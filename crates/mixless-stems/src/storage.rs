@@ -1,5 +1,7 @@
 //! On-disk representation, independent of inference/evidence version.
 use serde::{Deserialize, Serialize};
+/// Serialized stem cache layout, separate from model/evidence generation.
+pub const STORAGE_VERSION: u32 = 1;
 #[cfg(all(test, stems_ort))]
 mod tests;
 
@@ -39,7 +41,7 @@ pub(crate) struct Storage {
 
 impl Storage {
     pub fn valid(&self, duration: f32) -> bool {
-        self.version == 1
+        self.version == STORAGE_VERSION
             && self.frames > 0
             && self.frames <= MAX_FRAMES
             && (self.frames as f64 / RATE as f64 - duration as f64).abs() <= 0.05

@@ -13,6 +13,8 @@ mod portable;
 mod priority;
 mod processor;
 mod resample;
+#[cfg(stems_ort)]
+mod resources;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod runtime;
 #[cfg(stems_ort)]
@@ -27,7 +29,7 @@ mod worker;
 pub use evidence::VERSION;
 pub use portable::FILES as PORTABLE_FILES;
 pub use processor::Processor;
-pub use storage::StorageFormat;
+pub use storage::{StorageFormat, STORAGE_VERSION};
 
 /// False on Intel macOS: no ONNX Runtime build exists for
 /// x86_64-apple-darwin, so separation jobs fail there — cached stems and
@@ -129,6 +131,7 @@ impl<T> From<ort::Error<T>> for Error {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Progress {
+    WaitingForResources,
     Downloading { model: String, percent: u8 },
     Loading,
     Separating(u8),
@@ -161,6 +164,13 @@ pub struct Stems {
 
 #[cfg(stems_ort)]
 impl Inference {
+    fn configured_threads() -> usize {
+        std::env::var("MIXLESS_ORT_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(mixless_protocol::BackgroundWorkers::detected().inference_threads)
+            .clamp(1, 16)
+    }
     pub fn load(
         model_dir: &Path,
         bundled: Option<&Path>,
@@ -200,11 +210,7 @@ impl Inference {
         progress(Progress::Loading);
         // Each pooled session gets a share of the same CPU budget as basic
         // analysis; the override remains available for throughput benchmarks.
-        let intra = std::env::var("MIXLESS_ORT_THREADS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(mixless_protocol::BackgroundWorkers::detected().inference_threads)
-            .clamp(1, 16);
+        let intra = Self::configured_threads();
         tracing::info!(threads = intra, "Loading stem inference sessions");
         let separator = worker::ModelSession::load(
             &paths.separators[0],

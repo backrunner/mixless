@@ -9,7 +9,7 @@ fn hardware() -> &'static (BackgroundWorkers, CpuBudget) {
     HARDWARE.get_or_init(|| {
         let cpus = std::thread::available_parallelism().map_or(1, usize::from);
         (
-            BackgroundWorkers::for_cpus(cpus),
+            BackgroundWorkers::for_resources(cpus, BackgroundWorkers::memory_bytes()),
             CpuBudget::new(cpus.saturating_sub(2).max(1)),
         )
     })
@@ -37,10 +37,22 @@ impl BackgroundWorkers {
     }
 
     pub fn for_cpus(cpus: usize) -> Self {
+        Self::for_resources(cpus, None)
+    }
+
+    /// Physical memory is stable; live admission is checked again before each
+    /// stem job. Unknown memory retains the existing two-session ceiling.
+    pub fn for_resources(cpus: usize, memory: Option<u64>) -> Self {
         let available = cpus.saturating_sub(2).max(1);
-        // Full-track PCM and model activations are large. Scale CPU work while
-        // keeping at most two model sets and eight basic analyses resident.
-        let stems = if available >= 6 { 2 } else { 1 };
+        const GIB: u64 = 1024 * 1024 * 1024;
+        // Leave a quarter of RAM plus 4 GiB for playback, UI, basic analysis and
+        // other apps. Native cold-start measurements approached 5 GiB per
+        // active recording, so budget 6 GiB per potential resident model set.
+        let memory_slots = memory.map_or(2, |bytes| {
+            (bytes.saturating_sub(bytes / 4).saturating_sub(4 * GIB) / (6 * GIB)).clamp(1, 4)
+                as usize
+        });
+        let stems = (available / 3).clamp(1, memory_slots);
         let inference_threads = (available / 2 / stems).clamp(1, 4);
         let analysis = available
             .saturating_sub(stems * inference_threads)
@@ -50,6 +62,37 @@ impl BackgroundWorkers {
             stems,
             inference_threads,
         }
+    }
+
+    pub fn memory_bytes() -> Option<u64> {
+        #[cfg(target_os = "macos")]
+        {
+            unsafe extern "C" {
+                fn sysctlbyname(
+                    name: *const std::ffi::c_char,
+                    old: *mut std::ffi::c_void,
+                    len: *mut usize,
+                    new: *mut std::ffi::c_void,
+                    new_len: usize,
+                ) -> i32;
+            }
+            let mut bytes = 0u64;
+            let mut size = std::mem::size_of_val(&bytes);
+            // SAFETY: a correctly sized integer buffer and read-only sysctl.
+            let status = unsafe {
+                sysctlbyname(
+                    c"hw.memsize".as_ptr(),
+                    (&mut bytes as *mut u64).cast(),
+                    &mut size,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            return (status == 0 && size == std::mem::size_of::<u64>() && bytes > 0)
+                .then_some(bytes);
+        }
+        #[cfg(not(target_os = "macos"))]
+        None
     }
 }
 
@@ -117,6 +160,27 @@ impl Drop for BackgroundCpuPermit<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stem_capacity_respects_both_memory_and_cpu_headroom() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        for (memory, expected) in [(8, 1), (16, 1), (32, 3), (64, 4)] {
+            assert_eq!(
+                BackgroundWorkers::for_resources(18, Some(memory * GIB)).stems,
+                expected
+            );
+        }
+        for cpus in 0..=128 {
+            for memory in [0, 4, 8, 16, 32, 64, 128] {
+                let workers = BackgroundWorkers::for_resources(cpus, Some(memory * GIB));
+                assert!((1..=4).contains(&workers.stems));
+                assert!(
+                    workers.analysis + workers.stems * workers.inference_threads
+                        <= cpus.saturating_sub(2).max(2)
+                );
+            }
+        }
+    }
 
     #[test]
     fn independent_pools_share_a_cpu_budget_and_bound_memory() {

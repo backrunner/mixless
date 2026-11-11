@@ -158,7 +158,7 @@ pub(crate) fn save_as(
         .suffix(".partial")
         .tempdir_in(root)?;
     let mut storage = Storage {
-        version: 1,
+        version: crate::storage::STORAGE_VERSION,
         format,
         frames,
         gain: [1.; 4],
