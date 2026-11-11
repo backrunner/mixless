@@ -161,6 +161,23 @@ mod tests {
         ] {
             let expected = t.stems.as_ref().and_then(|s| s.frame_at(sec)).map(measure);
             assert_eq!(frame(t, sec).map(|(_, p)| p), expected);
+            let foreground = t.stems.as_ref().and_then(|stems| {
+                if sec >= t.duration_sec {
+                    return Some(0f32);
+                }
+                let f = stems.frame_at(sec)?;
+                Some(
+                    f.band_db[0]
+                        .iter()
+                        .chain(&f.band_db[2][1..])
+                        .map(|db| 10f32.powf(*db / 10.))
+                        .sum::<f32>(),
+                )
+            });
+            assert_eq!(
+                super::super::unmixed_foreground(t, sec).map(f32::to_bits),
+                foreground.map(f32::to_bits)
+            );
             let expected: Vec<_> = (0..4)
                 .filter_map(|i| t.stems.as_ref()?.frame_at(sec - 0.15 + 0.1 * i as f32))
                 .map(measure)

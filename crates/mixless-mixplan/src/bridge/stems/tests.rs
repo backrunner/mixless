@@ -1,6 +1,60 @@
 use super::*;
 use mixless_protocol::{MixPlanSummary, SectionLabel, StemKind, StemNote, TransitionMode};
 
+#[test]
+fn shared_powers_preserve_original_sampling_and_float_operations() {
+    fn original(t: &TrackAnalysis, sec: f32, width: f32) -> Option<([[f32; 3]; 4], f32, [f32; 3])> {
+        let meters = t.stems.as_ref()?;
+        let mut bands = [[0.; 3]; 4];
+        let mut voice = 0f32;
+        let mut onset = [0f32; 3];
+        for i in 0..5 {
+            let s = (sec + (i as f32 / 4. - 0.5) * width).clamp(0., t.duration_sec - 0.001);
+            let f = meters.frame_at(s)?;
+            voice = voice.max(f.vocal_activity);
+            for part in 0..3 {
+                onset[part] = onset[part].max(f.onset[part]);
+                for band in 0..3 {
+                    let target = if part == 2 && band == 0 { 3 } else { part };
+                    bands[target][band] += 10f32.powf(f.band_db[part][band] / 10.) / 5.;
+                }
+            }
+        }
+        Some((bands, voice, onset))
+    }
+    let (mut a, b, _) = fixture();
+    for (i, f) in a.stems.as_mut().unwrap().frames.iter_mut().enumerate() {
+        for (j, db) in f.band_db.iter_mut().flatten().enumerate() {
+            *db = -90. + ((i * 17 + j * 23) % 900) as f32 / 10.;
+        }
+    }
+    a.stems.as_mut().unwrap().frames.remove(17);
+    let mut missing = b.clone();
+    missing.stems = None;
+    let bits = |(power, voice, onset): ([[f32; 3]; 4], f32, [f32; 3])| {
+        (
+            power.map(|p| p.map(f32::to_bits)),
+            voice.to_bits(),
+            onset.map(f32::to_bits),
+        )
+    };
+    for scoped in [false, true] {
+        let evidence = crate::level::evidence::Evidence::new(&a, &b);
+        let _scope = scoped.then(|| evidence.enter());
+        for t in [&a, &b, &missing] {
+            for sec in [-1., 0., 0.125, 2., 4.25, 20., t.duration_sec, f32::NAN] {
+                for width in [0., 0.2, 1., 3.] {
+                    assert_eq!(
+                        powers(t, sec, width).map(bits),
+                        original(t, sec, width).map(bits),
+                        "scoped={scoped}, time={sec}, width={width}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn fixture() -> (TrackAnalysis, TrackAnalysis, MixPlan) {
     let mut a = crate::stem_regressions::with_stems(crate::tests::track(
         1,

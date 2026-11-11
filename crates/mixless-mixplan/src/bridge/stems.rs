@@ -32,19 +32,19 @@ struct Frame {
 type Shape = [[Fade; 4]; 2];
 
 fn powers(t: &TrackAnalysis, sec: f32, width: f32) -> Option<([[f32; 3]; 4], f32, [f32; 3])> {
-    let meters = t.stems.as_ref()?;
+    t.stems.as_ref()?;
     let mut bands = [[0.; 3]; 4];
     let mut voice = 0f32;
     let mut onset = [0f32; 3];
     for i in 0..5 {
         let s = (sec + (i as f32 / 4. - 0.5) * width).clamp(0., t.duration_sec - 0.001);
-        let f = meters.frame_at(s)?;
+        let (f, power) = crate::level::evidence::frame(t, s)?;
         voice = voice.max(f.vocal_activity);
         for part in 0..3 {
             onset[part] = onset[part].max(f.onset[part]);
             for band in 0..3 {
                 let target = if part == 2 && band == 0 { 3 } else { part };
-                bands[target][band] += 10f32.powf(f.band_db[part][band] / 10.) / 5.;
+                bands[target][band] += power[part][band] / 5.;
             }
         }
     }

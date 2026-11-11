@@ -84,20 +84,14 @@ pub(crate) fn unmixed_parts(t: &TrackAnalysis, sec: f32) -> Option<[f32; 4]> {
 }
 
 pub(crate) fn unmixed_foreground(t: &TrackAnalysis, sec: f32) -> Option<f32> {
-    let stems = t.stems.as_ref()?;
+    t.stems.as_ref()?;
     if sec >= t.duration_sec {
         return Some(0.);
     }
     // Do not smooth across the edit: pre-cut power would turn a real silence
     // immediately after the boundary into an invented ongoing foreground.
-    let f = stems.frame_at(sec)?;
-    Some(
-        f.band_db[0]
-            .iter()
-            .chain(&f.band_db[2][1..])
-            .map(|db| 10f32.powf(*db / 10.))
-            .sum(),
-    )
+    let (_, power) = evidence::frame(t, sec)?;
+    Some(power[0].iter().chain(&power[2][1..]).copied().sum())
 }
 
 /// Predicted master level in dB at bar `u` of the plan.
