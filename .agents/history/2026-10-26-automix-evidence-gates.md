@@ -1,0 +1,19 @@
+# AutoMix evidence gates and audible Best scoring
+
+Implemented the follow-up to the v11 played-out transition regression. Weak note-only estimates now require evidence from their own audible body; a quiet tail of the same supported note remains protected. Actual singing and short interword rests retain their veto. Uncertainty affects candidate preference and fallback entrance selection. Incoming level restoration above the established presence floor no longer counts as revealing a missing word; deep EQ restoration and partial-word entrances remain rejected.
+
+Vocal fitting preserves sequential alternatives and considers naturally interleaved singers using measured simultaneous activity. A complete entrance may open at its actual launch instead of waiting for another breath. Delayed decks contribute no energy before launch. Best's played-out penalty now measures routed audible overlap, including gain, EQ, filters and launch time, rather than nominal reserved bars. ORDER_VERSION is 13; analysis remains v26. No callback, schema, external protocol or title-specific rule changed.
+
+Four saved playlists, 76 source-hash-verified recordings, all with stems, form a regression corpus rather than a holdout. The unchanged independent observer v4 evaluates fixed ORDER and fixed old BEST with inherited source entry/rate/pitch, and fresh BEST separately. Each mode includes 80 transitions with loop closure and one repeated carried edge, not 80 independent observations.
+
+- Fixed 160 transitions: played-out 65 to 60; audible overlaps of at least four bars 13 to 15; fallback 30 to 28; default vocal damage 0/155 in both versions. Instrument-bed gaps rise from 72.95 to 80.15 seconds, so this is not a no-regression claim.
+- Fresh BEST: played-out 17 to 13; long audible overlaps 12 to 17; fallback 4 to 5; default vocal damage 0/75 to 0/77; instrument-bed gaps 76.25 to 66.60 seconds. Bed gaps decrease in each of the four playlists. Different coverage and adjacency remain explicit.
+- Three-pulse vocal association remains a sensitivity warning: fixed 14 to 13, fresh BEST 9 to 13. Default zero detections do not establish lyric completeness.
+
+Rejected experiments are retained under ignored target artifacts. Softening actual interword pauses introduced vocal risks. Rest-density/melodic-anchor search expansions increased Electronic bed gaps. Additional foreground penalties affected a valid cross-key regression. Those changes were removed; the original word-gap and cross-key protections remain. A test that equated an open silent vocal lane with a second singer now checks measured vocal participation.
+
+Validation: workspace 657 passed, 28 ignored; desktop 233 passed, 7 ignored; observer 31 passed; planner 201 passed, 1 ignored (included in workspace). Changed-file rustfmt, diff check and development bundle build passed. Two busy-host HID enumeration timeouts are recorded; the full quiet rerun passed after temporarily yielding only this task's audit processes, with no test or timeout changes.
+
+Three continuous four-stem Engine renders bind exactly to the final plans: 39 handoffs, 5870.13 seconds, including a mixed-tempo playlist. Full sample scans found zero non-finite or over-full-scale samples; peak 0.66720. Native UI automation still reports `Sky Computer Use native pipe startup failed`. No subjective listening, physical audio playback or native screenshot acceptance is claimed.
+
+Evidence is local and ignored: `target/automix-balanced-20261026/report.md`, `aggregate.json`, `validation.json`, `provenance.json`, `render-bindings.json`, and `7/clips.json`. Source audio, the private database, complete personal analyses and rendered audio are not repository deliverables. The development bundle was rebuilt, without launching, committing, pushing or publishing. Existing uncommitted work is preserved.

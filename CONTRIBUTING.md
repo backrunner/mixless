@@ -88,6 +88,12 @@ result. Cache keys already include the actual analysis payloads, analysis/stem
 versions, source hashes, playlist occurrences and planner options. Unfinished playlist
 preparation or changing evidence must not produce a persistent result.
 
+Cold pair scores also persist independently of playlist order, with the same
+evidence and version keys. They must never contain carried-state chain corrections.
+Completed candidate plans are shared only within an immutable planning request;
+their keys include exact cue, entry, rate, pitch and option values. Keep trace
+collectors uncached, and keep disk I/O outside planner workers and audio callbacks.
+
 ## Module boundaries
 
 Controller presets and adapters follow the

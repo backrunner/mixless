@@ -1,0 +1,36 @@
+# Relative recovery inside continuous peaks
+
+This change follows the observation that a strongly limited track can remain loud while its arrangement relaxes. It does not equate a quiet passage with a safe full-track exit.
+
+## Mechanism and implementation
+
+Brain Power's stored version-26 analysis merges adjacent Drop sections into one protected span, 0–108.697 s. The mixture's RMS, low-band level and saturated kick indicator miss a kit withdrawal at 46.967–58.259 s. Raw cached PCM confirms drum power around −8.39 / −12.27 / −8.53 dBFS in equally long before / inside / after windows. The mixture RMS is 0.526 / 0.535 / 0.527. Instruments remain present and grow stronger, so the observation does not establish that a melody has finished.
+
+`mixless_protocol::relative_recoveries` derives local arrangement windows from the existing bar clock and separated measurements. It compares both neighbours independently. A candidate needs:
+
+- At least a 3 dB kit power retreat relative to the lower quartile of neighbouring bar levels, also exceeding twice their median absolute deviation. Every candidate bar must remain at least 2 dB below the neighbouring median. These are power contrast and sustained-retreat criteria, not track-specific level thresholds.
+- A decrease in separated drum attack activity of at least 10% and twice local variation. This rejects level-only changes and a bass mute with continuing drums.
+- At least half the measured periodic phrase spacing, or four local bars using an octave-normalized pulse if that lattice is absent. A minimum of two measured bars remains. Neighbourhoods cover the same source duration and may use enclosing bars across a tempo change.
+- A surviving tonal bed, supported local clock, no measured buildup, complete feature coverage, and a real return inside a contiguous Drop/Chorus run. Missing or ambiguous evidence adds no permission.
+
+The shared evidence splits derived peak ranges, supplies planner recovery windows and admits their edges as arrangement candidates. It does not relabel persisted sections, fabricate melody endings, mark a whole track as vocal chop, or authorize every internal downbeat as an exit. Voice, melodic phrase, harmony, routing and heard-level checks remain in place. A thread-bound `PeakScope` caches evidence only while immutable inputs are borrowed; nested calls restore their parent's cache. ORDER_VERSION is 17; no analysis migration or callback change is needed.
+
+Thresholds are mechanism-based conservative proposals, not perceptually calibrated probabilities. All 76 available recordings are development/regression material; there is no independent annotated holdout in this audit.
+
+## Evidence and limits
+
+The formal database was opened read-only and backed up consistently. All 76 source hashes and analysis payloads, including versions and actual four playlist orders, were verified. Final acceptance artifacts live in `target/automix-relative-recovery-20261027/final/`, including `pcm-evidence.json`, `relative-windows-final.json`, per-playlist plans and observer reports.
+
+The relative detector finds a new internal window in Brain Power; other recordings in this corpus retain their existing derived peak ranges. Metamorphic checks cover gain, time offset, speed, half/double clock, a tempo change and three-beat meter. Counterexamples include short fills, bass-only mutes, a drum-level change without changed attacks, missing stems/frames/bars, weak clock, no return, overall fade, buildup and strong ordinary bar-level variation. An integration test verifies ongoing singing, held instrument notes, melodic phrase protection, the returning peak, late entry and manual cue authority.
+
+A separate label-coarsening probe changes only stored Break/Breakdown labels between peaks, preserving the audio features. Among 26 recordings with such synthetic coarsening, the new detector recovers windows in Don't trust me and Reborn. This is evidence that the signal mechanism is not tied to Brain Power's identity; it is not an accuracy score or an independent annotated holdout. The other 24 recordings remain unconfirmed by this conservative detector.
+
+With the actual v16 BEST inherited entry, Brain Power → Feels So Right reaches the new 46.967, 52.613 and 58.259 s search locations. They no longer fail the old whole-track peak protection. Exhaustive existing-strategy enumeration still finds no legal internal arrangement for this pair: melodic release fitting, incoming phrase/peak entry, harmonic carry and return alignment reject different alternatives. A short quiet vocal frame is not sufficient to fit the full audible envelope. Brain Power → Still in my heart from the older frozen BEST also retains its terminal handoff. This is a correction to structural eligibility, not a claim that these audible handoffs have been solved.
+
+The first batch audit accidentally copied an old executable because `--examples` omitted the feature-gated `automix-audit` target. It was invalidated, moved under `invalid-stale-binary/`, and excluded from acceptance. The rerun explicitly builds `--features audit --example automix-audit`, copies an immutable binary and verifies its SHA256 differs from the frozen v16 baseline. `binary-hashes.json` records executable identities. No result from the invalid batch is used as new-version regression evidence.
+
+A subsequent complete candidate audit exposed an unsupported authorization: the kit edge could become a short whole-mix cut. In freshly recomputed MUG BEST over three cycles, tail-short count fell 24 → 21 and foreground-gap seconds fell 49.65 → 29.70, but sustained-instrument risk flags rose 24 → 27. For Brain Power → Still, the observer flags the incoming sustained instrument: roughly 1.4 note-seconds of its beginning are hidden. This is a measured risk flag, not listening-confirmed damage. That candidate was rejected. The final version keeps relative windows separate from full phrase endings: an unconfirmed relative exit requires successful part fitting, and the short-handoff path cannot use a vocal rest alone to certify the accompanying melody. A regression with continuous, untranscribed instruments verifies this route. The relative return also no longer counts as an additional authored chorus for ranking penalties. The intermediate full audit remains at the artifact root for diagnosis; final runs are under `final/`.
+
+Final quantitative comparisons, render checks and build results are recorded in the artifact `final/report.md`. Automated measures and offline engine renders do not establish listening acceptance. No formal library changes, native playback interruption, install, commit, push or release are part of this change.
+
+Final acceptance: all 12 comparisons retain identical plans, queues and observer summaries across 684 evaluated transitions. All six before/after renders match their paired PCM hashes (66.03 s total). No audible improvement is claimed for the remaining Brain Power handoffs. Workspace passes 678 tests with the two native HID cases excluded and then passed individually; desktop passes 233 tests; the development bundle builds. Changed Rust formatting and `git diff --check` pass. Whole-workspace formatting still reports pre-existing differences outside this change.
