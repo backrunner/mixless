@@ -3,7 +3,7 @@ name = "mixless-mixplan"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "AI mix planner. Depends only on mixless-protocol."
+description = "Deterministic mix planning with optional offline scoring diagnostics."
 
 [dependencies]
 mixless-protocol = { workspace = true }
@@ -15,6 +15,12 @@ serde_json = { workspace = true, optional = true }
 audit = ["dep:serde_json"]
 # Count candidate rejections per source line for offline audits.
 trace = ["audit"]
+# Compare Metal scoring with CPU decisions; never selects or prunes a plan.
+gpu-audit = ["audit", "dep:metal", "dep:objc"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { version = "0.29", optional = true }
+objc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

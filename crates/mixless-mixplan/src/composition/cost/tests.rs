@@ -46,3 +46,55 @@ fn prepared_reductions_match_original_cost_bits_for_success_and_rejection() {
     }
     assert!(accepted >= 40 && rejected >= 40);
 }
+
+#[test]
+#[ignore = "requires a Metal device; run separately without trace or concurrent workloads"]
+#[cfg(all(feature = "gpu-audit", target_os = "macos", not(feature = "trace")))]
+fn metal_compares_complete_scores_without_changing_cpu_decisions() {
+    use crate::composition::search::Costs;
+    let frames: Vec<_> = (0..129)
+        .map(|i| Frame {
+            u: i as f32 / 8.,
+            sec: i as f32 / 4.,
+            bands: [[[0.01; 3]; 4]; 2],
+            voice: [0.7, 0.8],
+        })
+        .collect();
+    let (_, report) = crate::gpu_audit::compare(crate::gpu_audit::Mode::Complete, || {
+        for tonality in [Tonality::Compatible, Tonality::Unknown, Tonality::Conflict] {
+            let costs = Costs::new(&frames, tonality);
+            for group in 0..12 {
+                let shapes: [Shape; 5] = std::array::from_fn(|i| {
+                    let mut shape = [[Fade {
+                        start: 4. + group as f32 / 8.,
+                        end: 8. + i as f32 / 4.,
+                    }; 4]; 2];
+                    if group % 2 == 0 {
+                        shape[0][0] = Fade { start: 3., end: 4. };
+                        shape[1][0] = Fade {
+                            start: 9.,
+                            end: 10.,
+                        };
+                    }
+                    shape
+                });
+                let expected =
+                    shapes.map(|s| reference::cost(&frames, &s, tonality).map(f32::to_bits));
+                assert_eq!(costs.batch(&shapes).map(|s| s.map(f32::to_bits)), expected);
+            }
+        }
+    });
+    eprintln!("{report:#}");
+    assert_eq!(report["status"], "complete");
+    assert_eq!(report["comparison"]["queries"], 180);
+    assert_eq!(report["comparison"]["acceptance_mismatches"], 0);
+    assert_eq!(report["comparison"]["batch_selection_mismatches"], 0);
+    assert_eq!(report["comparison"]["nonfinite_mismatches"], 0);
+    // A fixture regression limit, not a certified bound for GPU decisions.
+    assert!(
+        report["comparison"]["max_absolute_difference"]
+            .as_f64()
+            .unwrap()
+            < 0.001
+    );
+}
