@@ -28,33 +28,36 @@ pub(super) fn choose(
     let mut best_merit = f32::INFINITY;
     let evaluate = |candidate: &Candidate| {
         let mut rendered = plan.clone();
-        if super::render::apply_prepared(&mut rendered, frames, &candidate.shape, &prepared)
-            .is_none()
-            || !super::arrival::preserved(&rendered, ctx, reference)
-            || !crate::foreground::preserved(&rendered, ctx)
-            || !crate::experience::genuine(&rendered, ctx)
-        {
-            return None;
-        }
-        let overlap = crate::experience::overlap_with_reference(
-            &rendered,
-            ctx.outgoing,
-            ctx.incoming,
-            reference,
-        );
-        if !manual && overlap < 1. {
-            return None;
-        }
-        let deduction = duration_reward(n) - duration_reward(overlap);
-        let cost = candidate.base + deduction.max(0.);
-        let merit = cost
-            + crate::foreground::uncertainty(&rendered, ctx)
-            + crate::experience::arrival_debt(&rendered, ctx.incoming)
-            + if manual {
-                0.
-            } else {
-                crate::energy::loss_cost(&rendered, ctx.outgoing, ctx.incoming)
-            };
+        super::render::apply_prepared(&mut rendered, frames, &candidate.shape, &prepared)?;
+        let (merit, cost) =
+            crate::level::routed::with_plan(&rendered, ctx.outgoing, ctx.incoming, || {
+                if !super::arrival::preserved(&rendered, ctx, reference)
+                    || !crate::foreground::preserved(&rendered, ctx)
+                    || !crate::experience::genuine(&rendered, ctx)
+                {
+                    return None;
+                }
+                let overlap = crate::experience::overlap_with_reference(
+                    &rendered,
+                    ctx.outgoing,
+                    ctx.incoming,
+                    reference,
+                );
+                if !manual && overlap < 1. {
+                    return None;
+                }
+                let deduction = duration_reward(n) - duration_reward(overlap);
+                let cost = candidate.base + deduction.max(0.);
+                let merit = cost
+                    + crate::foreground::uncertainty(&rendered, ctx)
+                    + crate::experience::arrival_debt(&rendered, ctx.incoming)
+                    + if manual {
+                        0.
+                    } else {
+                        crate::energy::loss_cost(&rendered, ctx.outgoing, ctx.incoming)
+                    };
+                Some((merit, cost))
+            })?;
         Some((merit, rendered, cost))
     };
     let max_batch = if cfg!(feature = "trace") {

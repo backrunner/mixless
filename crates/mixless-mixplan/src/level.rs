@@ -3,9 +3,10 @@
 //! the equal-power crossfader, channel gain, the three-band isolator, the
 //! channel filters and any stem gains. The mix overlay, the stem swap and
 //! the gain compensation all judge a transition by the same estimate.
-use mixless_protocol::{MixPlan, Polyline, StemMix, TrackAnalysis};
+use mixless_protocol::{MixPlan, Polyline, TrackAnalysis};
 
 pub(crate) mod evidence;
+pub(crate) mod routed;
 
 /// Representative centres of the isolator's bands (crossovers at 150 Hz and
 /// 2 kHz) for the filter responses, Hz.
@@ -108,7 +109,7 @@ pub(crate) fn at(plan: &MixPlan, a: &TrackAnalysis, b: &TrackAnalysis, u: f32) -
 /// Separate routed powers so musical comparisons can remove each recording's
 /// mastering gain without changing any playback controls.
 pub(crate) fn deck_power(plan: &MixPlan, a: &TrackAnalysis, b: &TrackAnalysis, u: f32) -> [f32; 2] {
-    routed_power(plan, a, b, u, [1.; 4])
+    routed::full(plan, a, b, u, || routed_power(plan, a, b, u, [1.; 4]))
 }
 
 /// Raw and heard vocal/melodic power. A parked incoming voice is an available
@@ -121,16 +122,18 @@ pub(crate) fn foreground_power(
 ) -> Option<([f32; 2], [f32; 2])> {
     a.stems.as_ref()?;
     b.stems.as_ref()?;
-    let mask = [1., 0., 1., 0.];
-    let raw = [
-        bands(a, plan.outgoing_source.sample(u), Some(mask))
-            .iter()
-            .sum(),
-        bands(b, plan.incoming_source.sample(u), Some(mask))
-            .iter()
-            .sum(),
-    ];
-    Some((raw, routed_power(plan, a, b, u, mask)))
+    Some(routed::foreground(plan, a, b, u, || {
+        let mask = [1., 0., 1., 0.];
+        let raw = [
+            bands(a, plan.outgoing_source.sample(u), Some(mask))
+                .iter()
+                .sum(),
+            bands(b, plan.incoming_source.sample(u), Some(mask))
+                .iter()
+                .sum(),
+        ];
+        (raw, routed_power(plan, a, b, u, mask))
+    }))
 }
 
 fn routed_power(
@@ -140,57 +143,60 @@ fn routed_power(
     u: f32,
     mask: [f32; 4],
 ) -> [f32; 2] {
-    let l = &plan.lanes;
-    let x = (l.xfader.sample(u).clamp(-1., 1.) + 1.) * 0.5;
-    let stems: Option<&StemMix> = plan.stem_mix.as_ref();
-    let deck = |t: &TrackAnalysis,
-                source: &Polyline,
-                fader: f32,
-                gain: &Polyline,
-                eq: &mixless_protocol::EqLane,
-                filter: &mixless_protocol::FilterLane,
-                stem: Option<&[Polyline; 4]>|
-     -> [f32; 3] {
-        if source.nodes.is_empty() || fader <= 0. {
-            return [0.; 3];
-        }
-        let selected = stem.map_or([1.; 4], |s| parts(s, u));
-        let p = bands(
-            t,
-            source.sample(u),
-            Some(std::array::from_fn(|i| selected[i] * mask[i])),
-        );
-        let g = fader * lin(gain.sample(u));
-        let eqs = [eq.low.sample(u), eq.mid.sample(u), eq.high.sample(u)].map(lin);
-        let (lp, hp) = (filter.lp_hz.sample(u), filter.hp_hz.sample(u));
-        std::array::from_fn(|i| {
-            let f = filter_gain(lp, hp, CENTRES[i]);
-            p[i] * (g * eqs[i] * f).powi(2)
+    let controls = routed::controls(plan, a, b, u, || {
+        let l = &plan.lanes;
+        let x = (l.xfader.sample(u).clamp(-1., 1.) + 1.) * 0.5;
+        std::array::from_fn(|d| {
+            let (source, fader, gain, eq, filter, stem) = if d == 0 {
+                (
+                    &plan.outgoing_source,
+                    (1. - x).sqrt(),
+                    &l.gain_a,
+                    &l.eq_a,
+                    &l.filter_a,
+                    plan.stem_mix.as_ref().map(|s| &s.outgoing),
+                )
+            } else {
+                if !(u + 0.0001 >= plan.incoming_start_bar) {
+                    return None;
+                }
+                (
+                    &plan.incoming_source,
+                    x.sqrt(),
+                    &l.gain_b,
+                    &l.eq_b,
+                    &l.filter_b,
+                    plan.stem_mix.as_ref().map(|s| &s.incoming),
+                )
+            };
+            if source.nodes.is_empty() || fader <= 0. {
+                return None;
+            }
+            let selected = stem.map_or([1.; 4], |s| parts(s, u));
+            let g = fader * lin(gain.sample(u));
+            let eqs = [eq.low.sample(u), eq.mid.sample(u), eq.high.sample(u)].map(lin);
+            let (lp, hp) = (filter.lp_hz.sample(u), filter.hp_hz.sample(u));
+            Some(routed::Deck {
+                source: source.sample(u),
+                selected,
+                multiplier: std::array::from_fn(|i| {
+                    let f = filter_gain(lp, hp, CENTRES[i]);
+                    (g * eqs[i] * f).powi(2)
+                }),
+            })
         })
-    };
-    let a_bands = deck(
-        a,
-        &plan.outgoing_source,
-        (1. - x).sqrt(),
-        &l.gain_a,
-        &l.eq_a,
-        &l.filter_a,
-        stems.map(|s| &s.outgoing),
-    );
-    let b_bands = if u + 0.0001 >= plan.incoming_start_bar {
-        deck(
-            b,
-            &plan.incoming_source,
-            x.sqrt(),
-            &l.gain_b,
-            &l.eq_b,
-            &l.filter_b,
-            stems.map(|s| &s.incoming),
-        )
-    } else {
-        [0.; 3]
-    };
-    [a_bands.iter().sum(), b_bands.iter().sum()]
+    });
+    std::array::from_fn(|d| {
+        controls[d].map_or(0., |c| {
+            let p = bands(
+                [a, b][d],
+                c.source,
+                Some(std::array::from_fn(|i| c.selected[i] * mask[i])),
+            );
+            let routed: [f32; 3] = std::array::from_fn(|i| p[i] * c.multiplier[i]);
+            routed.iter().sum()
+        })
+    })
 }
 
 pub(crate) fn reference_power(t: &TrackAnalysis) -> Option<f32> {
