@@ -15,17 +15,17 @@ use super::LibraryError;
 /// derived data inside (`track_analysis`, `track_waveforms`, `cue_versions`).
 /// A change that cannot be additive — rename, type change, NOT NULL without
 /// default — makes older builds fail [`check_compatible`] and refuse the
-/// file with [`LibraryError::NewerSchema`]; the app then sets the file
-/// aside and starts a fresh library instead of corrupting rows or
-/// crash-looping on every launch.
-pub const SCHEMA_VERSION: u32 = 4;
+/// file with [`LibraryError::NewerSchema`]. The app must obtain consent
+/// and back up the file before converting it for an older build.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Every column this build's statements name, per table. Extend the list
 /// when a query starts using a new column so downgrades keep detecting
 /// non-additive changes.
-const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
+pub(super) const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
     ("stem_identities", &["file_hash", "audio_hash"]),
     ("best_orders", &["cache_key", "payload", "last_used"]),
+    ("pair_costs", &["cache_key", "cost_bits", "last_used"]),
     ("library_identity", &["singleton", "identity"]),
     ("package_tracks", &["source", "source_id", "track_id"]),
     (

@@ -93,6 +93,7 @@ mod tests {
             mix_regions: vec![],
             bars: vec![],
             moments: vec![],
+            tonal_frames: vec![],
             stems: None,
             waveform_path: None,
             partial: false,

@@ -3,11 +3,13 @@
 mod audio_identity;
 mod best_order;
 mod cues;
+pub mod downgrade;
 mod editing;
 mod folders;
 mod hash;
 mod imports;
 mod ordering;
+mod pair_costs;
 pub mod portable;
 mod recording_metadata;
 mod schema;
@@ -18,11 +20,13 @@ mod storage;
 mod tag_writeback;
 mod verification;
 mod waveform;
+pub use cues::AUTO_CUE_VERSION;
 pub use imports::ImportItem;
 pub use schema::SCHEMA_VERSION;
 pub use spotify_album::SpotifyAlbumTarget;
 pub use spotify_artwork::SpotifyArtworkTarget;
 pub use storage::CacheUsage;
+pub use waveform::WAVEFORM_VERSION;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,7 +76,7 @@ pub enum LibraryError {
     #[error("analysis cache: {0}")]
     AnalysisJson(#[from] serde_json::Error),
     /// A newer build wrote this file and the change was not additive; the
-    /// caller sets it aside rather than opening it.
+    /// caller must obtain consent before converting it for this build.
     #[error("library was written by a newer app (schema v{found}): {detail}")]
     NewerSchema { found: u32, detail: String },
 }
@@ -155,6 +159,12 @@ impl Library {
                 PRIMARY KEY (track_id, idx),
                 FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS pair_costs (
+                cache_key TEXT PRIMARY KEY,
+                cost_bits INTEGER NOT NULL,
+                last_used INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS pair_costs_last_used ON pair_costs(last_used);
             CREATE TABLE IF NOT EXISTS best_orders (
                 cache_key TEXT PRIMARY KEY,
                 payload TEXT NOT NULL,

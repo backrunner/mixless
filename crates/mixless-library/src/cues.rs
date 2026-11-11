@@ -1,4 +1,6 @@
 use super::*;
+/// Stored automatic cue layout, independent of the musical analysis version.
+pub const AUTO_CUE_VERSION: u32 = 1;
 impl Library {
     /// Read only the source clock needed to position cached cue markers.
     pub fn cue_sample_rate(&self, id: TrackId) -> Result<Option<u32>, LibraryError> {
@@ -24,7 +26,7 @@ impl Library {
             };
             tx.execute("INSERT OR IGNORE INTO cues (track_id,idx,frame,kind,user_set) VALUES (?1,?2,?3,?4,0)",params![id.0,cue.index as i64,cue.frame as i64,kind])?;
         }
-        tx.execute("INSERT INTO cue_versions(track_id,version) VALUES (?1,1) ON CONFLICT(track_id) DO UPDATE SET version=1", [id.0])?;
+        tx.execute("INSERT INTO cue_versions(track_id,version) VALUES (?1,?2) ON CONFLICT(track_id) DO UPDATE SET version=excluded.version", params![id.0,AUTO_CUE_VERSION])?;
         tx.commit()?;
         Ok(())
     }
@@ -34,8 +36,8 @@ impl Library {
             .lock()
             .expect("library mutex")
             .query_row(
-                "SELECT version=1 FROM cue_versions WHERE track_id=?1",
-                [id.0],
+                "SELECT version=?2 FROM cue_versions WHERE track_id=?1",
+                params![id.0, AUTO_CUE_VERSION],
                 |r| r.get(0),
             )
             .optional()?
