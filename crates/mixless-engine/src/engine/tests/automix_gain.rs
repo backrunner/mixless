@@ -159,9 +159,15 @@ fn automix_gain_fills_stem_and_quiet_overlap_dips_without_accumulating() {
             let before = baseline.render_offline(SR as usize);
             let after = compensated.render_offline(SR as usize);
             let improvement = 10. * (energy(&after) / energy(&before)).log10();
-            assert!(improvement > 1.5, "stems={stems} improvement={improvement}");
+            // A missing incoming stem only earns gain on that deck; it must
+            // not make the intact outgoing track louder to fill the deficit.
+            assert!(improvement > 0.5, "stems={stems} improvement={improvement}");
             let snap = compensated.snapshot();
             assert!(snap.automix_on);
+            if stems {
+                assert_eq!(snap.deck(outgoing).automix_gain_db, 0.);
+                assert!(snap.decks[1 - outgoing.index()].automix_gain_db > 1.);
+            }
             assert!(snap
                 .decks
                 .iter()
@@ -213,10 +219,42 @@ fn automix_gain_leaves_balanced_audio_silence_and_noise_alone() {
 }
 
 #[test]
+fn automix_gain_follows_each_decks_eq_and_routed_share() {
+    for outgoing in [DeckId::A, DeckId::B] {
+        let incoming = 1 - outgoing.index();
+        for xf in [-1., -0.9, 0., 0.9] {
+            let engine = fixture_plan(false, None, true, outgoing, |plan| {
+                plan.lanes.xfader = Polyline::constant(xf);
+                plan.lanes.eq_b.mid = Polyline::constant(-9.);
+            });
+            engine.render_offline(4 * SR as usize);
+            let snap = engine.snapshot();
+            assert_eq!(snap.deck(outgoing).automix_gain_db, 0.);
+            let gain = snap.decks[incoming].automix_gain_db;
+            if xf == -1. {
+                assert_eq!(gain, 0., "closed side cannot earn gain");
+            } else if xf < 0. {
+                assert!(gain <= 0.32, "faded background gained {gain} dB");
+            } else {
+                assert!(gain > 3., "audible EQ-shaped source gained {gain} dB");
+            }
+        }
+        let engine = fixture_plan(false, Some(0.4), true, outgoing, |plan| {
+            plan.lanes.xfader = Polyline::constant(0.);
+            plan.lanes.gain_a = line(&[(0., -12.), (15.9, -12.), (16., -96.)]);
+        });
+        engine.render_offline(4 * SR as usize);
+        let snap = engine.snapshot();
+        assert!(snap.deck(outgoing).automix_gain_db <= 0.38);
+        assert!(snap.decks[incoming].automix_gain_db > 3.);
+    }
+}
+
+#[test]
 fn automix_gain_pause_resume_skip_and_manual_takeover_are_bounded() {
     let engine = fixture(true, None, true, DeckId::A);
     engine.render_offline(4 * SR as usize);
-    assert!(engine.snapshot().decks[0].automix_gain_db > 1.);
+    assert!(engine.snapshot().decks[1].automix_gain_db > 1.);
     engine.dispatch(Command::PauseAutomix).unwrap();
     let pause = engine.render_offline(SR as usize);
     assert!(energy(&pause[pause.len() / 2..]) < 1e-9);
@@ -227,7 +265,7 @@ fn automix_gain_pause_resume_skip_and_manual_takeover_are_bounded() {
         .all(|d| d.automix_gain_db == 0.));
     engine.dispatch(Command::ResumeAutomix).unwrap();
     engine.render_offline(SR as usize / 2);
-    assert!(engine.snapshot().decks[0].automix_gain_db > 1.);
+    assert!(engine.snapshot().decks[1].automix_gain_db > 1.);
     engine
         .dispatch(Command::SetDeckLimiterGain {
             deck: DeckId::A,
@@ -253,7 +291,7 @@ fn automix_gain_pause_resume_skip_and_manual_takeover_are_bounded() {
 fn automix_gain_knob_target_tracks_compensation_and_manual_takeover() {
     for outgoing in [DeckId::A, DeckId::B] {
         for controlled in [DeckId::A, DeckId::B] {
-            let engine = fixture(true, None, true, outgoing);
+            let engine = fixture(false, Some(0.4), true, outgoing);
             assert_eq!(
                 engine
                     .snapshot()
@@ -285,7 +323,7 @@ fn automix_gain_knob_target_tracks_compensation_and_manual_takeover() {
         }
         let engine = fixture(true, None, true, outgoing);
         engine.render_offline(4 * SR as usize);
-        assert!(engine.snapshot().deck(outgoing).effective_limiter_gain_db() > 1.);
+        assert!(engine.snapshot().decks[1 - outgoing.index()].effective_limiter_gain_db() > 1.);
         engine.dispatch(Command::StopAutomix).unwrap();
         engine.render_offline(SR as usize);
         assert!(engine

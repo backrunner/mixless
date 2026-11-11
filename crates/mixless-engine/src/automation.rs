@@ -27,10 +27,13 @@ pub(super) struct AutomationShared {
     /// pre-pause transport state on the next callback.
     pub(super) suppress_resume: AtomicBool,
     pub(super) progress: AtomicU32,
-    cancelled: AtomicU32,
+    pub(super) plan_id: AtomicU64,
+    pub(super) cancelled: AtomicU32,
     /// A solo pitch move depends on its masking controls and source clock.
     recovery_dependencies: AtomicU32,
     recovery_pitch: AtomicU32,
+    /// With key lock off, a solo tempo glide is also a pitch move.
+    recovery_rate: AtomicU32,
     pub(super) gain_cancelled: AtomicBool,
     skip: AtomicBool,
 }
@@ -97,7 +100,8 @@ struct Point {
 pub struct PreparedMix(Arc<DensePlan>);
 
 struct DensePlan {
-    plan: MixPlan,
+    id: u64,
+    plan: Arc<MixPlan>,
     outgoing: usize,
     start_frame: f64,
     incoming_frame: u64,
@@ -323,8 +327,8 @@ impl DensePlan {
             }
         }
         let [a, b] = slots;
-        if a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
+        if a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
         {
             return Err(EngineError::Protocol("automix tracks changed"));
         }
@@ -524,6 +528,10 @@ impl DensePlan {
             ));
         }
         Ok(Self {
+            id: {
+                static NEXT: AtomicU64 = AtomicU64::new(1);
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            },
             start_frame,
             incoming_start_frames: (plan.clock.sample(plan.incoming_start_bar) * sr as f32).round()
                 as usize,
@@ -538,7 +546,7 @@ impl DensePlan {
                 .map(|fx| (plan.clock.sample(fx.on_bar) * sr as f32).round() as usize),
             total_frames,
             sample_rate: sr,
-            plan,
+            plan: Arc::new(plan),
             outgoing,
             points,
         })
@@ -561,7 +569,9 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?
             .pair;
-        candidate.track_id.store(pair.1.0 as u64, Ordering::Relaxed);
+        candidate
+            .track_id
+            .store(pair.1 .0 as u64, Ordering::Relaxed);
         candidate.frames.store(audio.frames, Ordering::Relaxed);
         candidate.src_sr.store(audio.sample_rate, Ordering::Relaxed);
         *candidate.buffer.lock().unwrap() = Some(audio.clone());
@@ -601,7 +611,7 @@ impl Engine {
             .as_ref()
             .ok_or(EngineError::Protocol("no automix plan"))?;
         let outgoing =
-            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0.0 as u64 {
+            if self.shared.decks[0].track_id.load(Ordering::Relaxed) == summary.pair.0 .0 as u64 {
                 DeckId::A
             } else {
                 DeckId::B
@@ -647,8 +657,8 @@ impl Engine {
                 "automix start passed before publication; replan",
             ));
         }
-        if a.track_id.load(Ordering::Relaxed) != pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != pair.1.0 as u64
+        if a.track_id.load(Ordering::Relaxed) != pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != pair.1 .0 as u64
             || b.playing.load(Ordering::Relaxed)
             || dense.sample_rate != self.shared.sample_rate.load(Ordering::Relaxed)
         {
@@ -663,13 +673,15 @@ impl Engine {
             .store(dense.incoming_frame * 65536, Ordering::Relaxed);
         b.seek_pending.store(true, Ordering::Release);
         // Cue, tempo, key and tone are visible on the paused incoming deck well
-        // before launch. Keep its channel closed until the scheduled first beat.
+        // before launch. Prime the paused channel to its launch level; the
+        // crossfader and stopped transport keep it silent before the first beat.
         let staged = dense.points[0].decks[1];
         b.rate_micro.store(staged.rate, Ordering::Relaxed);
         b.pitch_centi.store(staged.pitch, Ordering::Relaxed);
-        b.keylock.store(true, Ordering::Relaxed);
+        b.keylock
+            .store(!dense.plan.incoming_varispeed, Ordering::Relaxed);
         b.gain_milli.store(staged.gain, Ordering::Relaxed);
-        b.fader.store(0, Ordering::Relaxed);
+        b.fader.store(staged.fader, Ordering::Relaxed);
         b.filter_milli.store(staged.filter, Ordering::Relaxed);
         b.send_milli.store(0, Ordering::Relaxed);
         for band in 0..3 {
@@ -693,6 +705,14 @@ impl Engine {
             if recovers { bit(incoming, 5) } else { 0 },
             Ordering::Release,
         );
+        let rate = &dense.plan.lanes.rate_b;
+        let glides = dense.plan.incoming_varispeed
+            && rate.nodes.iter().any(|&(u, value)| {
+                u > overlap_bar && (value - rate.sample(overlap_bar)).abs() > 0.00005
+            });
+        shared
+            .recovery_rate
+            .store(if glides { bit(incoming, 4) } else { 0 }, Ordering::Release);
         shared.recovery_dependencies.store(
             if recovers {
                 [1, 2, 4, 6, 7, 8, 9, 10]
@@ -712,6 +732,7 @@ impl Engine {
             .lock()
             .map_err(|_| EngineError::Protocol("automix lock poisoned"))?;
         retired.retain(|p| Arc::strong_count(p) > 1);
+        let id = dense.id;
         if let Some(old) = published.replace(dense) {
             retired.push(old);
         }
@@ -723,6 +744,9 @@ impl Engine {
         shared.suppress_resume.store(false, Ordering::Release);
         self.shared.clear_sync();
         shared.enabled.store(true, Ordering::Release);
+        // Publish identity last: a snapshot that sees this ID also sees the
+        // reset clock and flags. Older snapshots cannot retrieve the new plan.
+        shared.plan_id.store(id, Ordering::Release);
         Ok(())
     }
     pub fn automix_summary(&self) -> Option<MixPlanSummary> {
@@ -735,6 +759,21 @@ impl Engine {
             .plan
             .summary
             .clone()
+    }
+
+    /// Retrieve the exact host-owned plan named by a playback snapshot. A
+    /// delayed UI message cannot combine one plan with another plan's clock.
+    pub fn automix_plan(&self, id: u64) -> Option<(DeckId, Arc<MixPlan>)> {
+        let published = self.shared.automation.published.lock().ok()?;
+        let dense = published.as_ref().filter(|p| p.id == id)?;
+        Some((
+            if dense.outgoing == 0 {
+                DeckId::A
+            } else {
+                DeckId::B
+            },
+            dense.plan.clone(),
+        ))
     }
 
     /// Reserve the silent candidate for a replacement. The callback uses the
@@ -767,8 +806,8 @@ impl Engine {
             || f32::from_bits(auto.progress.load(Ordering::Acquire)) > 0.
             || plan.outgoing != outgoing.index()
             || plan.plan.summary.as_ref().map(|s| s.pair) != Some(pair)
-            || a.track_id.load(Ordering::Acquire) != pair.0.0 as u64
-            || b.track_id.load(Ordering::Acquire) != pair.1.0 as u64
+            || a.track_id.load(Ordering::Acquire) != pair.0 .0 as u64
+            || b.track_id.load(Ordering::Acquire) != pair.1 .0 as u64
             || !a.playing.load(Ordering::Acquire)
             || b.playing.load(Ordering::Acquire)
             || a.playhead_frames() + margin >= plan.start_frame
@@ -913,6 +952,10 @@ impl Engine {
             | Command::PlayPause { .. }
             | Command::Seek { .. }
             | Command::ScrubTo { .. }
+            | Command::BeatJump { .. }
+            | Command::SetReverse { .. }
+            | Command::SetJogTouch { touching: true, .. }
+            | Command::Jog { .. }
             | Command::JumpCue { .. }
             | Command::TriggerTemporaryCue { .. }
             | Command::BeginCuePreview { .. }
@@ -976,8 +1019,8 @@ impl Shared {
         let b = &self.decks[1 - plan.outgoing];
         let summary = plan.plan.summary.as_ref().unwrap();
         if plan.sample_rate != self.sample_rate.load(Ordering::Relaxed)
-            || a.track_id.load(Ordering::Relaxed) != summary.pair.0.0 as u64
-            || b.track_id.load(Ordering::Relaxed) != summary.pair.1.0 as u64
+            || a.track_id.load(Ordering::Relaxed) != summary.pair.0 .0 as u64
+            || b.track_id.load(Ordering::Relaxed) != summary.pair.1 .0 as u64
         {
             auto.enabled.store(false, Ordering::Release);
             return false;
@@ -1045,8 +1088,10 @@ impl Shared {
             self.xf_curve.store(1, Ordering::Relaxed);
             self.xf_reverse.store(false, Ordering::Relaxed);
 
+            a.keylock.store(true, Ordering::Relaxed);
+            b.keylock
+                .store(!plan.plan.incoming_varispeed, Ordering::Relaxed);
             for slot in [a, b] {
-                slot.keylock.store(true, Ordering::Relaxed);
                 slot.reverse.store(false, Ordering::Relaxed);
             }
             if plan.plan.lanes.scratch_a.is_some() {
@@ -1058,9 +1103,11 @@ impl Shared {
         }
         if skip {
             // SKIP ends the handoff now; it must not jump to the pitch of a
-            // solo recovery that has not been performed yet.
+            // solo recovery that has not been performed yet. An unlocked
+            // deck's tempo is its pitch, so its glide is held the same way.
             auto.cancelled.fetch_or(
-                auto.recovery_pitch.load(Ordering::Acquire),
+                auto.recovery_pitch.load(Ordering::Acquire)
+                    | auto.recovery_rate.load(Ordering::Acquire),
                 Ordering::AcqRel,
             );
             rt.elapsed = plan.total_frames;
@@ -1205,6 +1252,14 @@ impl Shared {
                 b.jog_touch.store(false, Ordering::Release);
                 b.slip.store(false, Ordering::Relaxed);
             }
+            // Back at its recorded speed, locked and unlocked sound the same:
+            // hand the deck back with key lock on. Off that speed it stays
+            // unlocked, so the pitch the listener hears does not jump.
+            if plan.plan.incoming_varispeed
+                && b.rate_micro.load(Ordering::Relaxed).abs_diff(1_000_000) <= 100
+            {
+                b.keylock.store(true, Ordering::Relaxed);
+            }
             auto.enabled.store(false, Ordering::Release);
             return false;
         }
@@ -1295,6 +1350,7 @@ mod tests {
             phrase_boundaries: vec![],
             mix_regions: vec![],
             moments: vec![],
+            tonal_frames: vec![],
             stems: None,
             waveform_path: None,
             partial: true,
@@ -1334,6 +1390,68 @@ mod tests {
             .unwrap();
         (engine, plan)
     }
+    #[test]
+    fn snapshot_identity_changes_even_when_replacing_the_same_pair() {
+        let (engine, plan) = setup(DeckId::B);
+        engine.load_plan_on(plan.clone(), DeckId::B).unwrap();
+        let first = engine.snapshot().automix_plan_id;
+        let (out, visible) = engine.automix_plan(first).unwrap();
+        assert_eq!(out, DeckId::B);
+        assert_eq!(
+            visible.summary.as_ref().unwrap().pair,
+            plan.summary.as_ref().unwrap().pair
+        );
+        engine.load_plan_on(plan, DeckId::B).unwrap();
+        assert_ne!(engine.snapshot().automix_plan_id, first);
+        assert!(engine.automix_plan(first).is_none());
+        engine
+            .dispatch(Command::SetChannelFader {
+                deck: DeckId::A,
+                value: 0.3,
+            })
+            .unwrap();
+        assert!(engine.snapshot().automix_modified);
+    }
+
+    #[test]
+    fn manual_source_clock_changes_cancel_the_committed_schedule() {
+        for out in [DeckId::A, DeckId::B] {
+            for started in [false, true] {
+                for command in [
+                    Command::BeatJump { deck: out, bars: 1 },
+                    Command::SetReverse {
+                        deck: out,
+                        on: true,
+                    },
+                    Command::SetJogTouch {
+                        deck: out,
+                        touching: true,
+                    },
+                    Command::Jog {
+                        deck: out,
+                        delta_frames: 100.,
+                    },
+                ] {
+                    let (engine, plan) = setup(out);
+                    engine.load_plan_on(plan, out).unwrap();
+                    if started {
+                        engine.render_offline(30_000);
+                    }
+                    assert!(engine.snapshot().automix_on);
+                    engine.dispatch(command).unwrap();
+                    assert!(!engine.snapshot().automix_on);
+                    engine.render_offline(256);
+                    assert!(!engine.snapshot().automix_on);
+                    assert!(engine
+                        .snapshot()
+                        .decks
+                        .iter()
+                        .all(|d| d.automix_cue_frame.is_none()));
+                }
+            }
+        }
+    }
+
     #[test]
     fn eject_preserves_the_other_transport_before_during_and_after_automix() {
         for outgoing in [DeckId::A, DeckId::B] {
@@ -1514,20 +1632,8 @@ mod tests {
     }
 
     #[test]
-    fn only_cue_play_and_explicit_stop_cancel_the_auto_session() {
+    fn mixer_takeover_preserves_the_session_but_source_clock_changes_cancel_it() {
         for cmd in [
-            Command::SetJogTouch {
-                deck: DeckId::A,
-                touching: true,
-            },
-            Command::SetReverse {
-                deck: DeckId::A,
-                on: true,
-            },
-            Command::BeatJump {
-                deck: DeckId::A,
-                bars: 1,
-            },
             Command::Sync {
                 deck: DeckId::B,
                 keylock: true,
@@ -1544,6 +1650,18 @@ mod tests {
             assert!(engine.snapshot().automix_on, "{cmd:?}");
         }
         for cmd in [
+            Command::SetJogTouch {
+                deck: DeckId::A,
+                touching: true,
+            },
+            Command::SetReverse {
+                deck: DeckId::A,
+                on: true,
+            },
+            Command::BeatJump {
+                deck: DeckId::A,
+                bars: 1,
+            },
             Command::PlayPause { deck: DeckId::A },
             Command::JumpCue {
                 deck: DeckId::A,
@@ -1627,13 +1745,11 @@ mod tests {
             manual.decks.each_ref().map(|d| d.fader),
             playing.decks.each_ref().map(|d| d.fader)
         );
-        assert!(
-            manual
-                .decks
-                .iter()
-                .zip(&playing.decks)
-                .all(|(a, b)| a.frame > b.frame)
-        );
+        assert!(manual
+            .decks
+            .iter()
+            .zip(&playing.decks)
+            .all(|(a, b)| a.frame > b.frame));
     }
     #[test]
     fn automix_pause_resume_and_single_lane_takeover() {
@@ -1739,6 +1855,124 @@ mod tests {
         }
     }
     #[test]
+    fn solo_tempo_recovery_glides_the_incoming_rate_and_skip_lands_on_its_target() {
+        for outgoing in [DeckId::A, DeckId::B] {
+            for skip in [false, true] {
+                let (engine, mut plan) = transport_fixture();
+                let incoming = if outgoing == DeckId::A {
+                    DeckId::B
+                } else {
+                    DeckId::A
+                };
+                if outgoing == DeckId::B {
+                    engine.shared.decks[0].track_id.store(2, Ordering::Relaxed);
+                    engine.shared.decks[1].track_id.store(1, Ordering::Relaxed);
+                }
+                // The incoming deck launches 6% fast and returns to its own
+                // tempo over four seconds once it plays alone.
+                plan.clock.nodes.push((8.25, 6.25));
+                plan.lanes.rate_b = Polyline {
+                    nodes: vec![(0., 1.06), (4.25, 1.06), (8.25, 1.)],
+                };
+                plan.t_end_b = 0.25 * 1.06 + 4. * 1.03;
+                engine
+                    .dispatch(Command::Seek {
+                        deck: outgoing,
+                        frame: 4 * 48000,
+                    })
+                    .unwrap();
+                engine
+                    .dispatch(Command::PlayPause { deck: outgoing })
+                    .unwrap();
+                engine.load_plan_on(plan, outgoing).unwrap();
+                engine.render_offline(4 * 48000);
+                let rate = engine.snapshot().deck(incoming).rate;
+                assert!(rate > 1.005 && rate < 1.055, "{rate}");
+                if skip {
+                    engine.dispatch(Command::SkipAutomix).unwrap();
+                }
+                let audio = engine.render_offline(3 * 48000);
+                assert!(audio.iter().all(|v| v.is_finite() && v.abs() <= 1.));
+                let snapshot = engine.snapshot();
+                assert!(!snapshot.automix_on);
+                assert!((snapshot.deck(incoming).rate - 1.).abs() < 1e-4);
+                assert!(!snapshot.deck(outgoing).playing);
+                assert!(snapshot.deck(incoming).playing);
+            }
+        }
+    }
+    #[test]
+    fn a_varispeed_plan_plays_the_incoming_deck_unlocked_and_relocks_at_its_own_speed() {
+        // 0: glide back to the recorded speed. 1: stop the glide short.
+        // 2: SKIP during the glide. 3: an ordinary plan for comparison.
+        for outgoing in [DeckId::A, DeckId::B] {
+            for case in 0..4 {
+                let (engine, mut plan) = transport_fixture();
+                let incoming = if outgoing == DeckId::A {
+                    DeckId::B
+                } else {
+                    DeckId::A
+                };
+                if outgoing == DeckId::B {
+                    engine.shared.decks[0].track_id.store(2, Ordering::Relaxed);
+                    engine.shared.decks[1].track_id.store(1, Ordering::Relaxed);
+                }
+                let semitone = 2f32.powf(1. / 12.);
+                let settled = if case == 1 { 1.02 } else { 1. };
+                plan.incoming_varispeed = case != 3;
+                plan.clock.nodes.push((8.25, 6.25));
+                plan.lanes.rate_b = Polyline {
+                    nodes: vec![(0., semitone), (4.25, semitone), (8.25, settled)],
+                };
+                plan.t_end_b = 0.25 * semitone + 2. * (semitone + settled);
+                engine
+                    .dispatch(Command::Seek {
+                        deck: outgoing,
+                        frame: 4 * 48000,
+                    })
+                    .unwrap();
+                engine
+                    .dispatch(Command::PlayPause { deck: outgoing })
+                    .unwrap();
+                engine.load_plan_on(plan, outgoing).unwrap();
+                // Staged before launch: the paused deck already shows its state.
+                let staged = engine.snapshot();
+                assert_eq!(staged.deck(incoming).keylock, case == 3);
+                assert_eq!(staged.deck(incoming).pitch_semitones, 0.);
+                assert!(staged.deck(outgoing).keylock);
+                engine.render_offline(4 * 48000);
+                let during = engine.snapshot();
+                let held = during.deck(incoming).rate;
+                assert!(held > settled + 0.005 && held < semitone - 0.005, "{held}");
+                assert_eq!(during.deck(incoming).keylock, case == 3);
+                if case != 3 {
+                    // The speed is the transposition; no KEY offset is set.
+                    let sounding = during.deck(incoming).sounding_pitch_semitones();
+                    assert!((sounding - 12. * held.log2()).abs() < 1e-4);
+                    assert!(sounding > 0.1 && sounding < 0.95);
+                }
+                if case == 2 {
+                    engine.dispatch(Command::SkipAutomix).unwrap();
+                }
+                let audio = engine.render_offline(3 * 48000);
+                assert!(audio.iter().all(|v| v.is_finite() && v.abs() <= 1.));
+                let done = engine.snapshot();
+                assert!(!done.automix_on);
+                let deck = done.deck(incoming);
+                assert!(deck.playing && !done.deck(outgoing).playing);
+                match case {
+                    // Locked and unlocked sound alike at the recorded speed.
+                    0 => assert!(deck.keylock && (deck.rate - 1.).abs() < 1e-4),
+                    // Off that speed the deck stays unlocked: no pitch jump.
+                    1 => assert!(!deck.keylock && (deck.rate - 1.02).abs() < 1e-4),
+                    // SKIP holds the speed, and so the pitch, actually reached.
+                    2 => assert!(!deck.keylock && (deck.rate - held).abs() < 1e-4),
+                    _ => assert!(deck.keylock && (deck.rate - 1.).abs() < 1e-4),
+                }
+            }
+        }
+    }
+    #[test]
     fn stem_automation_requires_pcm_and_manual_takeover_is_per_voice() {
         use mixless_protocol::{StemKind, StemMix};
         for ready in [false, true] {
@@ -1753,11 +1987,9 @@ mod tests {
                         source.samples.iter().map(|s| s * 0.2).collect(),
                     )
                     .unwrap();
-                    assert!(
-                        engine
-                            .attach_stems(deck, id, &source, Arc::new(audio))
-                            .unwrap()
-                    );
+                    assert!(engine
+                        .attach_stems(deck, id, &source, Arc::new(audio))
+                        .unwrap());
                 }
             }
             plan.stem_mix = Some(StemMix {
@@ -2065,13 +2297,18 @@ mod tests {
             engine.load_plan_on(plan.clone(), outgoing).unwrap();
             let staged = engine.snapshot();
             let b = &staged.decks[1 - outgoing.index()];
-            assert!(!b.playing && b.fader == 0. && b.keylock);
+            assert!(!b.playing && b.keylock);
+            let staged_fader = b.fader;
+            assert!(
+                staged_fader > 0.,
+                "prime the paused receiving channel before the cut"
+            );
             assert_eq!(b.pitch_semitones, if loop_mix { 0. } else { -1. });
             assert!((b.rate - 128. / 132.).abs() < 0.0001);
             engine.render_offline(6000);
             let waiting = engine.snapshot();
             let b = &waiting.decks[1 - outgoing.index()];
-            assert!(!b.playing && b.fader == 0.);
+            assert!(!b.playing && b.fader == staged_fader);
             assert!(b.frame.abs_diff((plan.t_in_b * 48000.).round() as u64) < 2);
             engine.render_offline(6000);
             let total = (plan.duration_sec() * 48000.).ceil() as usize;
@@ -2429,18 +2666,14 @@ mod tests {
         assert_ne!(auto.cancelled.load(Ordering::Acquire) & bit(0, 2), 0);
         assert!(auto.gain_cancelled.load(Ordering::Acquire));
         // Only the two gesture commands are accepted.
-        assert!(
-            engine
-                .perform(Command::PlayPause { deck: DeckId::A })
-                .is_err()
-        );
-        assert!(
-            engine
-                .perform(Command::SetChannelFilter {
-                    deck: DeckId::A,
-                    amount: f32::NAN,
-                })
-                .is_err()
-        );
+        assert!(engine
+            .perform(Command::PlayPause { deck: DeckId::A })
+            .is_err());
+        assert!(engine
+            .perform(Command::SetChannelFilter {
+                deck: DeckId::A,
+                amount: f32::NAN,
+            })
+            .is_err());
     }
 }

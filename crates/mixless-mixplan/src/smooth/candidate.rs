@@ -1115,6 +1115,8 @@ pub(super) fn direct(
         pitch_semitones: ctx.offset_b.pitch_semitones + key_shift,
     };
     let mut plan = MixPlan {
+        source_sample_rates: [a.sample_rate, b.sample_rate],
+        incoming_varispeed: false,
         stem_mix: None,
         stages,
         summary: Some(MixPlanSummary {

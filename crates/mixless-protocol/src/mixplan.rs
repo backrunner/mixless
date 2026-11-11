@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{DeckId, FxKind, TrackId};
+mod windows;
+pub use windows::MixWindows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -246,6 +248,9 @@ pub struct MixPlan {
     pub t_in_b: f32,
     #[serde(default)]
     pub t_end_b: f32,
+    /// Original audio rates, used to map loop frames into source-time windows.
+    #[serde(default)]
+    pub source_sample_rates: [u32; 2],
     /// (master bar, wall seconds), integrated through the local tempo map.
     #[serde(default)]
     pub clock: Polyline,
@@ -286,6 +291,12 @@ pub struct MixPlan {
     /// of the plan, e.g. a roll that tightens into the incoming drop.
     #[serde(default)]
     pub insert_a: Option<InsertFx>,
+    /// The incoming deck plays with key lock off, so its speed change is its
+    /// transposition and nothing is time-stretched. `lanes.pitch_b` then holds
+    /// only an explicit tuning; `incoming_pitch_at` gives the sounding pitch
+    /// and `incoming_offset_end` already includes it.
+    #[serde(default)]
+    pub incoming_varispeed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -338,9 +349,24 @@ pub struct StemMix {
     pub incoming: [Polyline; 4],
 }
 
+/// Semitones a deck sounds away from its recording when it plays at `rate`
+/// with key lock off.
+pub fn varispeed_semitones(rate: f32) -> f32 {
+    12. * rate.max(0.001).log2()
+}
+
 impl MixPlan {
     pub fn duration_sec(&self) -> f32 {
         self.clock.nodes.last().map_or(0.0, |n| n.1)
+    }
+    /// Sounding transposition of the incoming deck at master bar `u`.
+    pub fn incoming_pitch_at(&self, u: f32) -> f32 {
+        self.lanes.pitch_b.sample(u)
+            + if self.incoming_varispeed {
+                varispeed_semitones(self.lanes.rate_b.sample(u))
+            } else {
+                0.
+            }
     }
     pub fn stage_at_elapsed(&self, seconds: f32) -> Option<&MixStage> {
         self.stages.iter().find(|stage| {

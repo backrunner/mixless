@@ -188,7 +188,7 @@ pub(super) fn compile(plan: &MixPlan, slots: [&DeckSlot; 2], points: &mut [Point
     let duration = overlap;
     let count = (duration / HOP).ceil().max(1.) as usize;
     let dt = duration / count as f32;
-    let mut corrections = Vec::with_capacity(count + 1);
+    let mut corrections: [Vec<f32>; 2] = std::array::from_fn(|_| Vec::with_capacity(count + 1));
     for i in 0..=count {
         let now = slot.playhead_frames();
         let guard = probes[0].audio.sample_rate as f64
@@ -204,50 +204,60 @@ pub(super) fn compile(plan: &MixPlan, slots: [&DeckSlot; 2], points: &mut [Point
         let point = &points[((sec * sr as f32) as usize / STEP).min(points.len() - 1)];
         let (xa, xb) = xfader_gains(point.xf as f32 / 500. - 1., XfCurve::EqualPower, false);
         let cross = [xa, xb];
-        let mut actual = 0.;
-        let mut reference = 0.;
-        let mut full = 0.;
-        let mut cap = MAX_DB;
-        for relative in 0..2 {
-            if relative == 1 && sec < plan.clock.sample(plan.incoming_start_bar) {
-                continue;
+        let routing: [f32; 2] = std::array::from_fn(|d| {
+            if d == 1 && sec < plan.clock.sample(plan.incoming_start_bar) {
+                0.
+            } else {
+                cross[d] * point.decks[d].fader as f32 / 1000.
             }
+        });
+        let strongest = routing.iter().copied().fold(0f32, f32::max);
+        for relative in 0..2 {
             let p = &point.decks[relative];
-            let weight = cross[relative] * p.fader as f32 / 1000.;
+            let weight = routing[relative];
             if weight < 0.01 {
+                corrections[relative].push(0.);
                 continue;
             }
             let probe = &probes[relative];
             let (time, loop_range) = source_time(plan, relative, sec);
             let powers = probe.powers(time, Some(p), loop_range);
             let gain = weight * db_to_lin(p.gain as f32 / 100. - 96.) * probe.manual_gain;
-            actual += powers[1] * gain * gain;
-            full += powers[0] * gain * gain;
-            reference += anchors[relative] * gain * gain;
-            cap = cap.min(12. - 20. * probe.manual_gain.log10());
+            let actual = powers[1] * gain * gain;
+            let full = powers[0] * gain * gain;
+            let reference = anchors[relative] * gain * gain;
+            // Restore only this deck's retained material. A full outgoing
+            // track must not be boosted to fill a missing incoming stem.
+            // Crossfader/channel attenuation is intentional: taper the gain
+            // budget with its relative routed power, never invert the fader.
+            let authority = (weight / strongest.max(0.01)).powi(2);
+            let cap = (MAX_DB * authority).min(12. - 20. * probe.manual_gain.log10());
+            // No gain chasing noise, fully muted stems, or deliberate deep
+            // gaps. A 1 dB deadband leaves ordinary beat variation alone.
+            let target = reference.max(full);
+            let correction = if actual.is_finite()
+                && target.is_finite()
+                && actual > 1e-6
+                && full > 1e-6
+                && actual > target * 0.01
+            {
+                (10. * (target / actual).log10() - 1.).clamp(0., cap.max(0.))
+            } else {
+                0.
+            };
+            corrections[relative].push(correction);
         }
-        // No gain chasing noise, fully muted stems, or deliberate deep gaps.
-        // A 1 dB deadband leaves ordinary beat-to-beat variation alone.
-        let target = reference.max(full);
-        let correction = if actual.is_finite()
-            && target.is_finite()
-            && actual > 1e-6
-            && full > 1e-6
-            && actual > target * 0.01
-        {
-            (10. * (target / actual).log10() - 1.).clamp(0., cap.max(0.))
-        } else {
-            0.
-        };
-        corrections.push(correction);
     }
-    smooth(&mut corrections, dt);
+    for values in &mut corrections {
+        smooth(values, dt);
+    }
     for (j, point) in points.iter_mut().enumerate() {
         let position = (j * STEP) as f32 / sr as f32 / dt;
         let i = (position.floor() as usize).min(count - 1);
         let t = (position - i as f32).clamp(0., 1.);
-        let db = corrections[i] + (corrections[i + 1] - corrections[i]) * t;
-        for deck in &mut point.decks {
+        for (d, deck) in point.decks.iter_mut().enumerate() {
+            let values = &corrections[d];
+            let db = values[i] + (values[i + 1] - values[i]) * t;
             deck.compensation = (db * 100.).round() as u32;
         }
     }

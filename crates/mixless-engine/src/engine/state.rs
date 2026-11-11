@@ -100,6 +100,7 @@ impl DeckSlot {
 
 impl Shared {
     pub(super) fn snapshot(&self) -> EngineSnapshot {
+        let plan_id = self.automation.plan_id.load(Ordering::Acquire);
         let [master_output, cue_output] =
             self.output_formats.lock().expect("output formats").clone();
         let cue_device = self.cue_device.lock().expect("cue device").clone();
@@ -134,6 +135,9 @@ impl Shared {
             automix_on: self.automation.enabled.load(Ordering::Acquire),
             automix_paused: self.automation.paused.load(Ordering::Acquire),
             automix_progress: f32::from_bits(self.automation.progress.load(Ordering::Relaxed)),
+            automix_plan_id: plan_id,
+            automix_modified: self.automation.cancelled.load(Ordering::Acquire) != 0
+                || self.automation.gain_cancelled.load(Ordering::Acquire),
             xrun_count: self.xrun.load(Ordering::Relaxed),
             device_name: self
                 .device_name
@@ -188,7 +192,11 @@ impl Shared {
                 sounding_bpm: {
                     let bpm = bpm.unwrap_or(s.bpm_milli.load(Ordering::Relaxed) as f32 / 100.0);
                     let rate = s.rate_micro.load(Ordering::Relaxed) as f32 / 1_000_000.0;
-                    if bpm <= 0.0 { 0.0 } else { bpm * rate }
+                    if bpm <= 0.0 {
+                        0.0
+                    } else {
+                        bpm * rate
+                    }
                 },
                 eq_db: [
                     s.eq_db[0].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
@@ -256,6 +264,11 @@ impl Shared {
                     f32::from_bits(s.level[1].load(Ordering::Relaxed)),
                 ],
             };
+        }
+        if self.automation.plan_id.load(Ordering::Acquire) != plan_id {
+            // Publication crossed this read. Keep transport telemetry, but
+            // do not let a UI bind its progress to either plan this frame.
+            snap.automix_plan_id = 0;
         }
         snap
     }

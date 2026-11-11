@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CueKind, DeckId, FxSlot, FxState, TrackId, XfCurve, default_fx};
+use crate::{default_fx, CueKind, DeckId, FxSlot, FxState, StemKind, TrackId, XfCurve};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
@@ -92,11 +92,28 @@ pub struct DeckSnapshot {
 }
 
 impl DeckSnapshot {
+    /// A stem gain is usable only after its playback audio has been attached.
+    /// Legacy three-lane caches do not provide an independent bass stem.
+    pub fn stem_available(&self, stem: StemKind) -> bool {
+        self.stems_ready && (stem != StemKind::Bass || self.bass_ready)
+    }
+
     /// Current deck GAIN target, including temporary AutoMix compensation.
     /// Use this for both the knob position and the starting value of a manual
     /// gesture, which replaces that compensation with a manual setting.
     pub fn effective_limiter_gain_db(&self) -> f32 {
         (self.limiter_gain_db + self.automix_gain_db).clamp(-12., 12.)
+    }
+
+    /// Semitones the deck sounds away from its recording: the KEY offset,
+    /// plus the pitch its tempo carries while key lock is off.
+    pub fn sounding_pitch_semitones(&self) -> f32 {
+        self.pitch_semitones
+            + if self.keylock {
+                0.
+            } else {
+                crate::varispeed_semitones(self.rate)
+            }
     }
 }
 
@@ -220,6 +237,13 @@ pub struct EngineSnapshot {
     pub automix_paused: bool,
     #[serde(default)]
     pub automix_progress: f32,
+    /// Identity of the engine's committed plan, including replacements of the
+    /// same track pair. Zero means no plan has been published.
+    #[serde(default)]
+    pub automix_plan_id: u64,
+    /// A user gesture has taken control of one or more planned lanes.
+    #[serde(default)]
+    pub automix_modified: bool,
     pub xrun_count: u64,
     pub device_name: String,
 }
@@ -248,6 +272,8 @@ impl Default for EngineSnapshot {
             automix_on: false,
             automix_paused: false,
             automix_progress: 0.0,
+            automix_plan_id: 0,
+            automix_modified: false,
             xrun_count: 0,
             device_name: "System Default".into(),
         }
