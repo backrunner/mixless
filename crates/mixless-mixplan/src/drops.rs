@@ -34,14 +34,90 @@ pub(super) fn owed_peak(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)>
                 .iter()
                 .any(|s| s.label == S::Drop && s.start_sec < p.1 - 0.05 && s.end_sec > p.0 + 0.05)
     });
+    let first_drop = first_drop.map(|peak| {
+        // Keep the remainder of a contiguous peak after a late entry. Only a
+        // measured release makes its internal units complete for set policy.
+        runs(track)
+            .into_iter()
+            .find(|run| run.0 <= peak.0 + 0.05 && run.1 >= peak.1 - 0.05)
+            .map_or(peak, |run| (peak.0, run.1))
+    });
     [
         first_drop,
+        released_drop(track, entry),
         mixless_protocol::released_peak(track, entry),
         mixless_protocol::main_peak(track, entry),
     ]
     .into_iter()
     .flatten()
     .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// A complete drop with its own measured recovery is a full musical unit even
+/// when a later, shorter drop is mastered louder. Relative loudness ranks peaks;
+/// it must not turn a long, completed drop back into an unfinished preview.
+fn released_drop(track: &TrackAnalysis, entry: f32) -> Option<(f32, f32)> {
+    runs(track).into_iter().find(|&(start, end)| {
+        if start < entry - 0.05
+            || !track
+                .sections
+                .iter()
+                .any(|s| s.label == S::Drop && s.start_sec < end && s.end_sec > start)
+            || mixless_protocol::drop_suspension(track, end).is_some()
+            || !track.phrase_boundaries.iter().any(|p| {
+                (p.time_sec - end).abs() < 0.08 && p.confidence >= 0.5 && p.novelty >= 0.15
+            })
+        {
+            return false;
+        }
+        let Some(release_end) = track
+            .phrase_boundaries
+            .iter()
+            .filter(|p| p.time_sec > end + 0.08 && p.confidence >= 0.5)
+            .map(|p| p.time_sec)
+            .min_by(f32::total_cmp)
+        else {
+            return false;
+        };
+        let width = release_end - end;
+        if end - start < 2. * width - 0.05
+            || release_end >= track.duration_sec - 0.05
+            || !crate::recovery::contains(track, end, release_end)
+        {
+            return false;
+        }
+        let activity = |lo: f32, hi: f32| {
+            let bars: Vec<_> = track
+                .bars
+                .iter()
+                .filter(|b| b.start_sec >= lo - 0.05 && b.end_sec <= hi + 0.05)
+                .collect();
+            let covered: f32 = bars.iter().map(|b| b.end_sec - b.start_sec).sum();
+            if bars.is_empty() || covered < (hi - lo) * 0.95 {
+                return None;
+            }
+            let mean = |f: fn(&mixless_protocol::BarFeature) -> f32| {
+                bars.iter()
+                    .map(|b| f(b) * (b.end_sec - b.start_sec))
+                    .sum::<f32>()
+                    / covered
+            };
+            Some([
+                mean(|b| b.rms),
+                mean(|b| b.low_db),
+                mean(|b| b.onset_density),
+            ])
+        };
+        let (Some(before), Some(after)) = (activity(end - width, end), activity(end, release_end))
+        else {
+            return false;
+        };
+        after[0] > before[0] * 0.05
+            && after[0] <= before[0] * std::f32::consts::FRAC_1_SQRT_2
+            && after[1] <= before[1] - 6.
+            && before[2] > 0.
+            && after[2] <= before[2] * (2. / 3.)
+    })
 }
 
 /// A peak plays whole. The outgoing track never leaves inside a peak, never
@@ -103,15 +179,29 @@ pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
         None => 0.,
         Some(main) if exit + 0.1 < main.1 => 0.22,
         Some(main) => {
-            let later: Vec<_> = peaks.iter().filter(|p| p.0 >= main.1 - 0.05).collect();
-            match later.first() {
+            // Discount the cost of another peak when a late entrance left
+            // little foreground residence. Otherwise this cost overwhelms
+            // the brief-pass preference and ejects tracks after one preview.
+            let established = ((main.1 - entry) / residence(track).max(1.)).clamp(0., 1.);
+            // A local kit valley opens another scheduling opportunity inside
+            // the same authored peak. Continuing past it is not automatically
+            // playing an extra chorus, especially when the melody never ends.
+            let relative = mixless_protocol::relative_recoveries(track);
+            let later: Vec<_> = peaks
+                .iter()
+                .filter(|p| {
+                    p.0 >= main.1 - 0.05 && !relative.iter().any(|r| (r.1 - p.0).abs() < 0.05)
+                })
+                .collect();
+            let extra = match later.first() {
                 Some(next) if exit > next.0 + 0.1 => {
                     let heard = ((exit - next.0) / (next.1 - next.0)).clamp(0., 1.);
                     0.16 + heard * 0.16
                         + later.iter().skip(1).filter(|p| exit > p.0).count() as f32 * 0.08
                 }
                 _ => 0.,
-            }
+            };
+            extra * established.powi(2)
         }
     };
     // Leaving in the first stretch of a track discards its main body even
@@ -123,13 +213,16 @@ pub(super) fn penalty(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
 /// leaving straight after the entry, nothing once about 90 s (or 45% of a
 /// short track) has been heard.
 pub(super) fn brief(track: &TrackAnalysis, exit: f32, entry: f32) -> f32 {
-    // A complete meaningful peak satisfies this play-through even when a
-    // late entry makes it shorter than the generic 90-second preference.
-    if owed_peak(track, entry).is_some_and(|p| p.0 >= entry - 0.05 && exit >= p.1 - 0.05) {
-        return 0.;
-    }
-    let want = (0.45 * track.duration_sec).min(90.);
-    ((want - (exit - entry)) / want.max(1.)).clamp(0., 1.) * 0.3
+    // A complete peak reduces the residence cost, but a single short peak
+    // cannot erase it. Otherwise late entries leave again almost immediately.
+    let complete =
+        owed_peak(track, entry).is_some_and(|p| p.0 >= entry - 0.05 && exit >= p.1 - 0.05);
+    let want = residence(track);
+    ((want - (exit - entry)) / want.max(1.)).clamp(0., 1.) * if complete { 0.15 } else { 0.3 }
+}
+
+fn residence(track: &TrackAnalysis) -> f32 {
+    (0.45 * track.duration_sec).min(90.)
 }
 
 #[cfg(test)]
@@ -312,6 +405,68 @@ mod tests {
         let short = with_peak(48, (8, 32));
         assert_eq!(peaks(&short).len(), 1);
     }
+
+    #[test]
+    fn a_long_complete_drop_with_measured_recovery_does_not_owe_a_louder_repeat() {
+        use mixless_protocol::PhraseBoundary;
+        for gain in [0.1f32, 1., 2.] {
+            for metrical_factor in [0.5, 1., 2.] {
+                let mut t = crate::tests::track(1, 120., "8A", S::Intro, 128, 0.9, 0.2);
+                t.sections = [
+                    (0., 64., S::Intro),
+                    (64., 128., S::Drop),
+                    (128., 160., S::Breakdown),
+                    (160., 192., S::Drop),
+                    (192., 256., S::Outro),
+                ]
+                .into_iter()
+                .map(|(start_sec, end_sec, label)| Section {
+                    start_sec,
+                    end_sec,
+                    label,
+                })
+                .collect();
+                t.phrase_boundaries = [64., 96., 128., 160., 192.]
+                    .into_iter()
+                    .map(|time_sec| PhraseBoundary {
+                        time_sec,
+                        confidence: 0.9,
+                        novelty: 0.6,
+                    })
+                    .collect();
+                for b in &mut t.bars {
+                    let release = (128. ..160.).contains(&b.start_sec);
+                    b.rms = gain
+                        * if release {
+                            0.12
+                        } else if b.start_sec < 128. {
+                            0.42
+                        } else {
+                            0.5
+                        };
+                    b.low_db = if release { -26. } else { -10. } + 20. * gain.log10();
+                    b.onset_density = if release { 1. } else { 8. };
+                }
+                t.tempo.global_bpm *= metrical_factor;
+                assert!(!major_peaks(&t).contains(&(64., 128.)));
+                assert_eq!(owed_peak(&t, 0.), Some((64., 128.)));
+                assert!(!allows(&t, 96., 112., 0., true), "complete the entire drop");
+                assert!(allows(&t, 128., 144., 0., false));
+                for b in &mut t.bars {
+                    if (128. ..160.).contains(&b.start_sec) {
+                        b.rms = 0.42 * gain;
+                        b.low_db = -10. + 20. * gain.log10();
+                        b.onset_density = 8.;
+                    }
+                }
+                assert_eq!(
+                    owed_peak(&t, 0.),
+                    Some((160., 192.)),
+                    "a label without a measured recovery cannot release the obligation"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -333,7 +488,35 @@ fn a_complete_first_drop_satisfies_a_short_play_through_but_a_partial_one_does_n
         label,
     })
     .collect();
-    assert_eq!(brief(&a, 96., 64.), 0.);
-    assert!(brief(&a, 96., 80.) > 0.);
+    assert!(brief(&a, 96., 64.) > 0.);
+    assert!(brief(&a, 96., 80.) > brief(&a, 96., 64.));
+    assert_eq!(brief(&a, 224., 64.), 0.);
     assert!(brief(&a, 80., 64.) > 0.);
+    assert!(
+        penalty(&a, 224., 100.) < penalty(&a, 224., 0.),
+        "a late entrance must not pay the skipped-residence penalty for hearing its next peak"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn late_entry_does_not_finish_a_contiguous_peak_after_one_short_unit() {
+    let mut t = crate::tests::track(1, 120., "8A", S::Drop, 96, 0.9, 0.3);
+    t.sections = [
+        (0., 32., S::Intro),
+        (32., 48., S::Chorus),
+        (48., 80., S::Drop),
+        (80., 144., S::Chorus),
+        (144., 192., S::Outro),
+    ]
+    .into_iter()
+    .map(|(start_sec, end_sec, label)| mixless_protocol::Section {
+        start_sec,
+        end_sec,
+        label,
+    })
+    .collect();
+    assert_eq!(owed_peak(&t, 48.), Some((48., 144.)));
+    assert!(!allows(&t, 64., 80., 48., false));
+    assert!(allows(&t, 128., 144., 48., false));
 }

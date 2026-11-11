@@ -1,7 +1,8 @@
 //! Render adjacent audited pairs without re-running spectral analysis or opening devices.
 //! render-audit ANALYSES.json AUDIO_PATHS.json OUTPUT_DIRECTORY
+//! MIXLESS_AUDIT_LIBRARY may name a SQLite backup to reuse verified legacy stem identities.
 use mixless_engine::{Engine, EngineConfig};
-use mixless_mixplan::{PlanContext, Planner, PlannerOptions, short_handoff};
+use mixless_mixplan::{short_handoff, PlanContext, Planner, PlannerOptions};
 use mixless_protocol::{Command, Cue, CueKind, DeckId, TrackAnalysis};
 use std::{collections::HashMap, error::Error, path::Path};
 
@@ -15,6 +16,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut tracks: Vec<TrackAnalysis> = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     let paths: Vec<String> = serde_json::from_slice(&std::fs::read(&args[1])?)?;
+    // A short edit can enter a sparse introduction. Keep enough real playback
+    // after it to compare arrival with a longer stem arrangement fairly.
+    let post_seconds: f32 = std::env::var("MIXLESS_AUDIT_POST_SECONDS")
+        .ok()
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(4.);
+    if !post_seconds.is_finite() || !(0. ..=120.).contains(&post_seconds) {
+        return Err("MIXLESS_AUDIT_POST_SECONDS must be between 0 and 120".into());
+    }
     if tracks.len() < 2 || tracks.len() != paths.len() {
         return Err("Mismatched tracks/paths".into());
     }
@@ -25,6 +36,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let processor = (args.len() == 5)
         .then(|| mixless_stems::Processor::new((&args[3]).into(), (&args[4]).into(), false));
+    let library = std::env::var_os("MIXLESS_AUDIT_LIBRARY")
+        .map(|path| mixless_library::Library::open(Path::new(&path)))
+        .transpose()?;
     // Plan against the stored payloads exactly as the library audit does;
     // `apply_stems` rewrites bars/sections, so keep unmutated clones for
     // planning while the engine still receives the cached stem PCM.
@@ -42,7 +56,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             let raw = blake3::hash(&std::fs::read(path)?).to_hex().to_string();
             // Desktop library hashes include their algorithm prefix; older
             // standalone audits used the bare digest in separate caches.
-            for hash in [format!("blake3-{raw}"), raw] {
+            // Desktop can retain an older audio-identity algorithm for these
+            // verified file bytes. A freshly computed key alone misses it.
+            let remembered = library
+                .as_ref()
+                .map(|library| library.stem_hash(Path::new(path)))
+                .transpose()?;
+            for hash in remembered.into_iter().chain([
+                mixless_library::stem_content_hash(Path::new(path))?,
+                format!("blake3-{raw}"),
+                raw,
+            ]) {
                 if let Some(stems) = processor.cached(&hash, track.duration_sec)? {
                     mixless_analyze::Analyzer::apply_stems(track, stems);
                     stem_hashes[index] = Some(hash);
@@ -132,7 +156,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         let before = plan.t_in_a.min(4.);
-        let duration = before + plan.duration_sec() + 4.;
+        let duration = before + plan.duration_sec() + post_seconds;
         engine.cue_loaded_track(
             DeckId::A,
             a.track_id,
@@ -194,8 +218,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let frames = (duration * 48_000.).ceil() as usize;
         let mut peak = 0f32;
         let mut stem_blocks = 0;
+        let mut selected_seconds = 0f32;
+        let mut selected_run = 0f32;
+        let mut longest_selected_run = 0f32;
         let mut gain_max = 0.0_f32;
         let mut levels = Vec::new();
+        let mut routing = Vec::new();
         let mut window_power = 0.0_f64;
         let mut window_samples = 0;
         let mut window_gain = 0.0_f32;
@@ -242,17 +270,46 @@ fn main() -> Result<(), Box<dyn Error>> {
             {
                 stem_blocks += 1;
             }
+            let snapshot = engine.snapshot();
+            routing.push(serde_json::json!({
+                "sec": (start + 256).min(frames) as f32 / 48_000.,
+                "crossfader": snapshot.xfader,
+                "faders": snapshot.decks.each_ref().map(|d| d.fader),
+                "auto_gain_db": snapshot.decks.each_ref().map(|d| d.automix_gain_db),
+                "stems": snapshot.decks.each_ref().map(|d| d.stem_gain),
+                "playing": snapshot.decks.each_ref().map(|d| d.playing),
+            }));
+            let selected = snapshot.decks.iter().all(|d| {
+                d.playing
+                    && d.stems_ready
+                    && d.fader > 0.01
+                    && d.stem_gain.iter().any(|g| *g >= 0.5)
+                    && d.stem_gain.iter().any(|g| *g <= 0.01)
+            });
+            if selected {
+                let dt = (frames - start).min(256) as f32 / 48_000.;
+                selected_seconds += dt;
+                selected_run += dt;
+                longest_selected_run = longest_selected_run.max(selected_run);
+            } else {
+                selected_run = 0.;
+            }
         }
         writer.finalize()?;
         std::fs::write(
             Path::new(&args[2]).join(format!("{}-{}.levels.json", a.track_id.0, b.track_id.0)),
             serde_json::to_vec(&levels)?,
         )?;
+        std::fs::write(
+            Path::new(&args[2]).join(format!("{}-{}.routing.json", a.track_id.0, b.track_id.0)),
+            serde_json::to_vec(&routing)?,
+        )?;
         let snapshot = engine.snapshot();
         if snapshot.automix_on || snapshot.automix_progress < 1. || !snapshot.decks[1].playing {
             return Err(format!("Pair {}→{} did not complete", a.track_id.0, b.track_id.0).into());
         }
-        if (snapshot.decks[1].pitch_semitones - expected_offset.pitch_semitones).abs() > 0.01
+        if (snapshot.decks[1].sounding_pitch_semitones() - expected_offset.pitch_semitones).abs()
+            > 0.01
             || (snapshot.decks[1].rate - expected_offset.rate).abs() > 0.002
         {
             return Err("Incoming sounding offset differs from the completed plan".into());
@@ -284,8 +341,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             stem_blocks,
             gain_max,
             preparation_ms,
-            snapshot.decks[1].pitch_semitones,
+            snapshot.decks[1].sounding_pitch_semitones(),
             snapshot.decks[1].rate
+        );
+        println!(
+            "    both decks selected: {selected_seconds:.3}s total, {longest_selected_run:.3}s longest run"
         );
     }
     Ok(())

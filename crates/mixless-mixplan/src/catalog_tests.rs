@@ -222,8 +222,8 @@ fn energy_hold_offset_is_carried_into_next_pair() {
 
 #[test]
 fn catalog_pitch_stays_matched_during_the_mix_and_tempo_recovery() {
-    let a = track(1, 128., "10A", S::Outro, 64, 0.9, 0.2);
-    let b = track(2, 126., "7B", S::Intro, 64, 0.9, 0.2);
+    let a = track(1, 128., "8A", S::Outro, 64, 0.9, 0.2);
+    let b = track(2, 126., "3A", S::Intro, 64, 0.9, 0.2);
     for strategy in [
         StrategyId::PhraseBlend,
         StrategyId::BassSwap,
@@ -237,11 +237,27 @@ fn catalog_pitch_stays_matched_during_the_mix_and_tempo_recovery() {
         })
         .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
         assert!(p.failure_reason.is_none(), "{:?}", p.failure_reason);
-        assert_eq!(p.incoming_offset_end.pitch_semitones, -3.);
+        assert_eq!(p.incoming_offset_end.pitch_semitones, -1.);
         for (_, pitch) in p.lanes.pitch_b.nodes {
-            assert_eq!(pitch, -3., "{strategy:?}: audible pitch reset");
+            assert_eq!(pitch, -1., "{strategy:?}: audible pitch reset");
         }
     }
+}
+
+#[test]
+fn catalog_respects_disabled_automatic_pitch_correction() {
+    let a = track(1, 120., "10A", S::Outro, 64, 0.9, 0.2);
+    let b = track(2, 120., "7B", S::Intro, 64, 0.9, 0.2);
+    let p = Planner::with_options(PlannerOptions {
+        smooth: false,
+        harmonic_key_shift: false,
+        strategy: Some(StrategyId::BassSwap),
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(p.failure_reason.is_none());
+    assert_eq!(p.incoming_offset_end.pitch_semitones, 0.);
+    assert!(p.lanes.pitch_b.nodes.iter().all(|(_, pitch)| *pitch == 0.));
 }
 #[test]
 fn catalog_golden_nodes_and_log_filters() {

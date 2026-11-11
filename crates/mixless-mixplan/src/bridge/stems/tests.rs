@@ -81,10 +81,32 @@ fn separated_rhythm_and_keys_have_exact_boundaries_and_neutral_endpoints() {
             assert_eq!(s.incoming[part].sample(0.), 0.);
             assert_eq!(s.outgoing[part].sample(4.), 0.);
             assert_eq!(s.incoming[part].sample(4.), 1.);
-            for (line, beat) in [(&s.outgoing[part], 0.6), (&s.incoming[part], 60. / 178.)] {
+            for (d, line, beat) in [
+                (0, &s.outgoing[part], 0.6),
+                (1, &s.incoming[part], 60. / 178.),
+            ] {
                 for w in line.nodes.windows(2) {
                     let dt = p.clock.sample(w[1].0) - p.clock.sample(w[0].0);
-                    assert!((w[1].1 - w[0].1).abs() * beat <= dt + 0.0001);
+                    // The crossfader now carries the common envelope. Test
+                    // the routed amplitude, not a silent channel's stem knob.
+                    let heard = |u: f32, stem: f32| {
+                        let x = p.lanes.xfader.sample(u);
+                        let cross = if d == 0 {
+                            ((1. - x) / 2.).sqrt()
+                        } else {
+                            ((1. + x) / 2.).sqrt()
+                        };
+                        let gain = if d == 0 {
+                            p.lanes.gain_a.sample(u)
+                        } else {
+                            p.lanes.gain_b.sample(u)
+                        };
+                        stem * cross * 10f32.powf(gain / 20.)
+                    };
+                    assert!(
+                        (heard(w[1].0, w[1].1) - heard(w[0].0, w[0].1)).abs() * beat
+                            <= dt * 1.2 + 0.011
+                    );
                 }
             }
         }

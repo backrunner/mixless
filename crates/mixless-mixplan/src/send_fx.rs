@@ -2,7 +2,7 @@
 //! track's last moment under the incoming one; it never replaces the dry
 //! signal. An echo repeats on the outgoing beat, so it is used only when both
 //! decks share a tempo; across a tempo gap only a rhythm-free reverb is used.
-use crate::{PlanContext, grid::Grid, musical::feature};
+use crate::{grid::Grid, musical::feature, PlanContext};
 use mixless_protocol::{FxKind, MixPlan, Polyline, SendFx};
 
 /// Feedback level below which a repeat is inaudible under the incoming track.
@@ -53,7 +53,7 @@ fn sung_into_send(ctx: &PlanContext<'_>, plan: &MixPlan) -> bool {
     let Some(peak) = nodes
         .iter()
         .enumerate()
-        .max_by(|x, y| x.1.1.total_cmp(&y.1.1))
+        .max_by(|x, y| x.1 .1.total_cmp(&y.1 .1))
         .filter(|(_, p)| p.1 > 0.)
         .map(|(i, _)| i)
     else {

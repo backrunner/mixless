@@ -8,7 +8,7 @@ mod progression;
 #[cfg(test)]
 mod stem_regressions;
 pub use handoff::short_handoff;
-pub use performance::{LiveMoves, PerformanceLane, PerformanceMove, performance_moves};
+pub use performance::{performance_moves, LiveMoves, PerformanceLane, PerformanceMove};
 mod arrangement;
 mod bridge;
 mod candidates;
@@ -20,14 +20,20 @@ mod continuity;
 mod drops;
 mod duration;
 mod energy;
+mod experience;
+pub use experience::established_entry;
 mod eq;
 mod filtered;
 mod foreground;
 mod grid;
 mod level;
 mod lookahead;
+mod melody;
+mod melody_release;
+mod memo;
 mod musical;
 pub mod order;
+mod part_routing;
 pub mod performance;
 mod phrasing;
 mod pitch_recovery;
@@ -35,11 +41,14 @@ mod policy;
 mod recovery;
 mod rhythm;
 mod ride;
+mod scheduling;
 pub mod score;
 mod send_fx;
 mod smooth;
 mod spectrum;
 mod stem_mix;
+mod tempo_recovery;
+mod varispeed;
 mod vocals;
 
 use constraints::{covers_user_range, user_range};
@@ -65,7 +74,7 @@ pub const STRATEGIES: [StrategyId; 9] = [
 #[derive(Debug, Clone)]
 pub struct PlannerOptions {
     /// Match the inaudible incoming deck to the sounding outgoing key, then
-    /// hold it. Search the nearest match within six semitones of the source.
+    /// hold it. Search the nearest match within `score::MAX_KEY_SHIFT`.
     pub harmonic_key_shift: bool,
     /// Audition-oriented policy. False preserves the original catalog golden tables.
     pub smooth: bool,
@@ -75,7 +84,8 @@ pub struct PlannerOptions {
     pub strategy: Option<StrategyId>,
     /// Do not schedule a transition behind the audible outgoing playhead.
     pub earliest_outgoing_sec: f32,
-    /// Audible entry on this pass, including time spent in the incoming blend.
+    /// Source position where this pass became established in the foreground.
+    /// Use `established_entry` when carrying a preceding transition forward.
     pub outgoing_entry_sec: f32,
     /// Both decks will play aligned stem buffers, enabling drum-layered blends
     /// where tonal material would otherwise clash.
@@ -135,6 +145,14 @@ pub(crate) struct Candidate {
     literal: bool,
 }
 
+mod evidence;
+
+/// Every worker owns evidence scopes tied to these immutable input borrows.
+/// Rayon jobs may execute on a different thread or nest on the current one.
+pub(crate) fn with_evidence<T>(ctx: &PlanContext<'_>, stems: bool, f: impl FnOnce() -> T) -> T {
+    evidence::Prepared::new(ctx, stems).run(f)
+}
+
 impl Planner {
     pub fn new() -> Self {
         Self::default()
@@ -163,17 +181,54 @@ impl Planner {
     }
 
     pub fn plan_next(&self, ctx: &PlanContext<'_>) -> MixPlan {
-        let mut plan = self.plan_next_base(ctx);
+        self.plan_choices(ctx, false).remove(0)
+    }
+
+    fn plan_choices(&self, ctx: &PlanContext<'_>, collect: bool) -> Vec<MixPlan> {
+        memo::plans(ctx, &self.options, collect, || {
+            with_evidence(ctx, self.options.stem_playback, || {
+                let mut choices = Vec::new();
+                let plan = self.plan_next_base(ctx, collect.then_some(&mut choices), false);
+                choices.retain(|p| {
+                    p.t_in_b != plan.t_in_b
+                        || p.t_out_a != plan.t_out_a
+                        || p.t_end_b != plan.t_end_b
+                });
+                choices.insert(0, plan);
+                choices
+                    .into_iter()
+                    .map(|p| self.finish_plan(ctx, p))
+                    .collect()
+            })
+        })
+    }
+
+    /// Called only after the complete bounded policy failed. Keep its cache
+    /// separate by not writing supplemental results into bounded plan memo.
+    fn expanded_plan(&self, ctx: &PlanContext<'_>) -> MixPlan {
+        with_evidence(ctx, self.options.stem_playback, || {
+            self.finish_plan(ctx, self.plan_next_base(ctx, None, true))
+        })
+    }
+
+    fn finish_plan(&self, ctx: &PlanContext<'_>, mut plan: MixPlan) -> MixPlan {
         stem_mix::arrange(ctx, &mut plan, self.options.stem_playback);
         eq::arrange(ctx, &mut plan);
         send_fx::arrange(ctx, &mut plan);
+        melody_release::arrange(&mut plan, ctx);
         // Every path ends here, so every lane is clamped to the range the
         // engine accepts before the plan is handed out.
         level::sanitize(&mut plan);
+        plan.source_sample_rates = [ctx.outgoing.sample_rate, ctx.incoming.sample_rate];
         plan
     }
 
-    fn plan_next_base(&self, ctx: &PlanContext<'_>) -> MixPlan {
+    fn plan_next_base(
+        &self,
+        ctx: &PlanContext<'_>,
+        choices: Option<&mut Vec<MixPlan>>,
+        expand: bool,
+    ) -> MixPlan {
         let fail = |message: &str| MixPlan {
             failure_reason: Some(message.into()),
             ..MixPlan::default()
@@ -250,6 +305,20 @@ impl Planner {
             {
                 return fail("Invalid or overlapping bar features");
             }
+            if track.tonal_frames.iter().any(|f| {
+                !f.start_sec.is_finite()
+                    || !f.end_sec.is_finite()
+                    || f.start_sec < 0.
+                    || f.end_sec <= f.start_sec
+                    || f.end_sec > track.duration_sec + 0.1
+                    || f.chroma.iter().any(|v| !v.is_finite() || *v < 0.)
+            }) || track
+                .tonal_frames
+                .windows(2)
+                .any(|p| p[0].end_sec > p[1].start_sec + 0.001)
+            {
+                return fail("Invalid tonal observations");
+            }
             if track.sections.iter().any(|s| {
                 !s.start_sec.is_finite()
                     || !s.end_sec.is_finite()
@@ -322,7 +391,11 @@ impl Planner {
             return fail("Invalid outgoing playhead");
         }
         if self.options.smooth {
-            return smooth::plan(ctx, &self.options);
+            if expand {
+                return smooth::expanded(ctx, &self.options)
+                    .unwrap_or_else(|| fail("No additional safe whole-bar transition"));
+            }
+            return smooth::plan(ctx, &self.options, choices);
         }
         let outs = candidates::candidates(a, ctx.cues_out, true);
         let ins = candidates::candidates(b, ctx.cues_in, false);
@@ -477,12 +550,29 @@ impl Planner {
         {
             return None;
         }
-        let (key_score, shift_b) = score::key_match(
+        let (key_score, proposed_shift, reliable) = score::overlap_key_match(
             a,
             b,
+            (start_sec, out_sec),
+            (in_sec, end_sec),
             ctx.offset_a.pitch_semitones,
             ctx.offset_b.pitch_semitones,
-        );
+        )
+        .unwrap_or_else(|| {
+            score::window_key_match(
+                a,
+                b,
+                out_sec,
+                in_sec,
+                ctx.offset_a.pitch_semitones,
+                ctx.offset_b.pitch_semitones,
+            )
+        });
+        let shift_b = if self.options.harmonic_key_shift && reliable {
+            proposed_shift
+        } else {
+            0.
+        };
         let candidate = Candidate {
             strategy,
             n,

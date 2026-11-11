@@ -81,7 +81,7 @@ pub(super) fn arrange(ctx: &PlanContext<'_>, plan: &mut MixPlan, stem_playback: 
             &plan.incoming_source,
             n,
             plan.lanes.pitch_a.sample(center),
-            plan.lanes.pitch_b.sample(center),
+            plan.incoming_pitch_at(center),
         )
     } else {
         0.
@@ -226,7 +226,11 @@ pub(super) fn layer(ctx: &PlanContext<'_>, plan: &mut MixPlan, handoff: f32) {
         };
         if stem == StemKind::Bass.index() {
             let x = ease((u - handoff) / 0.25);
-            if incoming { x } else { 1. - x }
+            if incoming {
+                x
+            } else {
+                1. - x
+            }
         } else if stem == 1 {
             1.
         } else if incoming {
@@ -383,7 +387,7 @@ pub(super) fn ride_supported(
         n,
         true,
         plan.lanes.pitch_a.sample(0.),
-        plan.lanes.pitch_b.sample(0.),
+        plan.incoming_pitch_at(0.),
     )?;
     let incoming = &plan.incoming_source;
     let quiet = (0..64).all(|i| {

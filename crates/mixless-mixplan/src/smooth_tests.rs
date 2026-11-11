@@ -101,9 +101,11 @@ fn smooth_tempo_slope_phase_and_bass_power_are_bounded_in_both_directions() {
             let beat_a = (p.outgoing_source.sample(u) - p.t_in_a) * bpm_a / 60.;
             let beat_b = (p.incoming_source.sample(u) - p.t_in_b) * bpm_b / 60.;
             assert!((beat_b - beat_a * factor).abs() < 0.001);
-            let angle = (p.lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
-            let low_a = angle.cos() * 10f32.powf(p.lanes.eq_a.low.sample(u) / 20.);
-            let low_b = angle.sin() * 10f32.powf(p.lanes.eq_b.low.sample(u) / 20.);
+            let x = (p.lanes.xfader.sample(u) + 1.) / 2.;
+            let low_a = (1. - x).sqrt()
+                * 10f32.powf((p.lanes.eq_a.low.sample(u) + p.lanes.gain_a.sample(u)) / 20.);
+            let low_b = x.sqrt()
+                * 10f32.powf((p.lanes.eq_b.low.sample(u) + p.lanes.gain_b.sample(u)) / 20.);
             let power = low_a * low_a + low_b * low_b;
             assert!((0.96..=1.04).contains(&power), "bass power {power} at {u}");
         }

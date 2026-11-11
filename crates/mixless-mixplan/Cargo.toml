@@ -8,14 +8,21 @@ description = "AI mix planner. Depends only on mixless-protocol."
 [dependencies]
 mixless-protocol = { workspace = true }
 rayon = "1"
+serde_json = { workspace = true, optional = true }
 
 [features]
+# Run the offline auditor with production parallelism and no rejection tracing.
+audit = ["dep:serde_json"]
 # Count candidate rejections per source line for offline audits.
-trace = []
+trace = ["audit"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
 
 [[example]]
 name = "automix-audit"
-required-features = ["trace"]
+required-features = ["audit"]
+
+[[example]]
+name = "order-matrix-audit"
+required-features = ["audit"]

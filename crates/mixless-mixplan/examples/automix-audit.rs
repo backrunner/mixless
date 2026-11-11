@@ -1,9 +1,10 @@
 //! Plan every adjacent pair of a playlist the way desktop AUTO does and
 //! summarize how often the result is a boundary cut or a played-out track.
 //! cargo run -p mixless-mixplan --features trace --example automix-audit -- ANALYSES.json [--stems] [--summary] [--best]
-use mixless_mixplan::{PlanContext, Planner, PlannerOptions, short_handoff};
+use mixless_mixplan::{short_handoff, PlanContext, Planner, PlannerOptions};
 use mixless_protocol::{MixPlan, PerformanceOffset, TrackAnalysis};
 use std::error::Error;
+use std::io::Write;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -42,12 +43,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             return Err("Previous plan does not enter the first audit track".into());
         }
         offset = previous.incoming_offset_end;
-        entry = previous.t_in_b;
+        entry = mixless_mixplan::established_entry(&previous, &tracks[0]);
         earliest = previous.t_end_b + offset.rate;
     }
     let mut sites = std::collections::BTreeMap::<&str, u32>::new();
     let mut pair_data = Vec::new();
     let mut plans = Vec::new();
+    // Optional durable progress for long corpus runs; the final plans file
+    // remains an atomic-at-completion result for the whole input sequence.
+    let mut progress = std::env::var_os("AUDIT_PROGRESS_OUT")
+        .map(std::fs::File::create)
+        .transpose()?;
     for (i, pair) in tracks.windows(2).enumerate() {
         let (a, b) = (&pair[0], &pair[1]);
         let ctx = PlanContext {
@@ -66,7 +72,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         });
         let mut plan = planner.plan_with_following(&ctx, tracks.get(i + 2));
+        #[cfg(feature = "trace")]
         let rejected = mixless_mixplan::trace::take();
+        #[cfg(not(feature = "trace"))]
+        let rejected: Vec<(&'static str, u32)> = Vec::new();
         let failure = plan.failure_reason.is_some();
         let fallback = failure
             || plan.summary.as_ref().is_some_and(|s| {
@@ -97,6 +106,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
         }
         plans.push(plan.clone());
+        if let Some(progress) = &mut progress {
+            serde_json::to_writer(&mut *progress, &plan)?;
+            writeln!(progress)?;
+            progress.flush()?;
+        }
         cuts += (length == 0) as u32;
         played_out += terminal as u32;
         fallbacks += fallback as u32;
@@ -117,7 +131,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if quiet {
             offset = plan.incoming_offset_end;
-            entry = plan.t_in_b;
+            entry = mixless_mixplan::established_entry(&plan, b);
             earliest = plan.t_end_b + plan.incoming_offset_end.rate;
             continue;
         }
@@ -139,7 +153,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             *sites.entry(site).or_default() += count;
         }
         offset = plan.incoming_offset_end;
-        entry = plan.t_in_b;
+        entry = mixless_mixplan::established_entry(&plan, b);
         earliest = plan.t_end_b + plan.incoming_offset_end.rate;
     }
 

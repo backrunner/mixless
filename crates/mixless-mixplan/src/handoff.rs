@@ -3,6 +3,99 @@ use crate::PlanContext;
 use mixless_protocol::*;
 
 pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
+    let mut plan = handoff(ctx, earliest, None);
+    plan.source_sample_rates = [ctx.outgoing.sample_rate, ctx.incoming.sample_rate];
+    plan
+}
+
+/// Search complete internal phrase releases before falling back to the file's
+/// ending. These are real handoffs, not permission to shorten an owed peak.
+pub(crate) fn phrase_handoff(
+    ctx: &PlanContext<'_>,
+    options: &crate::PlannerOptions,
+) -> Option<MixPlan> {
+    if options.strategy.is_some()
+        || crate::constraints::user_range(ctx.cues_out, ctx.outgoing.sample_rate).is_some()
+    {
+        return None;
+    }
+    let a = ctx.outgoing;
+    let grid = crate::grid::Grid(a);
+    let audible_end = a
+        .sections
+        .iter()
+        .rev()
+        .find(|s| s.label != SectionLabel::Silence)
+        .map_or(a.duration_sec, |s| s.end_sec);
+    crate::phrasing::points(a, ctx.cues_out, true, options.earliest_outgoing_sec)
+        .into_iter()
+        .map(|beat| grid.sec(beat))
+        .filter(|out| {
+            *out < audible_end - 0.05
+                && (crate::phrasing::exit_boundary(a, *out)
+                    || crate::phrasing::vocal_release(a, *out))
+                // This new opportunity comes from the rhythm layer. A vocal
+                // rest alone cannot also certify the continuing melody.
+                && (!crate::recovery::relative(a, *out) || crate::phrasing::exit_boundary(a, *out))
+                && crate::vocals::safe_exit(a, *out)
+                && crate::continuity::voice_released(a, *out)
+                && crate::continuity::cut_safe(a, *out, false)
+                && mixless_protocol::drop_suspension(a, *out).is_none()
+                && !crate::drops::next_peak_start(a, *out)
+                    .is_some_and(|start| (start - *out).abs() < 0.08)
+                && !a.sections.iter().any(|s| {
+                    s.label == SectionLabel::BuildUp
+                        && *out > s.start_sec + 0.08
+                        && *out <= s.end_sec + 0.08
+                })
+                && crate::drops::allows(a, *out, *out, options.outgoing_entry_sec, true)
+        })
+        .filter_map(|out| {
+            let mut plan = handoff(ctx, options.earliest_outgoing_sec, Some(out));
+            if plan.failure_reason.is_some() || (plan.t_out_a - out).abs() > 0.05 {
+                return None;
+            }
+            if crate::constraints::user_range(ctx.cues_in, ctx.incoming.sample_rate).is_none()
+                && (!crate::drops::entry_allowed(ctx.incoming, plan.t_in_b)
+                    || crate::continuity::silent(ctx.incoming, plan.t_in_b, 0.5))
+            {
+                return None;
+            }
+            if !options.harmonic_key_shift
+                && plan.incoming_offset_end.pitch_semitones != ctx.offset_b.pitch_semitones
+            {
+                return None;
+            }
+            plan.source_sample_rates = [a.sample_rate, ctx.incoming.sample_rate];
+            let merit = 0.25 + crate::energy::entry_score(a, ctx.incoming, out, plan.t_in_b)
+                - crate::foreground::uncertainty(&plan, ctx)
+                - crate::drops::penalty(a, out, options.outgoing_entry_sec)
+                - crate::drops::brief(a, out, options.outgoing_entry_sec);
+            let summary = plan.summary.as_mut()?;
+            summary.score = merit;
+            summary.used_fallback = false;
+            Some(plan)
+        })
+        .max_by(|a, b| {
+            a.summary
+                .as_ref()
+                .unwrap()
+                .score
+                .total_cmp(&b.summary.as_ref().unwrap().score)
+        })
+}
+
+pub(crate) fn terminal_cut(plan: &MixPlan, track: &TrackAnalysis) -> bool {
+    let end = track
+        .sections
+        .iter()
+        .rev()
+        .find(|s| s.label != SectionLabel::Silence)
+        .map_or(track.duration_sec, |s| s.end_sec);
+    plan.summary.as_ref().is_some_and(|s| s.length_bars <= 1) && plan.t_out_a >= end - 0.05
+}
+
+fn handoff(ctx: &PlanContext<'_>, earliest: f32, internal_exit: Option<f32>) -> MixPlan {
     let fail = || MixPlan {
         failure_reason: Some("No transition fits the remaining audio and mix cues".into()),
         ..Default::default()
@@ -38,13 +131,16 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         .rev()
         .find(|s| s.label != SectionLabel::Silence)
         .map_or(a.duration_sec, |s| s.end_sec);
-    let mut out = explicit_out.map_or(audible_end, |(_, end)| end);
+    let mut out = explicit_out.map_or(internal_exit.unwrap_or(audible_end), |(_, end)| end);
     let released = crate::vocals::safe_exit(a, out)
         && (explicit_out.is_some() || crate::continuity::voice_released(a, out));
     // Some recordings sing right through the final phrase. When no internal
     // exit fits, finish the source itself; do not skip the next track or invent
     // an earlier vocal cut. An explicit OUT still has its original authority.
-    let terminal = explicit_out.is_none() && (!released || !crate::phrasing::exit_boundary(a, out));
+    let terminal = explicit_out.is_none()
+        && (!released
+            || !(crate::phrasing::exit_boundary(a, out)
+                || internal_exit.is_some() && crate::phrasing::vocal_release(a, out)));
     if terminal {
         out = a.duration_sec;
     } else if !released {
@@ -83,8 +179,17 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
             usable
         };
         let Some(safe) = pool.into_iter().max_by(|left, right| {
-            crate::energy::entry_score(a, b, out, *left)
-                .total_cmp(&crate::energy::entry_score(a, b, out, *right))
+            // A full-track handoff has no opportunity to restore a missing
+            // vocal prefix with a later stem reveal. Prefer a released entry
+            // over an ambiguous rest whenever one is available. Ambiguity is
+            // not a veto when all usable entries have it.
+            crate::vocals::continuation(b, *right)
+                .cost()
+                .total_cmp(&crate::vocals::continuation(b, *left).cost())
+                .then_with(|| {
+                    crate::energy::entry_score(a, b, out, *left)
+                        .total_cmp(&crate::energy::entry_score(a, b, out, *right))
+                })
                 .then_with(|| right.total_cmp(left))
         }) else {
             return fail();
@@ -250,9 +355,9 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
         plan.lanes.pitch_b = Polyline::constant(ctx.offset_b.pitch_semitones);
         plan.incoming_offset_end.pitch_semitones = ctx.offset_b.pitch_semitones;
         plan.stages[0].label = if terminal {
-            "Complete track · native handoff"
+            "Complete track"
         } else {
-            "Complete phrase · native handoff"
+            "Complete phrase"
         }
         .into();
     }
@@ -262,6 +367,44 @@ pub fn short_handoff(ctx: &PlanContext<'_>, earliest: f32) -> MixPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_complete_sung_release_can_handoff_inside_a_section_but_a_word_gap_cannot() {
+        let mut a = crate::stem_regressions::with_stems(crate::tests::track(
+            1,
+            120.,
+            "8A",
+            SectionLabel::Verse,
+            64,
+            0.8,
+            0.2,
+        ));
+        let b = crate::tests::track(2, 120., "8A", SectionLabel::Intro, 64, 0.8, 0.2);
+        for f in &mut a.stems.as_mut().unwrap().frames {
+            f.vocal_activity = if f.start_sec < 63.6 { 1. } else { 0. };
+        }
+        fn context<'a>(a: &'a TrackAnalysis, b: &'a TrackAnalysis) -> PlanContext<'a> {
+            PlanContext {
+                outgoing: a,
+                incoming: b,
+                cues_out: &[],
+                cues_in: &[],
+                offset_a: Default::default(),
+                offset_b: Default::default(),
+            }
+        }
+        assert!(!crate::phrasing::exit_boundary(&a, 64.));
+        let p = phrase_handoff(&context(&a, &b), &Default::default())
+            .expect("complete internal phrase");
+        assert!(p.t_out_a < a.duration_sec - 8.);
+        assert!(!p.summary.unwrap().used_fallback);
+        for f in &mut a.stems.as_mut().unwrap().frames {
+            if f.start_sec >= 64.4 {
+                f.vocal_activity = 1.;
+            }
+        }
+        assert!(phrase_handoff(&context(&a, &b), &Default::default()).is_none());
+    }
 
     #[test]
     fn unreleased_final_vocal_waits_for_source_end_without_ignoring_manual_out() {

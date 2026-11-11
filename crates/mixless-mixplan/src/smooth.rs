@@ -16,13 +16,18 @@ use mixless_protocol::{
 
 mod candidate;
 use candidate::pair;
+#[cfg(test)]
+mod coverage;
+mod expansion;
 mod lanes;
 mod preparation;
 mod ranking;
+mod search;
+mod shortlist;
 mod timing;
 use lanes::{ease, neutral};
 
-const MAX_LOG_TEMPO_PER_SEC: f32 = 0.0035;
+pub(crate) const MAX_LOG_TEMPO_PER_SEC: f32 = 0.0035;
 const KILL: f32 = -96.;
 fn fits_region(
     t: &TrackAnalysis,
@@ -110,42 +115,103 @@ pub(super) fn grid_reliable(t: &TrackAnalysis, start: f32, end: f32) -> bool {
         && errors[(errors.len() - 1) * 95 / 100] <= 0.10
         && *errors.last().unwrap() <= 0.20
 }
-pub(crate) fn plan(ctx: &PlanContext<'_>, options: &PlannerOptions) -> MixPlan {
+pub(crate) fn plan(
+    ctx: &PlanContext<'_>,
+    options: &PlannerOptions,
+    choices: Option<&mut Vec<MixPlan>>,
+) -> MixPlan {
     let a = ctx.outgoing;
     let b = ctx.incoming;
     let outs = points(a, ctx.cues_out, true, options.earliest_outgoing_sec);
     let ins = points(b, ctx.cues_in, false, 0.);
-    let mut best: Option<MixPlan> = None;
-    for &out in &outs {
-        for &input in &ins {
-            for mode in [
-                TransitionMode::BeatBlend,
-                TransitionMode::LoopRoll,
-                TransitionMode::PhraseBridge,
-            ] {
-                for length in crate::duration::candidates(ctx, options, out, input, mode) {
-                    if let Some(p) = pair(
-                        ctx,
-                        options,
-                        out,
-                        input,
-                        mode,
-                        length,
-                        best.as_ref()
-                            .map_or(-1., |p| p.summary.as_ref().unwrap().score),
-                    ) {
-                        if best.as_ref().is_none_or(|old| {
-                            p.summary.as_ref().unwrap().score > old.summary.as_ref().unwrap().score
-                        }) {
-                            best = Some(p);
+    let mut best: Option<(f32, MixPlan)> = None;
+    let mut entrances: Vec<Option<(f32, MixPlan)>> = vec![None; ins.len()];
+    if choices.is_some() && !cfg!(feature = "trace") && ins.len() > 1 {
+        (best, entrances) = search::entrances(ctx, options, &outs, &ins);
+    } else {
+        for &out in &outs {
+            for (input_index, &input) in ins.iter().enumerate() {
+                for mode in [
+                    TransitionMode::BeatBlend,
+                    TransitionMode::LoopRoll,
+                    TransitionMode::PhraseBridge,
+                ] {
+                    for length in crate::duration::candidates(ctx, options, out, input, mode) {
+                        if let Some(p) = pair(
+                            ctx,
+                            options,
+                            out,
+                            input,
+                            mode,
+                            length,
+                            if choices.is_some() {
+                                entrances[input_index].as_ref()
+                            } else {
+                                best.as_ref()
+                            }
+                            // Raw score bounds audible merit: all later costs
+                            // are nonnegative, including cut and tail costs.
+                            .map_or(-1., |p| p.0),
+                        ) {
+                            let merit = crate::experience::merit(&p, a, b);
+                            if choices.is_some()
+                                && entrances[input_index]
+                                    .as_ref()
+                                    .is_none_or(|old| merit > old.0)
+                            {
+                                entrances[input_index] = Some((merit, p.clone()));
+                            }
+                            if best.as_ref().is_none_or(|old| merit > old.0) {
+                                best = Some((merit, p));
+                            }
                         }
                     }
                 }
             }
         }
     }
-    best.unwrap_or_else(||MixPlan{failure_reason:Some("No smooth transition fits the remaining audio and user cue ranges; choose another mix point or track".into()),..Default::default()})
+    if let Some(choices) = choices {
+        choices.extend(shortlist::select(
+            entrances.into_iter().flatten().collect(),
+            b,
+        ));
+    }
+    if best
+        .as_ref()
+        .is_none_or(|(_, p)| crate::handoff::terminal_cut(p, a))
+    {
+        if let Some(internal) = crate::handoff::phrase_handoff(ctx, options) {
+            if best
+                .as_ref()
+                .is_none_or(|old| crate::experience::merit(&internal, a, b) > old.0)
+            {
+                return internal;
+            }
+        }
+    }
+    best.map(|(_, p)| p).unwrap_or_else(||MixPlan{failure_reason:Some("No smooth transition fits the remaining audio and user cue ranges; choose another mix point or track".into()),..Default::default()})
 }
 
+/// Last-resort whole-bar search. The caller validates all input evidence first
+/// and exhausts the ordinary, native and held alternatives before using it.
+pub(crate) fn expanded(ctx: &PlanContext<'_>, options: &PlannerOptions) -> Option<MixPlan> {
+    let outs = points(
+        ctx.outgoing,
+        ctx.cues_out,
+        true,
+        options.earliest_outgoing_sec,
+    );
+    let ins = points(ctx.incoming, ctx.cues_in, false, 0.);
+    expansion::search(ctx, options, &outs, &ins)
+        .0
+        .map(|(_, p)| p)
+}
+
+#[cfg(all(test, feature = "trace"))]
+mod audit_tests;
+#[cfg(test)]
+mod part_tests;
 #[cfg(test)]
 mod recovery_tests;
+#[cfg(test)]
+mod varispeed_tests;

@@ -41,16 +41,17 @@ fn long_blend_holds_the_mixer_and_exchanges_high_bass_mid_in_separate_phases() {
     assert!(lanes.eq_b.high.sample(23.) > 0. && lanes.eq_b.mid.sample(23.) < -80.);
     assert!(lanes.eq_b.low.sample(25.) > 0. && lanes.eq_a.mid.sample(25.) > 0.);
     assert!(lanes.eq_a.high.sample(23.) < -80. && lanes.eq_a.low.sample(25.) < -80.);
-    assert!(lanes.gain_b.sample(0.) <= -90. && lanes.gain_b.sample(4.) > -0.01);
+    assert_eq!(lanes.xfader.sample(0.), -1.);
+    assert!(lanes.gain_b.sample(4.) > -0.01);
     assert!(lanes.gain_a.sample(48.) <= -90.);
     assert_eq!(lanes.filter_a.lp_hz.sample(47.), 20000.);
     // A clean instrumental blend has no gratuitous echo.
     assert!(lanes.fx_send_a.nodes.iter().all(|(_, v)| *v == 0.));
     // Equal-power targets include physical levels and crossfader attenuation.
     for u in (0..48 * 256).map(|j| j as f32 / 256.) {
-        let x = (lanes.xfader.sample(u) + 1.) * std::f32::consts::FRAC_PI_4;
-        let a = x.cos() * 10f32.powf(lanes.gain_a.sample(u) / 20.);
-        let b = x.sin() * 10f32.powf(lanes.gain_b.sample(u) / 20.);
+        let x = (lanes.xfader.sample(u) + 1.) / 2.;
+        let a = (1. - x).sqrt() * 10f32.powf(lanes.gain_a.sample(u) / 20.);
+        let b = x.sqrt() * 10f32.powf(lanes.gain_b.sample(u) / 20.);
         for (ea, eb) in [
             (&lanes.eq_a.low, &lanes.eq_b.low),
             (&lanes.eq_a.mid, &lanes.eq_b.mid),

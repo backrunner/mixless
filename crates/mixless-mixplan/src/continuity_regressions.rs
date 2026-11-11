@@ -246,23 +246,20 @@ fn lookahead_never_retunes_the_audible_deck_or_overrides_a_failed_current_plan()
     let p = planner.plan_with_following(&ctx, Some(&c));
     assert!(p.failure_reason.is_none());
     assert!(p.lanes.pitch_a.nodes.iter().all(|(_, v)| *v == 1.));
-    assert!(
-        p.lanes
-            .pitch_b
-            .nodes
-            .iter()
-            .all(|(_, v)| *v == p.incoming_offset_end.pitch_semitones)
-    );
+    assert!(p
+        .lanes
+        .pitch_b
+        .nodes
+        .iter()
+        .all(|(_, v)| *v == p.incoming_offset_end.pitch_semitones));
     let mut invalid = b.clone();
     invalid.duration_sec = f32::NAN;
     let invalid_ctx = PlanContext {
         incoming: &invalid,
         ..ctx
     };
-    assert!(
-        planner
-            .plan_with_following(&invalid_ctx, Some(&c))
-            .failure_reason
-            .is_some()
-    );
+    assert!(planner
+        .plan_with_following(&invalid_ctx, Some(&c))
+        .failure_reason
+        .is_some());
 }

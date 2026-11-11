@@ -32,6 +32,25 @@ pub(super) fn prepare(
     let bpm_start = ga.bpm(start_beat) * ctx.offset_a.rate;
     let blend = mode == TransitionMode::BeatBlend;
     let loop_roll = mode == TransitionMode::LoopRoll;
+    // Reject impossible incoming windows before integrating thousands of clock
+    // nodes. These bounds depend only on the source grid, not the tempo curve.
+    let blend_end = gb.sec(input + n * ga.meter() * factor);
+    if blend {
+        if blend_end > b.duration_sec + 0.001
+            || !covers_user_range(bin, blend_end, ctx.cues_in, b.sample_rate)
+        {
+            return miss!();
+        }
+        if !explicit_in {
+            let reserve = (8. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec * 0.25);
+            if blend_end > b.duration_sec - reserve + 0.01 {
+                return miss!();
+            }
+        }
+    }
+    if loop_roll && n < 8. {
+        return miss!();
+    }
     let mut lanes = neutral();
     lanes.rate_a.nodes.clear();
     lanes.rate_b.nodes.clear();
@@ -41,11 +60,26 @@ pub(super) fn prepare(
     let mut source_a = Polyline::default();
     let mut source_b = Polyline::default();
     let mut master = Polyline::default();
+    let nodes = n as usize * 64 + 2;
+    for line in [&mut clock, &mut source_a, &mut master, &mut lanes.rate_a] {
+        line.nodes.reserve(nodes);
+    }
+    if blend || loop_roll {
+        source_b.nodes.reserve(nodes);
+        lanes.rate_b.nodes.reserve(nodes);
+    }
     let mut wall = 0f64;
     let mut prev_a = start as f64;
     let mut prev_rate = ctx.offset_a.rate as f64;
     let mut max_slope = 0f32;
     let mut prev_log = bpm_start.ln();
+    let target = if hold {
+        bpm_start
+    } else {
+        incoming_bpm / factor
+    };
+    let bpm_start_log = bpm_start.ln();
+    let log_change = (target / bpm_start).ln();
     // A bridge replaces the next phrase's downbeat. Starting B on A's last
     // beat anticipates that downbeat and sounds like a one-beat phrase error.
     let start_b = if blend || loop_roll { 0. } else { n };
@@ -53,13 +87,8 @@ pub(super) fn prepare(
         let u = j as f32 / 64.;
         let ba = start_beat + u * ga.meter();
         let ta = ga.sec(ba);
-        let target = if hold {
-            bpm_start
-        } else {
-            incoming_bpm / factor
-        };
         let bpm = if blend {
-            (bpm_start.ln() + (target / bpm_start).ln() * ease(u / n)).exp()
+            (bpm_start_log + log_change * ease(u / n)).exp()
         } else {
             ga.bpm(ba) * ctx.offset_a.rate
         };
@@ -106,7 +135,8 @@ pub(super) fn prepare(
     // engine launch B exactly at n even when A finishes at the file boundary.
     let correction =
         ga.bpm(start_beat + n * ga.meter()) * ctx.offset_a.rate * factor / incoming_bpm;
-    let bridge_rate = if (correction - 1.).abs() <= 0.08
+    let bridge_rate = if !blend
+        && (correction - 1.).abs() <= 0.08
         && grid_reliable(a, start, end)
         && grid_reliable(b, bin, (bin + 4. * 60. / incoming_bpm).min(b.duration_sec))
     {
@@ -116,21 +146,13 @@ pub(super) fn prepare(
     };
     let bridge_tail = 60. / incoming_bpm * ctx.offset_b.rate / bridge_rate;
     let mut b_end = if blend {
-        gb.sec(input + n * ga.meter() * factor)
+        blend_end
     } else {
         bin + bridge_tail * bridge_rate
     };
     if b_end > b.duration_sec + 0.001 || !covers_user_range(bin, b_end, ctx.cues_in, b.sample_rate)
     {
         return miss!();
-    }
-    // Leave an incoming phrase to play after the overlap, rather than
-    // consuming the entire next track in a long mix.
-    if blend && !explicit_in {
-        let reserve = (8. * gb.meter() * 60. / incoming_bpm).min(b.duration_sec * 0.25);
-        if b_end > b.duration_sec - reserve + 0.01 {
-            return miss!();
-        }
     }
     if !blend {
         lanes.rate_b = Polyline::constant(bridge_rate);
@@ -150,9 +172,6 @@ pub(super) fn prepare(
             })
             || !outgoing.is_some_and(|f| f.vocal_presence < 0.5)
         {
-            return miss!();
-        }
-        if n < 8. {
             return miss!();
         }
         let bars = [4u16, 2, 1].into_iter().find(|bars| {

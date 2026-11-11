@@ -172,21 +172,19 @@ fn filtered_rhythm_requires_voice_evidence_and_hides_tonal_bands_until_the_hando
     assert!((900. ..=2500.).contains(&p.lanes.filter_b.hp_hz.sample(n * 0.5)));
     assert!((p.lanes.filter_b.hp_hz.sample(n) - 20.).abs() < 0.01);
     assert_eq!(p.lanes.eq_b.mid.sample(n), 0.);
-    assert!(
-        p.lanes
-            .xfader
-            .nodes
-            .iter()
-            .all(|(_, v)| (-1. ..=1.).contains(v))
-    );
-    assert!(
-        p.lanes
-            .filter_b
-            .hp_hz
-            .nodes
-            .iter()
-            .all(|(_, v)| (20. ..=20000.).contains(v))
-    );
+    assert!(p
+        .lanes
+        .xfader
+        .nodes
+        .iter()
+        .all(|(_, v)| (-1. ..=1.).contains(v)));
+    assert!(p
+        .lanes
+        .filter_b
+        .hp_hz
+        .nodes
+        .iter()
+        .all(|(_, v)| (20. ..=20000.).contains(v)));
     for bar in &mut b.bars {
         bar.vocal_confidence = None;
     }

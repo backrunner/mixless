@@ -92,7 +92,8 @@ fn first_drop_exit_is_preferred_but_a_late_pass_still_has_a_transition() {
     let late = plan(110., 0.);
     assert!(late.summary.is_some() && late.t_in_a >= 110.);
     assert_eq!(crate::drops::penalty(&a, 128., 96.), 0.);
-    assert!(crate::drops::penalty(&a, 128., 0.) > 0.3);
+    assert!(crate::drops::penalty(&a, 128., 0.) > crate::drops::penalty(&a, 128., 32.));
+    assert!(crate::drops::penalty(&a, 128., 32.) > 0.);
 }
 
 #[test]
@@ -579,7 +580,19 @@ fn spinback_is_never_chosen_on_a_sung_tail() {
 #[test]
 fn loop_out_loops_the_outgoing_phrase_and_hands_over_on_the_bass() {
     let a = crate::stem_regressions::with_stems(track(1, 128., "8A", S::Drop, 64, 0.8, 0.2));
-    let b = crate::stem_regressions::with_stems(track(2, 128., "9A", S::Intro, 64, 0.8, 0.2));
+    let mut b = crate::stem_regressions::with_stems(track(2, 128., "9A", S::Intro, 64, 0.8, 0.2));
+    // An outgoing loop cannot excuse fading into a word on the other deck.
+    let sung = Planner::with_options(PlannerOptions {
+        strategy: Some(StrategyId::LoopOut),
+        stem_playback: true,
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(sung.summary.is_none());
+    for frame in &mut b.stems.as_mut().unwrap().frames {
+        frame.vocal_activity = 0.;
+        frame.rms[0] = 0.;
+    }
     let p = Planner::with_options(PlannerOptions {
         strategy: Some(StrategyId::LoopOut),
         stem_playback: true,

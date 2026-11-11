@@ -10,18 +10,39 @@ pub(super) fn pair(
     length: u16,
     minimum_score: f32,
 ) -> Option<MixPlan> {
-    let plain =
-        direct(ctx, options, out, input, mode, length, minimum_score, false).or_else(|| {
+    let genuine = |p: &MixPlan| crate::experience::genuine(p, ctx) || miss!().unwrap_or(false);
+    let plain = direct(ctx, options, out, input, mode, length, minimum_score, false)
+        .filter(genuine)
+        .or_else(|| {
             super::preparation::candidate(ctx, options, out, input, mode, length, minimum_score)
+                .filter(genuine)
         });
     // A vocal carry is judged as its own candidate over the same window, so
     // a bed that cannot carry the voice still leaves the ordinary blend.
+    choose_variant(ctx, minimum_score, plain, |floor| {
+        direct(ctx, options, out, input, mode, length, floor, true).filter(genuine)
+    })
+}
+
+fn choose_variant(
+    ctx: &PlanContext<'_>,
+    minimum_score: f32,
+    plain: Option<MixPlan>,
+    build: impl FnOnce(f32) -> Option<MixPlan>,
+) -> Option<MixPlan> {
+    let merit = |p: &MixPlan| crate::experience::merit(p, ctx.outgoing, ctx.incoming);
+    // The outer search ranks audible merit, including terminal/short-cut
+    // costs. A raw summary score cannot prune another routing of this window.
     let floor = plain
         .as_ref()
-        .and_then(|p| p.summary.as_ref())
-        .map_or(minimum_score, |s| s.score.max(minimum_score));
-    direct(ctx, options, out, input, mode, length, floor, true).or(plain)
+        .map_or(minimum_score, |p| merit(p).max(minimum_score));
+    let alternative = build(floor).filter(|p| merit(p) > floor);
+    alternative.or(plain)
 }
+
+#[cfg(test)]
+#[path = "variant_tests.rs"]
+mod variant_tests;
 
 pub(super) fn direct(
     ctx: &PlanContext<'_>,
@@ -34,6 +55,17 @@ pub(super) fn direct(
     ride: bool,
 ) -> Option<MixPlan> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
+    // Most windows cannot carry an isolated voice. Avoid repeating the plain
+    // candidate's grid, phrase and vocal work just to rediscover that fact.
+    if ride
+        && (mode != TransitionMode::BeatBlend
+            || !options.stem_playback
+            || options.strategy.is_some()
+            || a.stems.is_none()
+            || b.stems.is_none())
+    {
+        return None;
+    }
     let ga = Grid(a);
     let gb = Grid(b);
     crate::trace::candidate(ga.sec(out), gb.sec(input), length, mode as u8);
@@ -107,8 +139,8 @@ pub(super) fn direct(
     let start_beat = out - n * ga.meter();
     let start = ga.sec(start_beat);
     let end = ga.sec(out);
-    // A chopped vocal is rhythmic material: it may be cut through and
-    // entered over, unlike a sung line. Judged on measured note lengths.
+    // A locally repeated vocal motif may be layered rhythmically. Repetition
+    // evidence must cover the window; short notes alone do not suffice.
     let chop_a = crate::vocals::chops(a, start, end);
     // A short phrase need not fit the entire tempo migration. Keep A's
     // sounding clock and carry B's offset into the next pair instead of
@@ -132,7 +164,17 @@ pub(super) fn direct(
     if ride && !carry {
         return None;
     }
-    let part_release = blend && stem_pair && n >= 4. && crate::phrasing::vocal_release(a, end);
+    let part_candidate =
+        stem_pair && n >= 4. && (blend || mode == TransitionMode::PhraseBridge && n <= 16.);
+    let part_release = part_candidate && crate::phrasing::vocal_release(a, end);
+    // Local kit withdrawal does not certify a melodic/sung phrase ending.
+    // Only a successfully fitted part arrangement may finish in that window.
+    let relative_exit = !explicit_out
+        && crate::recovery::relative(a, end)
+        && !crate::phrasing::exit_boundary(a, end);
+    if relative_exit && !part_candidate {
+        return miss!();
+    }
     let hold = blend
         && (requested_hold
             // The voice keeps the pulse it was sung to: A stays at its own
@@ -197,18 +239,71 @@ pub(super) fn direct(
             ctx.offset_b.pitch_semitones,
         )
     });
+    let measured = (options.harmonic_key_shift && !key_reliable && blend)
+        .then(|| {
+            crate::score::measured_shift(
+                a,
+                b,
+                (start, end),
+                (bin, incoming_end.min(b.duration_sec)),
+                ctx.offset_a.pitch_semitones,
+                ctx.offset_b.pitch_semitones,
+            )
+        })
+        .flatten();
     let key_shift = if options.harmonic_key_shift && key_reliable && key > 0. {
         shift
     } else {
-        0.
+        measured.unwrap_or(0.)
     };
-    let harmonic = key_reliable && ((shift == 0. && key >= 0.85) || key_shift != 0.);
+    // The overlap holds B at one speed. Where that speed is itself the
+    // transposition the keys need, B plays with key lock off instead of
+    // being stretched and shifted.
+    let unlocked = (options.harmonic_key_shift && hold)
+        .then(|| {
+            let bpm = ga.bpm(start_beat) * ctx.offset_a.rate;
+            let rates: Vec<f32> = (0..=4)
+                .map(|i| bpm * factor / gb.bpm(input + n * ga.meter() * factor * i as f32 / 4.))
+                .collect();
+            crate::varispeed::fit(
+                a,
+                b,
+                (start, end),
+                (bin, incoming_end.min(b.duration_sec)),
+                ctx.offset_a.pitch_semitones,
+                ctx.offset_b.pitch_semitones,
+                &rates,
+                (key, shift, key_reliable),
+            )
+        })
+        .flatten();
+    let harmonic =
+        unlocked.is_some() || key_reliable && ((shift == 0. && key >= 0.85) || key_shift != 0.);
+    // From here both name what is heard: the sounding shift and its match.
+    let (key, key_shift) = match unlocked {
+        Some(pitch) => (0.5 / pitch.abs().round().max(1.), pitch),
+        None => (key, key_shift),
+    };
     if carry && !harmonic {
         return miss!();
     }
+    let tonality = crate::score::tonality(
+        harmonic,
+        key_reliable,
+        crate::score::overlap_dissonance(
+            a,
+            b,
+            (start, end),
+            (bin, incoming_end.min(b.duration_sec)),
+            ctx.offset_a.pitch_semitones,
+            ctx.offset_b.pitch_semitones + key_shift,
+        ),
+    );
     let recovery = crate::recovery::contains(a, start, end);
-    if ((!detailed || (!blend && !loop_roll)) && !crate::vocals::safe_exit(a, end))
-        || !crate::vocals::safe_entry(b, bin)
+    if (!part_candidate
+        && (!detailed || (!blend && !loop_roll))
+        && !crate::vocals::safe_exit(a, end))
+        || (!part_candidate && !crate::vocals::safe_entry(b, bin))
     {
         return miss!();
     }
@@ -233,7 +328,12 @@ pub(super) fn direct(
     let explicit_in = user_range(ctx.cues_in, b.sample_rate).is_some();
     // Every technique finishes A at an evidenced phrase edge. Recovery
     // quality may authorize layering, never an internal exit, even with stems.
-    if !explicit_out && !carry && !part_release && !crate::phrasing::exit_boundary(a, end) {
+    if !explicit_out
+        && !carry
+        && !part_release
+        && !relative_exit
+        && !crate::phrasing::exit_boundary(a, end)
+    {
         return miss!();
     }
     // A recovery interval can support an overlap, but its internal downbeats
@@ -254,6 +354,7 @@ pub(super) fn direct(
         && !loop_roll
         && !explicit_out
         && !chop_a
+        && !part_candidate
         && !crate::continuity::voice_released(a, end)
     {
         return miss!();
@@ -272,17 +373,19 @@ pub(super) fn direct(
     // A metrical downbeat is not automatically the beginning of a phrase.
     // Strong structural evidence takes precedence over the old fixed offsets.
     // A carry leaves A where its line ends, but B still starts its phrase.
-    if (!carry
-        && !part_release
-        && !a.phrase_boundaries.is_empty()
-        && !explicit_out
-        && out_phrase < 0.5)
+    let needs_phrase_fit = relative_exit
         || (!b.phrase_boundaries.is_empty() && !explicit_in && in_phrase < 0.5)
         || (blend
             && !carry
             && !a.phrase_boundaries.is_empty()
             && !explicit_out
-            && start_phrase < 0.5)
+            && start_phrase < 0.5);
+    if (!carry
+        && !part_release
+        && !a.phrase_boundaries.is_empty()
+        && !explicit_out
+        && out_phrase < 0.5)
+        || (needs_phrase_fit && !part_candidate)
     {
         return miss!();
     }
@@ -352,6 +455,10 @@ pub(super) fn direct(
         harmonic,
         explicit_in,
     )?;
+    if unlocked.is_some() {
+        // The speed carries the pitch; the KEY control stays where it was.
+        lanes.pitch_b = Polyline::constant(ctx.offset_b.pitch_semitones);
+    }
     // The bed must carry the voice for the whole window, and the incoming
     // voice must be able to come in on a breath where the line has gone.
     let ride = if carry {
@@ -752,6 +859,9 @@ pub(super) fn direct(
         && in_phrase >= 0.6
         && crate::continuity::cut_safe(a, end, false)
         && !matches!(sa, mixless_protocol::SectionLabel::BuildUp);
+    if instant && !explicit_in && !crate::energy::cut_entry_supported(b, bin) {
+        return miss!();
+    }
     if boundary_only && !instant && !drop_cut && !spinback {
         return miss!();
     }
@@ -819,7 +929,7 @@ pub(super) fn direct(
     // another. A drop landing needs only a beat of rest; any other cut two.
     let hard_cut = instant
         || fx_decision.technique.accent()
-        || fx_decision.technique == Technique::DryCut && !blend;
+        || fx_decision.technique == Technique::DryCut && !blend && n <= 1.;
     // A cut into silence is a gap, not a cut.
     if hard_cut && !explicit_in && crate::continuity::silent(b, bin, 0.5) {
         return miss!();
@@ -852,11 +962,19 @@ pub(super) fn direct(
             return miss!();
         }
     }
+    let composition_candidate = blend && stem_pair && !loop_out && !carry && n >= 4.;
+    let needs_peak_fit = !crate::drops::allows(
+        a,
+        start,
+        end,
+        options.outgoing_entry_sec,
+        filtered || instant || fx_decision.technique.accent(),
+    );
     if !explicit_out
         && !carry
         && !crate::drops::allows(
             a,
-            start,
+            if composition_candidate { end } else { start },
             end,
             options.outgoing_entry_sec,
             filtered || instant || fx_decision.technique.accent(),
@@ -891,7 +1009,7 @@ pub(super) fn direct(
     // bass changes hands on the peak's last bar line, the way a DJ brings
     // the next intro in over the last phrases of a drop. B must carry a beat
     // there so the swap reveals a groove, not an empty intro.
-    let part_exchange = blend && stem_pair && harmonic && !loop_out && !carry && n >= 4.;
+    let part_exchange = composition_candidate;
     let layered = (blend && !part_exchange && !loop_out && !filtered && !explicit_out)
         .then(|| peak_end_bar(a, &source_a, start, end, n))
         .flatten()
@@ -899,6 +1017,10 @@ pub(super) fn direct(
             *u >= 2.
                 && feature(b, source_b.sample(*u) + 0.01).is_some_and(|f| f.kick_salience >= 0.35)
         });
+    let bass_anchor = blend
+        .then(|| bass_handoff(a, b, &source_a, &source_b, n))
+        .flatten();
+    let needs_bass_fit = composition_candidate && bass_anchor.is_none();
     let handoff = if let Some((_, shape)) = &ride {
         shape.leave
     } else if filtered {
@@ -909,7 +1031,11 @@ pub(super) fn direct(
         } else if let Some(u) = layered {
             u
         } else {
-            bass_handoff(a, b, &source_a, &source_b, n).or_else(|| miss!())?
+            // This is only a search seed. The part solver chooses and
+            // validates the actual bass exchange after fitting its lanes.
+            bass_anchor
+                .or_else(|| composition_candidate.then_some(n / 2.))
+                .or_else(|| miss!())?
         }
     } else if let Some(op) = &lanes.loop_b {
         op.off_bar
@@ -958,7 +1084,7 @@ pub(super) fn direct(
             gb.sec(input + gb.meter()).min(b.duration_sec),
         )
     };
-    let score = ranking::Evidence {
+    let evidence = ranking::Evidence {
         start,
         end,
         bin,
@@ -980,8 +1106,20 @@ pub(super) fn direct(
         loop_out,
         stem_pair,
         fx_decision,
+    };
+    let raw_score = evidence.score(ctx, options)?;
+    // Raw singers need not be heard together after independent stem routing.
+    // A fitted composition rejects actual simultaneous sung foregrounds.
+    // Use its attainable upper bound while searching; restore the deduction
+    // if fitting fails so an ordinary blend cannot inherit this allowance.
+    let rank_clash = if composition_candidate { 0. } else { clash };
+    let fitted_score = ranking::Evidence {
+        clash: rank_clash,
+        ..evidence
     }
-    .score(ctx, options)?
+    .score(ctx, options)?;
+    let clash_allowance = (fitted_score - raw_score).max(0.);
+    let score = fitted_score
         - if filtered { 0.10 } else { 0. }
         // Stem-layered tonal material never overlaps, so there is no measured
         // progression tension; a flat penalty keeps true harmonic blends ahead.
@@ -1112,11 +1250,15 @@ pub(super) fn direct(
     // held thereafter. A key change is made by handing over musical material.
     let ending = mixless_protocol::PerformanceOffset {
         rate: lanes.rate_b.sample(n),
-        pitch_semitones: ctx.offset_b.pitch_semitones + key_shift,
+        pitch_semitones: ctx.offset_b.pitch_semitones
+            + if unlocked.is_some() {
+                mixless_protocol::varispeed_semitones(lanes.rate_b.sample(n))
+            } else {
+                key_shift
+            },
     };
     let mut plan = MixPlan {
         source_sample_rates: [a.sample_rate, b.sample_rate],
-        incoming_varispeed: false,
         stem_mix: None,
         stages,
         summary: Some(MixPlanSummary {
@@ -1178,8 +1320,8 @@ pub(super) fn direct(
         requires_stems: false,
         send_fx: None,
         insert_a: None,
+        incoming_varispeed: unlocked.is_some(),
     };
-    let composition_candidate = blend && stem_pair && !loop_out && !carry && n >= 4.;
     let mut composed = composition_candidate;
     // The shaped lanes hold the swap at unity per band; combined they can
     // still dip or surge. Trim both decks so the master follows the level it
@@ -1225,10 +1367,14 @@ pub(super) fn direct(
             crate::stem_mix::loop_out(&mut plan);
         }
     }
-    if mode == TransitionMode::PhraseBridge && !instant && !fx_decision.technique.accent() {
-        crate::bridge::expand(&mut plan, ctx, fx_decision.technique, harmonic, stem_pair)
-            .or_else(|| miss!())?;
-    }
+    let fitted_bridge =
+        if mode == TransitionMode::PhraseBridge && !instant && !fx_decision.technique.accent() {
+            crate::bridge::expand(&mut plan, ctx, fx_decision.technique, harmonic, stem_pair)
+                .or_else(|| miss!())?;
+            plan.requires_stems
+        } else {
+            false
+        };
     if let Some((_, shape)) = &ride {
         let blend_plan = plan.clone();
         crate::stem_mix::carry(&mut plan, shape, outgoing_bpm);
@@ -1240,7 +1386,10 @@ pub(super) fn direct(
         }
     }
     if composed {
-        composed = crate::composition::arrange(&mut plan, ctx, harmonic).is_some();
+        composed = crate::composition::arrange(&mut plan, ctx, tonality, |bars| {
+            ranking::blend_duration_reward(bars, key, rank_clash) / 1.4
+        })
+        .is_some();
         if !composed {
             // A failed fit leaves the original lanes intact. Restore their
             // normal level checks before evaluating a legacy arrangement.
@@ -1248,6 +1397,32 @@ pub(super) fn direct(
             crate::level::sanitize(&mut plan);
         }
         if composed && plan.summary.as_ref()?.score <= minimum_score {
+            return miss!();
+        }
+    }
+    if !composed {
+        plan.summary.as_mut()?.score -= clash_allowance;
+    }
+    // A fitted incoming vocal remains muted until a measured complete rest.
+    // If fitting failed, the original whole-track entry must still be safe.
+    if !composed && !fitted_bridge {
+        // A part may begin underneath the foreground on a measured downbeat.
+        // Only a successfully fitted arrangement can move its audible phrase
+        // exchange away from the nominal whole-track start/entry.
+        if needs_phrase_fit {
+            return miss!();
+        }
+        if needs_bass_fit || (!explicit_out && !carry && needs_peak_fit) {
+            return miss!();
+        }
+        if !crate::vocals::safe_entry(b, bin)
+            || ((!detailed || (!blend && !loop_roll)) && !crate::vocals::safe_exit(a, end))
+            || (!blend
+                && !loop_roll
+                && !explicit_out
+                && !chop_a
+                && !crate::continuity::voice_released(a, end))
+        {
             return miss!();
         }
     }
@@ -1260,6 +1435,7 @@ pub(super) fn direct(
         return miss!();
     }
     if !composed
+        && !fitted_bridge
         && !carry
         && !explicit_out
         && ((part_release && !crate::phrasing::exit_boundary(a, end))
@@ -1359,7 +1535,41 @@ pub(super) fn direct(
     if !crate::foreground::preserved(&plan, ctx) {
         return miss!();
     }
-    Some(plan)
+    let uncertain = crate::foreground::uncertainty(&plan, ctx);
+    let arrival = if explicit_in {
+        0.
+    } else {
+        crate::experience::arrival_debt(&plan, b)
+    };
+    if let Some(summary) = &mut plan.summary {
+        summary.score = (summary.score - uncertain - arrival).max(0.);
+    }
+    if plan.summary.as_ref().is_some_and(|s| s.length_bars < 2)
+        && !explicit_in
+        && !explicit_out
+        && end < (a.duration_sec * 0.92).min(a.duration_sec - 8.)
+        && crate::energy::unearned_rise(a, b, end, bin) > 0.
+    {
+        return miss!();
+    }
+    if !explicit_out {
+        let loss = crate::energy::loss_cost(&plan, a, b);
+        if let Some(summary) = &mut plan.summary {
+            summary.score = (summary.score - loss).max(0.);
+        }
+        // The stem that identifies the track may leave well before the last
+        // residual lane. Charge that lost residence, not just nominal time.
+        let heard_exit = crate::experience::foreground_exit(&plan);
+        let lost = crate::drops::brief(a, heard_exit, options.outgoing_entry_sec)
+            - crate::drops::brief(a, end, options.outgoing_entry_sec);
+        if let Some(summary) = &mut plan.summary {
+            summary.score = (summary.score - lost.max(0.) / 1.4).max(0.);
+        }
+    }
+    // The earlier score is only an upper bound. In particular, a vocal ride
+    // must still beat the ordinary fit after its actual routing, energy and
+    // residence deductions; otherwise `pair` would discard the better fit.
+    (plan.summary.as_ref()?.score > minimum_score).then_some(plan)
 }
 
 /// The bar, within the overlap, on which an A peak that the overlap opens

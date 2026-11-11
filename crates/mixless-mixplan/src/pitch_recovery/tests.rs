@@ -113,14 +113,13 @@ fn solo_recovery_preserves_overlap_and_finishes_with_neutral_controls() {
     assert_eq!(p.lanes.pitch_b.sample(end), 0.);
     assert_eq!(p.lanes.eq_b.low.sample(end), 0.);
     assert!((p.lanes.filter_b.lp_hz.sample(end) - 20000.).abs() < 0.05);
-    assert!(
-        p.stem_mix
-            .as_ref()
-            .unwrap()
-            .incoming
-            .iter()
-            .all(|l| l.sample(end) == 1.)
-    );
+    assert!(p
+        .stem_mix
+        .as_ref()
+        .unwrap()
+        .incoming
+        .iter()
+        .all(|l| l.sample(end) == 1.));
     for pair in p.lanes.pitch_b.nodes.windows(2) {
         let seconds = p.clock.sample(pair[1].0) - p.clock.sample(pair[0].0);
         assert!((pair[1].1 - pair[0].1).abs() <= seconds + 1e-5);
@@ -243,7 +242,21 @@ fn future_key_and_explicit_departure_change_the_restoration_decision() {
         let key = format!("{number}A");
         let c = crate::tests::track(3, 120., &key, S::Intro, 64, 0.8, 1.);
         let mut p = base();
+        let reserved = departure(
+            &planner,
+            &t,
+            &c,
+            &p,
+            p.incoming_offset_end.pitch_semitones,
+            &[],
+            &[],
+        )
+        .unwrap();
         arrange(&planner, &ctx, Some(&c), &[], &[], &mut p);
+        assert!(
+            p.t_end_b + p.incoming_offset_end.rate <= reserved.t_in_a + 0.001,
+            "solo restoration must preserve the previously usable departure"
+        );
         results.push(p.incoming_offset_end.pitch_semitones);
         let next = departure(
             &planner,

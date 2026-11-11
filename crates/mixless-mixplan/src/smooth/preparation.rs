@@ -276,7 +276,7 @@ mod tests {
                 cues_in: &[],
                 offset_a: mixless_protocol::PerformanceOffset {
                     rate,
-                    pitch_semitones: -2.,
+                    pitch_semitones: -1.,
                 },
                 offset_b: Default::default(),
             };
@@ -299,7 +299,7 @@ mod tests {
             assert!((0.92..=1.08).contains(&ra) && (0.92..=1.08).contains(&rb));
             assert!((ra * 152. - rb * 174.).abs() < 0.01);
             assert_eq!(p.lanes.rate_a.sample(0.), rate);
-            assert_eq!(p.lanes.pitch_a.sample(0.), -2.);
+            assert_eq!(p.lanes.pitch_a.sample(0.), -1.);
         }
     }
 
@@ -407,18 +407,16 @@ mod tests {
                 pitch_semitones: 0.,
             },
         };
-        assert!(
-            candidate(
-                &ctx,
-                &PlannerOptions::default(),
-                256.,
-                0.,
-                TransitionMode::BeatBlend,
-                16,
-                -1.
-            )
-            .is_none()
-        );
+        assert!(candidate(
+            &ctx,
+            &PlannerOptions::default(),
+            256.,
+            0.,
+            TransitionMode::BeatBlend,
+            16,
+            -1.
+        )
+        .is_none());
     }
 
     #[test]

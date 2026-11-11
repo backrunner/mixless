@@ -1,6 +1,7 @@
 //! Rank candidates only after musical and source constraints have passed.
 use super::*;
 
+#[derive(Clone, Copy)]
 pub(super) struct Evidence {
     pub start: f32,
     pub end: f32,
@@ -248,8 +249,7 @@ impl Evidence {
         let length_fit = if blend {
             // Judge sustained compatibility across the whole interval. A useful
             // long blend earns room to develop, with no penalty beyond 24/32 bars.
-            let compatibility = (0.55 + 0.45 * key) * (1. - clash * 0.5);
-            0.24 * (1. - (-n / 20.).exp()) * compatibility
+            blend_duration_reward(n, key, clash)
         } else if recovery_overlap && !drop_cut && !scratch_cut && n >= 4. {
             0.10 * (1. - (-n / 16.).exp())
         } else {
@@ -257,12 +257,24 @@ impl Evidence {
         };
         let score =
             ((quality + position + phrase * 0.12 + energy * 0.05 + kick * 0.03 + length_fit
-                - key_shift.abs() * 0.025
+                - crate::score::shift_cost(key_shift)
                 - quiet_pair * 0.25
                 - surge * 0.15
+                - if n < 2. {
+                    0.35 * crate::energy::unearned_rise(a, b, end, bin)
+                } else {
+                    0.
+                }
+                - crate::energy::contrast_cost(a, b, end, bin)
                 + if structural { 0.03 } else { 0. })
                 / 1.4)
                 .clamp(0., 1.);
         Some(score)
     }
+}
+
+/// Nominal upper bound, replaced by the fitted audible duration for part mixes.
+pub(super) fn blend_duration_reward(bars: f32, key: f32, clash: f32) -> f32 {
+    let compatibility = (0.55 + 0.45 * key) * (1. - clash * 0.5);
+    0.24 * (1. - (-bars / 20.).exp()) * compatibility
 }

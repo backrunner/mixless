@@ -41,31 +41,71 @@ fn harmonic_correction_is_prepared_and_held_without_an_audible_pitch_ramp() {
 }
 
 #[test]
-fn every_key_pair_can_match_without_accumulating_pitch_across_tracks() {
+fn key_pairs_match_within_the_limit_or_stay_a_reliable_conflict() {
+    let (mut matched_pairs, mut conflicts, mut second) = (0, 0, 0);
     for ma in ["A", "B"] {
         for mb in ["A", "B"] {
             for ka in 1..=12 {
                 for kb in 1..=12 {
                     let a = track(1, 120., &format!("{ka}{ma}"), S::Outro, 64, 0.9, 0.2);
                     let b = track(2, 120., &format!("{kb}{mb}"), S::Intro, 64, 0.9, 0.2);
-                    for pa in [-5., 0., 5., 0.35] {
-                        for pb in [-5., 0., 5., -0.2] {
+                    for pa in [-1., 0., 1., 0.35] {
+                        for pb in [-1., 0., 1., -0.2] {
                             let (score, shift, reliable) =
                                 score::window_key_match(&a, &b, 128., 0., pa, pb);
-                            assert!(reliable && score > 0.);
-                            assert!((pb + shift).abs() <= 6.);
-                            let (matched, extra, _) =
-                                score::window_key_match(&a, &b, 128., 0., pa, pb + shift);
-                            assert!(
-                                matched >= 0.85 && extra == 0.,
-                                "{ka}{ma} -> {kb}{mb} {pa}/{pb}"
-                            );
+                            // Confident labels never become "unknown" just
+                            // because no small shift reconciles them.
+                            assert!(reliable);
+                            if score == 0. {
+                                assert_eq!(shift, 0., "{ka}{ma} -> {kb}{mb} {pa}/{pb}");
+                                conflicts += 1;
+                                continue;
+                            }
+                            matched_pairs += 1;
+                            // Pitch never accumulates beyond the limit.
+                            let target = pb + shift;
+                            assert!(target.abs() <= score::MAX_KEY_SHIFT + 0.5);
+                            let fits = |pitch: f32| {
+                                let (matched, extra, _) =
+                                    score::window_key_match(&a, &b, 128., 0., pa, pitch);
+                                matched >= 0.85 && extra == 0.
+                            };
+                            assert!(fits(target), "{ka}{ma} -> {kb}{mb} {pa}/{pb}");
+                            // From its recorded key the deck takes a second
+                            // semitone only where no nearer pitch reconciles.
+                            if pb == 0. && target.abs() > 1.5 {
+                                second += 1;
+                                let detune = pa - pa.round();
+                                assert!([-1., 0., 1.].iter().all(|n| !fits(n + detune)));
+                            }
                         }
                     }
                 }
             }
         }
     }
+    assert!(conflicts > 0 && second > 0 && matched_pairs > conflicts);
+}
+
+#[test]
+fn keys_out_of_reach_plan_without_transposing() {
+    // 10A to 7B needs three semitones. The incoming deck keeps its own key.
+    let a = track(1, 120., "10A", S::Outro, 64, 0.9, 0.2);
+    let b = track(2, 120., "7B", S::Intro, 64, 0.9, 0.2);
+    assert_eq!(
+        score::window_key_match(&a, &b, 128., 0., 0., 0.),
+        (0., 0., true)
+    );
+    let p = Planner::with_options(PlannerOptions {
+        harmonic_key_shift: true,
+        ..Default::default()
+    })
+    .plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
+    assert!(p.failure_reason.is_none(), "{:?}", p.failure_reason);
+    assert_eq!(p.incoming_offset_end.pitch_semitones, 0.);
+    assert!(p.lanes.pitch_b.nodes.iter().all(|(_, pitch)| *pitch == 0.));
+    // Without separated parts, two full tracks in clashing keys never blend.
+    assert_ne!(p.transition_mode, Some(M::BeatBlend));
 }
 
 #[test]
@@ -75,8 +115,8 @@ fn harmonic_matching_covers_blends_loops_and_tempo_gap_tails() {
         (120., Some(StrategyId::LoopConstruct)),
         (93., None),
     ] {
-        let a = track(1, 120., "10A", S::Outro, 64, 0.9, 0.2);
-        let b = track(2, tempo, "7B", S::Intro, 64, 0.9, 0.2);
+        let a = track(1, 120., "8A", S::Outro, 64, 0.9, 0.2);
+        let b = track(2, tempo, "3A", S::Intro, 64, 0.9, 0.2);
         let p = Planner::with_options(PlannerOptions {
             harmonic_key_shift: true,
             strategy,
@@ -89,8 +129,8 @@ fn harmonic_matching_covers_blends_loops_and_tempo_gap_tails() {
             p.failure_reason
         );
         assert!(p.send_fx.is_some() || p.incoming_start_bar == 0.);
-        assert_eq!(p.lanes.pitch_b.nodes, vec![(0., -3.)]);
-        assert_eq!(p.incoming_offset_end.pitch_semitones, -3.);
+        assert_eq!(p.lanes.pitch_b.nodes, vec![(0., -1.)]);
+        assert_eq!(p.incoming_offset_end.pitch_semitones, -1.);
         assert_eq!(p.lanes.pitch_a.nodes, vec![(0., 0.)]);
     }
 }

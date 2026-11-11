@@ -80,6 +80,12 @@ pub(crate) fn voice_cut_safe(t: &TrackAnalysis, sec: f32) -> bool {
     if sec <= 0.001 || sec >= t.duration_sec - 0.001 {
         return true;
     }
+    if crate::vocals::pattern::boundary(t, sec) {
+        return true;
+    }
+    if crate::vocals::continues(t, sec) {
+        return false;
+    }
     if let Some(stems) = &t.stems {
         if stems.note_crossing(sec, mixless_protocol::StemKind::Vocals)
             && voice_active(t, sec) > 0.2
@@ -136,6 +142,12 @@ pub(crate) fn voice_cut_safe(t: &TrackAnalysis, sec: f32) -> bool {
 /// event continuing past it, or low activity in the first ~0.4 s after the
 /// cut. With no detailed evidence the coarse phrase map decides.
 pub(crate) fn voice_released(t: &TrackAnalysis, sec: f32) -> bool {
+    if crate::vocals::pattern::boundary(t, sec) {
+        return true;
+    }
+    if crate::vocals::continues(t, sec) {
+        return false;
+    }
     if t.stems.is_none() && t.moments.is_empty() {
         return !crate::vocals::phrases(t)
             .iter()

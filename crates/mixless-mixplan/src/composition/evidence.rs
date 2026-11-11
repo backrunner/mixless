@@ -19,18 +19,24 @@ pub(super) fn frames(p: &MixPlan, ctx: &PlanContext<'_>) -> Option<Vec<Frame>> {
                 (0, ctx.outgoing, &p.outgoing_source),
                 (1, ctx.incoming, &p.incoming_source),
             ] {
-                let meters = t.stems.as_ref()?;
+                // A delayed deck has no audible power before its source clock
+                // starts. Sampling its parked source position would invent a
+                // replacement bed and reward a gap that playback cannot fill.
+                if d == 1 && u + 0.0001 < p.incoming_start_bar {
+                    continue;
+                }
+                t.stems.as_ref()?;
                 for j in 0..5 {
                     let sec = (source.sample(u) + (j as f32 - 2.) * 0.05)
                         .clamp(0., t.duration_sec - 0.001);
-                    let f = meters.frame_at(sec)?;
+                    let (f, power) = crate::level::evidence::frame(t, sec)?;
                     voice[d] = voice[d].max(f.vocal_activity);
                     for part in 0..3 {
                         for band in 0..3 {
                             // Three measured groups, four playback stems. Low
                             // instruments are a bass proxy, not a fourth meter.
                             let s = if part == 2 && band == 0 { 3 } else { part };
-                            bands[d][s][band] += 10f32.powf(f.band_db[part][band] / 10.) / 5.;
+                            bands[d][s][band] += power[part][band] / 5.;
                         }
                     }
                 }
@@ -57,6 +63,16 @@ pub(super) fn voice_windows(
         return vec![];
     };
     let mut windows = vec![];
+    // A corroborated repeating sample can fade as a rhythmic part while the
+    // same control would truncate a sentence. Require local evidence across
+    // the entire fade; final heard harmony and energy checks still apply.
+    for i in 0..=(n * 4.) as usize {
+        let u = i as f32 / 4.;
+        let end = u + minimum_bars.max(0.25);
+        if end <= n && crate::vocals::chops(t, source.sample(u), source.sample(end)) {
+            windows.push(Fade { start: u, end });
+        }
+    }
     // A transcribed note in separator leakage is not a sung foreground.
     // Use a relative -40 dB power floor, invariant to recording gain.
     let negligible = |f: &mixless_protocol::StemFrame| {
@@ -77,6 +93,9 @@ pub(super) fn voice_windows(
             continue;
         }
         let (start, end) = (source.sample(u), source.sample(u + width));
+        if crate::vocals::continues(t, (start + end) * 0.5) {
+            continue;
+        }
         let first = meters.frames.partition_point(|f| f.end_sec <= start);
         let last = meters.frames.partition_point(|f| f.start_sec < end);
         let fs = &meters.frames[first..last];
@@ -94,6 +113,7 @@ pub(super) fn voice_windows(
                         && note.confidence >= 0.45
                         && note.start_sec < end
                         && note.end_sec > start
+                        && crate::vocals::note_supported(t, note)
                 }))
         {
             continue;
@@ -103,5 +123,6 @@ pub(super) fn voice_windows(
             end: u + width,
         });
     }
+    windows.sort_by(|a, b| a.start.total_cmp(&b.start));
     windows
 }

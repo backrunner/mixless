@@ -1,6 +1,6 @@
 //! Native-tempo handover, fitted to the heard parts rather than an FX preset.
 //! Search and band/level prediction happen on the host, never in the callback.
-use crate::{PlanContext, grid::Grid};
+use crate::{grid::Grid, PlanContext};
 use mixless_protocol::{MixPlan, MixStage, Polyline, StemMix, StrategyId, TrackAnalysis};
 
 #[derive(Clone, Copy, Debug)]
@@ -17,9 +17,6 @@ impl Fade {
     fn at(self, sec: f32) -> f32 {
         ease((sec - self.start) / (self.end - self.start).max(0.001))
     }
-}
-fn db(x: f32) -> f32 {
-    (20. * x.max(0.000016).log10()).clamp(-96., 6.)
 }
 
 #[derive(Clone, Copy)]
@@ -58,7 +55,11 @@ fn gains(shape: &Shape, sec: f32) -> [[f32; 4]; 2] {
     std::array::from_fn(|deck| {
         std::array::from_fn(|part| {
             let x = shape[deck][part].at(sec);
-            if deck == 0 { 1. - x } else { x }
+            if deck == 0 {
+                1. - x
+            } else {
+                x
+            }
         })
     })
 }
@@ -232,6 +233,40 @@ fn fit(plan: &MixPlan, ctx: &PlanContext<'_>, frames: &[Frame], harmonic: bool) 
                     }
                 }
             }
+            if crate::constraints::user_range(ctx.cues_out, ctx.outgoing.sample_rate).is_none() {
+                let mut valid = true;
+                for (d, t, source) in [
+                    (0, ctx.outgoing, &plan.outgoing_source),
+                    (1, ctx.incoming, &plan.incoming_source),
+                ] {
+                    let f = shape[d][2];
+                    let desired = (at_bar(&plan.clock, f.start), at_bar(&plan.clock, f.end));
+                    if let Some((start, end)) = crate::melody::windows(
+                        t,
+                        source,
+                        plan.summary.as_ref()?.length_bars as f32,
+                        desired,
+                        d == 0,
+                    )
+                    .into_iter()
+                    .find(|f| {
+                        harmonic
+                            || d == 0
+                            || plan.clock.sample(f.0)
+                                >= shape[0][0].end.max(shape[0][2].end).max(shape[0][3].end) - 0.001
+                    }) {
+                        shape[d][2] = Fade {
+                            start: plan.clock.sample(start),
+                            end: plan.clock.sample(end),
+                        };
+                    } else {
+                        valid = false;
+                    }
+                }
+                if !valid {
+                    continue;
+                }
+            }
             if !voice_safe(ctx, plan, &shape) {
                 continue;
             }
@@ -350,33 +385,17 @@ pub(super) fn arrange(plan: &mut MixPlan, ctx: &PlanContext<'_>, harmonic: bool)
     lanes.fx_send_a = Polyline::constant(0.);
     lanes.fx_send_b = Polyline::constant(0.);
     plan.send_fx = None;
-    // Open the crossfader while compensating its exact square-root law.
-    // Independent part envelopes and channel levels perform the actual mix.
-    let opening = shape[1]
-        .iter()
-        .map(|f| f.start)
-        .fold(duration, f32::min)
-        .max(0.05);
-    let closing = shape[0]
-        .iter()
-        .map(|f| f.end)
-        .fold(0., f32::max)
-        .min(duration - 0.05);
+    let mut previous_x = -1.;
     let mut previous_eq = [[0f32; 3]; 2];
     let mut previous_gain = [0f32; 2];
     for (i, f) in frames.iter().enumerate() {
         let g = gains(&shape, f.sec);
+        let routing = crate::part_routing::route(g);
         for s in 0..4 {
-            mix.outgoing[s].nodes.push((f.u, g[0][s]));
-            mix.incoming[s].nodes.push((f.u, g[1][s]));
+            mix.outgoing[s].nodes.push((f.u, routing.stems[0][s]));
+            mix.incoming[s].nodes.push((f.u, routing.stems[1][s]));
         }
-        let x = if f.sec < opening {
-            -1. + ease(f.sec / opening)
-        } else if f.sec > closing {
-            ease((f.sec - closing) / (duration - closing))
-        } else {
-            0.
-        };
+        let x = routing.crossfader;
         lanes.xfader.nodes.push((f.u, x));
         let p = band_power(f, g);
         let progress = ease(f.sec / duration);
@@ -415,12 +434,7 @@ pub(super) fn arrange(plan: &mut MixPlan, ctx: &PlanContext<'_>, harmonic: bool)
                 .clamp(previous_gain[d] - dt, previous_gain[d] + dt)
                 .max(-(duration - f.sec));
             previous_gain[d] = duck;
-            let fader = if d == 0 {
-                ((1. - x) / 2.).sqrt()
-            } else {
-                ((1. + x) / 2.).sqrt()
-            };
-            let level = -db(fader).min(0.) + duck + if d == 1 { trim } else { 0. };
+            let level = routing.gain_db + duck + if d == 1 { trim } else { 0. };
             let line = if d == 0 {
                 &mut lanes.gain_a
             } else {
@@ -428,7 +442,7 @@ pub(super) fn arrange(plan: &mut MixPlan, ctx: &PlanContext<'_>, harmonic: bool)
             };
             line.nodes.push((
                 f.u,
-                if d == 0 && i == last {
+                if d == 0 && x == 1. && (previous_x == 1. || i == last) {
                     -96.
                 } else {
                     level.min(6.)
@@ -447,6 +461,7 @@ pub(super) fn arrange(plan: &mut MixPlan, ctx: &PlanContext<'_>, harmonic: bool)
             }
         }
         previous_eq = eq;
+        previous_x = x;
     }
     plan.requires_stems = true;
     plan.stem_mix = Some(mix);

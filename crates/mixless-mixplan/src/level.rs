@@ -5,12 +5,18 @@
 //! the gain compensation all judge a transition by the same estimate.
 use mixless_protocol::{MixPlan, Polyline, StemMix, TrackAnalysis};
 
+pub(crate) mod evidence;
+
 /// Representative centres of the isolator's bands (crossovers at 150 Hz and
 /// 2 kHz) for the filter responses, Hz.
 const CENTRES: [f32; 3] = [70., 600., 5000.];
 
 fn lin(db: f32) -> f32 {
-    if db <= -90. { 0. } else { 10f32.powf(db / 20.) }
+    if db <= -90. {
+        0.
+    } else {
+        10f32.powf(db / 20.)
+    }
 }
 
 /// Second-order magnitude of the channel filters at `hz`.
@@ -24,22 +30,21 @@ fn filter_gain(lp: f32, hp: f32, hz: f32) -> f32 {
 /// Stem evidence splits each band into vocals, drums and instruments (the
 /// bass stem is part of instruments in the meters).
 fn bands(t: &TrackAnalysis, sec: f32, stems: Option<[f32; 4]>) -> [f32; 3] {
-    if let Some(meters) = &t.stems {
-        let frames: Vec<_> = (0..4)
-            .filter_map(|i| meters.frame_at(sec - 0.15 + 0.1 * i as f32))
-            .collect();
-        if !frames.is_empty() {
-            let mut power = [0f32; 3];
-            for f in &frames {
-                for (stem, gains) in f.band_db.iter().enumerate() {
-                    for band in 0..3 {
-                        let part = if stem == 2 && band == 0 { 3 } else { stem };
-                        let g = stems.map_or(1., |s| s[part]);
-                        power[band] += 10f32.powf(gains[band] / 10.) * g * g;
-                    }
+    if t.stems.is_some() {
+        let mut count = 0;
+        let mut power = [0f32; 3];
+        evidence::nearby(t, sec, |f| {
+            count += 1;
+            for (stem, gains) in f.iter().enumerate() {
+                for band in 0..3 {
+                    let part = if stem == 2 && band == 0 { 3 } else { stem };
+                    let g = stems.map_or(1., |s| s[part]);
+                    power[band] += gains[band] * g * g;
                 }
             }
-            return power.map(|p| p / frames.len() as f32);
+        });
+        if count > 0 {
+            return power.map(|p| p / count as f32);
         }
     }
     let Some(bar) = crate::musical::feature(t, sec) else {
@@ -60,8 +65,81 @@ pub(crate) fn unmixed(t: &TrackAnalysis, sec: f32) -> f32 {
     10. * bands(t, sec, None).iter().sum::<f32>().max(1e-12).log10()
 }
 
+/// The same source sampling as `bands`, before any routing attenuation.
+pub(crate) fn unmixed_parts(t: &TrackAnalysis, sec: f32) -> Option<[f32; 4]> {
+    t.stems.as_ref()?;
+    let mut power = [0.; 4];
+    let mut count = 0;
+    evidence::nearby(t, sec, |f| {
+        count += 1;
+        for (stem, bands) in f.iter().enumerate() {
+            for (band, db) in bands.iter().enumerate() {
+                let part = if stem == 2 && band == 0 { 3 } else { stem };
+                power[part] += db;
+            }
+        }
+    });
+    (count > 0).then(|| power.map(|p| p / count as f32))
+}
+
+pub(crate) fn unmixed_foreground(t: &TrackAnalysis, sec: f32) -> Option<f32> {
+    let stems = t.stems.as_ref()?;
+    if sec >= t.duration_sec {
+        return Some(0.);
+    }
+    // Do not smooth across the edit: pre-cut power would turn a real silence
+    // immediately after the boundary into an invented ongoing foreground.
+    let f = stems.frame_at(sec)?;
+    Some(
+        f.band_db[0]
+            .iter()
+            .chain(&f.band_db[2][1..])
+            .map(|db| 10f32.powf(*db / 10.))
+            .sum(),
+    )
+}
+
 /// Predicted master level in dB at bar `u` of the plan.
 pub(crate) fn at(plan: &MixPlan, a: &TrackAnalysis, b: &TrackAnalysis, u: f32) -> f32 {
+    let total: f32 = deck_power(plan, a, b, u).iter().sum();
+    10. * total.max(1e-12).log10()
+}
+
+/// Separate routed powers so musical comparisons can remove each recording's
+/// mastering gain without changing any playback controls.
+pub(crate) fn deck_power(plan: &MixPlan, a: &TrackAnalysis, b: &TrackAnalysis, u: f32) -> [f32; 2] {
+    routed_power(plan, a, b, u, [1.; 4])
+}
+
+/// Raw and heard vocal/melodic power. A parked incoming voice is an available
+/// option, not a foreground that the audience has already heard and lost.
+pub(crate) fn foreground_power(
+    plan: &MixPlan,
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+    u: f32,
+) -> Option<([f32; 2], [f32; 2])> {
+    a.stems.as_ref()?;
+    b.stems.as_ref()?;
+    let mask = [1., 0., 1., 0.];
+    let raw = [
+        bands(a, plan.outgoing_source.sample(u), Some(mask))
+            .iter()
+            .sum(),
+        bands(b, plan.incoming_source.sample(u), Some(mask))
+            .iter()
+            .sum(),
+    ];
+    Some((raw, routed_power(plan, a, b, u, mask)))
+}
+
+fn routed_power(
+    plan: &MixPlan,
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+    u: f32,
+    mask: [f32; 4],
+) -> [f32; 2] {
     let l = &plan.lanes;
     let x = (l.xfader.sample(u).clamp(-1., 1.) + 1.) * 0.5;
     let stems: Option<&StemMix> = plan.stem_mix.as_ref();
@@ -76,7 +154,12 @@ pub(crate) fn at(plan: &MixPlan, a: &TrackAnalysis, b: &TrackAnalysis, u: f32) -
         if source.nodes.is_empty() || fader <= 0. {
             return [0.; 3];
         }
-        let p = bands(t, source.sample(u), stem.map(|s| parts(s, u)));
+        let selected = stem.map_or([1.; 4], |s| parts(s, u));
+        let p = bands(
+            t,
+            source.sample(u),
+            Some(std::array::from_fn(|i| selected[i] * mask[i])),
+        );
         let g = fader * lin(gain.sample(u));
         let eqs = [eq.low.sample(u), eq.mid.sample(u), eq.high.sample(u)].map(lin);
         let (lp, hp) = (filter.lp_hz.sample(u), filter.hp_hz.sample(u));
@@ -107,8 +190,27 @@ pub(crate) fn at(plan: &MixPlan, a: &TrackAnalysis, b: &TrackAnalysis, u: f32) -
     } else {
         [0.; 3]
     };
-    let total: f32 = a_bands.iter().chain(&b_bands).sum();
-    10. * total.max(1e-12).log10()
+    [a_bands.iter().sum(), b_bands.iter().sum()]
+}
+
+pub(crate) fn reference_power(t: &TrackAnalysis) -> Option<f32> {
+    evidence::reference(t)
+}
+
+fn measure_reference(t: &TrackAnalysis) -> Option<f32> {
+    let mut powers: Vec<_> = t
+        .bars
+        .iter()
+        .filter(|b| b.rms.is_finite() && b.rms > 0.001)
+        .map(|b| {
+            bands(t, (b.start_sec + b.end_sec) * 0.5, None)
+                .iter()
+                .sum::<f32>()
+        })
+        .filter(|p| p.is_finite() && *p > 1e-12)
+        .collect();
+    powers.sort_by(f32::total_cmp);
+    powers.get(powers.len().saturating_sub(1) * 3 / 4).copied()
 }
 
 /// Hold the master near the straight line between the plan's own level at
@@ -137,7 +239,11 @@ pub(crate) fn compensate(plan: &mut MixPlan, a: &TrackAnalysis, b: &TrackAnalysi
             let u = n * i as f32 / steps as f32;
             let target = start + (finish - start) * i as f32 / steps as f32;
             let offset = (target - at(plan, a, b, u)).clamp(-12., 0.);
-            if offset < -SLACK_DB { offset } else { 0. }
+            if offset < -SLACK_DB {
+                offset
+            } else {
+                0.
+            }
         })
         .collect();
     if correction.iter().all(|c| *c == 0.) {

@@ -4,7 +4,7 @@
 //! playlist, then played round and round in that order.
 /// Bump when ordering, pair scoring, or planner behavior can change Best order.
 /// Persisted orders also fingerprint the actual analyses and all planner options.
-pub const ORDER_VERSION: u32 = 3;
+pub const ORDER_VERSION: u32 = 27;
 
 use crate::{Planner, PlannerOptions};
 use mixless_protocol::TrackAnalysis;
@@ -31,17 +31,37 @@ fn same_recording(a: &TrackAnalysis, b: &TrackAnalysis) -> bool {
 /// Cost of the transition the planner would actually make from `a` into
 /// `b`, entering `a` at its start: the inverse of its score, so a long
 /// safe blend beats an emergency handoff.
-fn planned_cost(planner: &Planner, a: &TrackAnalysis, b: &TrackAnalysis) -> f32 {
+fn planned_cost(
+    planner: &Planner,
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+    rough: f32,
+    energy: f32,
+) -> f32 {
     let plan = planner.plan_pair(a, b, &[], &[], Default::default(), Default::default());
-    let rough = 0.15 * transition_cost(a, b);
+    let cost = audible_cost(&plan, a, b, rough, energy);
+    #[cfg(feature = "audit")]
+    audit::write(
+        &format!("pair-{}-{}", a.track_id.0, b.track_id.0),
+        || serde_json::json!({"plan":plan,"cost":cost,"rough":rough,"energy":energy}),
+    );
+    cost
+}
+
+pub(crate) fn audible_cost(
+    plan: &mixless_protocol::MixPlan,
+    a: &TrackAnalysis,
+    b: &TrackAnalysis,
+    rough: f32,
+    energy: f32,
+) -> f32 {
+    let rough = 0.15 * rough;
     match &plan.summary {
-        Some(summary) if plan.failure_reason.is_none() && !same_recording(a, b) => {
+        Some(_) if plan.failure_reason.is_none() && !same_recording(a, b) => {
             // Reaching A's last stretch with no real overlap plays it out:
             // a pair that can only do that is a worse neighbour than its
             // score alone says.
-            let played_out = plan.t_out_a >= (a.duration_sec * 0.92).min(a.duration_sec - 8.)
-                && summary.length_bars < 4;
-            (1. - summary.score).max(0.) + rough + if played_out { 0.15 } else { 0. }
+            (1. - crate::experience::merit(plan, a, b)).max(0.) + rough + energy
         }
         _ => 1.5 + rough,
     }
@@ -67,11 +87,40 @@ pub fn best_cycle_with_progress(
     options: &PlannerOptions,
     progress: impl Fn(usize, usize) + Sync,
 ) -> Vec<usize> {
+    best_cycle_while(tracks, options, progress, || true).expect("ordering is not cancelled")
+}
+
+/// Like `best_cycle_with_progress`, but stop claiming work when the request is
+/// superseded. In-flight pair forecasts finish before returning `None`.
+pub fn best_cycle_while(
+    tracks: &[&TrackAnalysis],
+    options: &PlannerOptions,
+    progress: impl Fn(usize, usize) + Sync,
+    active: impl Fn() -> bool + Sync,
+) -> Option<Vec<usize>> {
+    best_cycle_while_cached(tracks, options, progress, active, None)
+}
+
+/// Like `best_cycle_while`, with an optional host cache of cold pair costs.
+/// Cached pairs still report progress and the selected cycle is fully repaired.
+pub fn best_cycle_while_cached(
+    tracks: &[&TrackAnalysis],
+    options: &PlannerOptions,
+    progress: impl Fn(usize, usize) + Sync,
+    active: impl Fn() -> bool + Sync,
+    cache: Option<&dyn PairCostCache>,
+) -> Option<Vec<usize>> {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    let cache = if cfg!(feature = "trace") { None } else { cache };
+    if !active() {
+        return None;
+    }
+    let session = crate::memo::Session::new(tracks);
+    let _scope = session.enter();
     let n = tracks.len();
     if n < 3 {
         progress(1, 1);
-        return (0..n).collect();
+        return Some((0..n).collect());
     }
     let successors = if n <= 40 { n - 1 } else { PLANNED_SUCCESSORS };
     let pair_count = if n > PLANNED_TRACKS {
@@ -79,22 +128,43 @@ pub fn best_cycle_with_progress(
     } else {
         n * successors
     };
-    let total = n + pair_count + order_starts(n) + 1;
+    let chain_budget = if n <= 40 { 4 * (n + 1) } else { 0 };
+    let total = n + pair_count + order_starts(n) + chain_budget + 1;
     let done = AtomicUsize::new(0);
     let advance = || progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
     progress(0, total);
+    let energies: Vec<_> = tracks
+        .iter()
+        .map(|t| mixless_protocol::track_energy(t))
+        .collect();
     let rough: Vec<Vec<f32>> = tracks
         .iter()
-        .map(|a| {
-            let row = tracks.iter().map(|b| transition_cost(a, b)).collect();
+        .enumerate()
+        .map(|(i, a)| {
+            if !active() {
+                return Vec::new();
+            }
+            let row = tracks
+                .iter()
+                .enumerate()
+                .map(|(j, b)| {
+                    tempo_cost(a, b)
+                        + key_cost(a, b)
+                        + energy_distance(energies[i], energies[j])
+                        + if same_recording(a, b) { 3. } else { 0. }
+                })
+                .collect();
             advance();
             row
         })
         .collect();
+    if !active() {
+        return None;
+    }
     if n > PLANNED_TRACKS {
         let order = order_by_with_progress(&rough, &advance);
         advance();
-        return order;
+        return active().then_some(order);
     }
     let mut pairs = Vec::new();
     for (i, row) in rough.iter().enumerate() {
@@ -108,32 +178,36 @@ pub fn best_cycle_with_progress(
         strategy: None,
         ..options.clone()
     });
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(pairs.len());
-    let costs: Vec<f32> = std::thread::scope(|scope| {
-        let chunks: Vec<_> = pairs
-            .chunks(pairs.len().div_ceil(threads.max(1)))
-            .map(|chunk| {
-                let planner = &planner;
-                let advance = &advance;
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|&(i, j)| {
-                            let cost = planned_cost(planner, tracks[i], tracks[j]);
-                            advance();
-                            cost
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        chunks
-            .into_iter()
-            .flat_map(|h| h.join().unwrap_or_default())
-            .collect()
+    let costs = parallel::map(pairs.len(), |k| {
+        if !active() {
+            return None;
+        }
+        let (i, j) = pairs[k];
+        let cost = cache
+            .and_then(|c| c.get(i, j))
+            .filter(|c| c.is_finite() && *c >= 0.)
+            .unwrap_or_else(|| {
+                let cost = planned_cost(
+                    &planner,
+                    tracks[i],
+                    tracks[j],
+                    rough[i][j],
+                    energy_distance(energies[i], energies[j]),
+                );
+                if cost.is_finite() && cost >= 0. {
+                    if let Some(cache) = cache {
+                        cache.store(i, j, cost);
+                    }
+                }
+                cost
+            });
+        advance();
+        Some(cost)
     });
+    let costs: Vec<_> = costs.into_iter().collect::<Option<_>>()?;
+    if !active() {
+        return None;
+    }
     let mut cost: Vec<Vec<f32>> = rough
         .iter()
         .map(|row| row.iter().map(|r| 2. + r).collect())
@@ -142,8 +216,21 @@ pub fn best_cycle_with_progress(
         cost[i][j] = c;
     }
     let order = order_by_with_progress(&cost, &advance);
-    advance();
-    order
+    #[cfg(feature = "audit")]
+    audit::write(
+        "matrix",
+        || serde_json::json!({"cost":cost,"rough":rough,"order":order,"tracks":tracks.iter().map(|t|t.track_id).collect::<Vec<_>>()}),
+    );
+    let order = if n <= 40 {
+        chain::repair(tracks, options, &mut cost, order, &advance, &active)?
+    } else {
+        order
+    };
+    // A clean chain can leave repair rounds unused; finish their reserved work.
+    while done.load(Ordering::Relaxed) < total {
+        advance();
+    }
+    active().then_some(order)
 }
 
 fn order_starts(n: usize) -> usize {
@@ -162,7 +249,7 @@ fn order_by(cost: &[Vec<f32>]) -> Vec<usize> {
     order_by_with_progress(cost, &|| {})
 }
 
-fn order_by_with_progress(cost: &[Vec<f32>], advance: &impl Fn()) -> Vec<usize> {
+fn order_by_with_progress(cost: &[Vec<f32>], advance: &(impl Fn() + Sync)) -> Vec<usize> {
     let n = cost.len();
     let total = |tour: &[usize]| {
         (0..n)
@@ -172,14 +259,17 @@ fn order_by_with_progress(cost: &[Vec<f32>], advance: &impl Fn()) -> Vec<usize> 
     let mut best: Option<(f32, Vec<usize>)> = None;
     // A large playlist tries a spread of starts instead of every one.
     let starts = order_starts(n);
-    for start in (0..starts).map(|k| k * n / starts) {
+    let tours = parallel::map(starts, |k| {
+        let start = k * n / starts;
         let mut tour = nearest_neighbour(cost, start);
         improve(cost, &mut tour);
-        let length = total(&tour);
+        advance();
+        (total(&tour), tour)
+    });
+    for (length, tour) in tours {
         if best.as_ref().is_none_or(|(b, _)| length < *b - 1e-6) {
             best = Some((length, tour));
         }
-        advance();
     }
     let mut tour = best.map(|(_, t)| t).unwrap_or_default();
     let worst = (0..n)
@@ -276,29 +366,46 @@ fn tempo_cost(a: &TrackAnalysis, b: &TrackAnalysis) -> f32 {
     }
 }
 
-/// Camelot compatibility, including the two-semitone shift a blend may apply.
-/// Uncertain keys are neither rewarded nor punished.
+/// Search available entry/exit regions before the final pair plan scores its
+/// actual overlap. Whole-song labels cannot veto a compatible local entrance.
 fn key_cost(a: &TrackAnalysis, b: &TrackAnalysis) -> f32 {
-    let (compatible, _) = crate::score::key_match(a, b, 0., 0.);
-    let certainty = a.key_confidence.min(b.key_confidence).clamp(0., 1.);
-    0.5 * (1. - compatible) * certainty + 0.25 * (1. - certainty)
-}
-
-/// Typical level of the sounding bars, in dB.
-fn loudness(t: &TrackAnalysis) -> Option<f32> {
-    let mut rms: Vec<f32> = t
-        .bars
+    let mut best: Option<f32> = None;
+    for x in a
+        .mix_regions
         .iter()
-        .map(|b| b.rms)
-        .filter(|r| r.is_finite() && *r > 0.001)
-        .collect();
-    rms.sort_by(f32::total_cmp);
-    rms.get(rms.len() / 2).map(|r| 20. * r.log10())
+        .filter(|r| r.kind == mixless_protocol::MixRegionKind::Out)
+    {
+        for y in b
+            .mix_regions
+            .iter()
+            .filter(|r| r.kind == mixless_protocol::MixRegionKind::In)
+        {
+            let certainty = x.key_confidence.min(y.key_confidence).clamp(0., 1.);
+            if let Some((compatible, _)) = x
+                .camelot
+                .as_deref()
+                .zip(y.camelot.as_deref())
+                .and_then(|(x, y)| crate::score::match_keys(x, y, 0., 0.))
+            {
+                let cost = 0.5 * (1. - compatible) * certainty + 0.25 * (1. - certainty);
+                best = Some(best.map_or(cost, |old| old.min(cost)));
+            }
+        }
+    }
+    best.unwrap_or(0.25)
 }
 
+/// Match spectral/rhythmic body after removing each recording's mastering gain.
 fn energy_cost(a: &TrackAnalysis, b: &TrackAnalysis) -> f32 {
-    match (loudness(a), loudness(b)) {
-        (Some(x), Some(y)) => ((x - y).abs() / 6.).min(1.) * 0.3,
+    energy_distance(
+        mixless_protocol::track_energy(a),
+        mixless_protocol::track_energy(b),
+    )
+}
+
+fn energy_distance(a: Option<f32>, b: Option<f32>) -> f32 {
+    match (a, b) {
+        (Some(x), Some(y)) => ((x - y).abs() / 6.).min(1.) * 0.6,
         _ => 0.,
     }
 }
@@ -317,6 +424,31 @@ mod tests {
             .iter()
             .map(|a| tracks.iter().map(|b| transition_cost(a, b)).collect())
             .collect()
+    }
+
+    #[test]
+    fn known_local_mismatch_is_not_capped_at_unknown_cost() {
+        use mixless_protocol::{MixRegion, MixRegionKind};
+        let mut a = track(1, 120., "8B");
+        let mut b = track(2, 120., "8B");
+        let region = |kind, key: &str| MixRegion {
+            kind,
+            start_sec: 0.,
+            end_sec: 32.,
+            anchor_sec: 0.,
+            confidence: 1.,
+            vocal_risk: 0.,
+            kick: 1.,
+            rms: 0.2,
+            camelot: Some(key.into()),
+            key_confidence: 1.,
+        };
+        assert_eq!(key_cost(&a, &b), 0.25);
+        a.mix_regions = vec![region(MixRegionKind::Out, "8B")];
+        b.mix_regions = vec![region(MixRegionKind::In, "5B")];
+        assert!(key_cost(&a, &b) > 0.25);
+        b.mix_regions[0].camelot = Some("8B".into());
+        assert_eq!(key_cost(&a, &b), 0.);
     }
 
     #[test]
@@ -383,6 +515,33 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_order_does_not_finish_or_publish_partial_search() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let tracks: Vec<_> = (0..6).map(|i| track(i, 128. + i as f32, "5A")).collect();
+        let refs: Vec<_> = tracks.iter().collect();
+        let active = AtomicBool::new(true);
+        let result = best_cycle_while(
+            &refs,
+            &PlannerOptions::default(),
+            |done, _| {
+                // Cancel once pair evaluation has started, not before entering the API.
+                if done > refs.len() {
+                    active.store(false, Ordering::Release);
+                }
+            },
+            || active.load(Ordering::Acquire),
+        );
+        assert!(result.is_none());
+        assert!(best_cycle_while(
+            &refs,
+            &PlannerOptions::default(),
+            |_, _| panic!("cancelled before work"),
+            || false
+        )
+        .is_none());
+    }
+
+    #[test]
     fn progress_finishes_for_short_and_rough_only_playlists() {
         for count in [0, 1, 2, PLANNED_TRACKS + 1] {
             let tracks: Vec<_> = (0..count).map(|i| track(i as i64, 128., "5A")).collect();
@@ -413,3 +572,13 @@ mod tests {
         assert_ne!((at(1) as i32 - at(0) as i32).rem_euclid(4), 1);
     }
 }
+
+mod chain;
+
+pub(crate) mod parallel;
+
+#[cfg(feature = "audit")]
+mod audit;
+
+mod pair_cache;
+pub use pair_cache::PairCostCache;

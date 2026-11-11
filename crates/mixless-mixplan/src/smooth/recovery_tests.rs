@@ -1,7 +1,7 @@
 use super::*;
 use mixless_protocol::{Section, SectionLabel as L};
 
-fn recovery_track(bpm: f32) -> TrackAnalysis {
+pub(super) fn recovery_track(bpm: f32) -> TrackAnalysis {
     let mut a = crate::tests::track(1, bpm, "8A", L::Outro, 32, 0.8, 0.2);
     let bar = 240. / bpm;
     a.sections = [(0., 8., L::Intro), (8., 24., L::Drop), (24., 32., L::Outro)]
@@ -15,7 +15,7 @@ fn recovery_track(bpm: f32) -> TrackAnalysis {
     a
 }
 
-fn context<'a>(a: &'a TrackAnalysis, b: &'a TrackAnalysis) -> PlanContext<'a> {
+pub(super) fn context<'a>(a: &'a TrackAnalysis, b: &'a TrackAnalysis) -> PlanContext<'a> {
     PlanContext {
         outgoing: a,
         incoming: b,
@@ -43,27 +43,24 @@ fn short_recovery_keeps_clock_and_carries_offset_instead_of_waiting_for_eof() {
         )
         .unwrap();
         assert!((p.t_out_a - a.duration_sec).abs() < 0.001);
-        assert!(
-            pair(
-                &ctx,
-                &PlannerOptions::default(),
-                112.,
-                0.,
-                TransitionMode::BeatBlend,
-                4,
-                -1.
-            )
-            .is_none()
-        );
+        assert!(pair(
+            &ctx,
+            &PlannerOptions::default(),
+            112.,
+            0.,
+            TransitionMode::BeatBlend,
+            4,
+            -1.
+        )
+        .is_none());
         assert_eq!(p.incoming_start_bar, 0.);
         assert!((p.incoming_offset_end.rate - 128. / 120.).abs() < 0.001);
-        assert!(
-            p.lanes
-                .rate_a
-                .nodes
-                .iter()
-                .all(|(_, rate)| (*rate - 1.).abs() < 0.001)
-        );
+        assert!(p
+            .lanes
+            .rate_a
+            .nodes
+            .iter()
+            .all(|(_, rate)| (*rate - 1.).abs() < 0.001));
         let explicit = PlannerOptions {
             strategy: Some(S::BassSwap),
             ..Default::default()
@@ -149,31 +146,27 @@ fn recovery_overlap_quality_does_not_authorize_an_interior_instant_cut() {
     let b = crate::tests::track(2, 95., "3B", L::Intro, 64, 0.8, 0.2);
     assert!(crate::recovery::quality(&a, 50.) >= 0.6);
     assert!(boundary_quality(&a, 50.) < 0.6);
-    assert!(
-        pair(
-            &context(&a, &b),
-            &PlannerOptions::default(),
-            100.,
-            0.,
-            TransitionMode::PhraseBridge,
-            0,
-            -1.
-        )
-        .is_none()
-    );
+    assert!(pair(
+        &context(&a, &b),
+        &PlannerOptions::default(),
+        100.,
+        0.,
+        TransitionMode::PhraseBridge,
+        0,
+        -1.
+    )
+    .is_none());
     // The true end remains a valid boundary; do not reject every short handoff.
-    assert!(
-        pair(
-            &context(&a, &b),
-            &PlannerOptions::default(),
-            128.,
-            0.,
-            TransitionMode::PhraseBridge,
-            0,
-            -1.
-        )
-        .is_some()
-    );
+    assert!(pair(
+        &context(&a, &b),
+        &PlannerOptions::default(),
+        128.,
+        0.,
+        TransitionMode::PhraseBridge,
+        0,
+        -1.
+    )
+    .is_some());
 }
 
 #[test]

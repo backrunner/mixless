@@ -1,6 +1,26 @@
 //! Enumerate musical spans, not a fixed crossfade duration.
-use crate::{PlanContext, PlannerOptions, grid::Grid};
+use crate::{grid::Grid, PlanContext, PlannerOptions};
 use mixless_protocol::{MixRegionKind as K, TransitionMode as M};
+
+/// Short arrangements need not have a section whose length matches their
+/// overlap. Return only lengths absent from the ordinary bounded search.
+pub(super) fn supplemental(
+    ctx: &PlanContext<'_>,
+    opts: &PlannerOptions,
+    out: f32,
+    input: f32,
+    mode: M,
+) -> Vec<u16> {
+    if mode == M::PhraseBridge {
+        return vec![];
+    }
+    let g = Grid(ctx.outgoing);
+    let max = ((out - g.ceil_bar(opts.earliest_outgoing_sec)) / g.meter())
+        .floor()
+        .clamp(0., 16.) as u16;
+    let existing = candidates(ctx, opts, out, input, mode);
+    (4..=max).filter(|n| !existing.contains(n)).collect()
+}
 
 pub(super) fn candidates(
     ctx: &PlanContext<'_>,
@@ -8,6 +28,28 @@ pub(super) fn candidates(
     out: f32,
     input: f32,
     mode: M,
+) -> Vec<u16> {
+    search_candidates(ctx, opts, out, input, mode, true)
+}
+
+#[cfg(test)]
+pub(crate) fn audit_candidates(
+    ctx: &PlanContext<'_>,
+    opts: &PlannerOptions,
+    out: f32,
+    input: f32,
+    mode: M,
+) -> Vec<u16> {
+    search_candidates(ctx, opts, out, input, mode, false)
+}
+
+fn search_candidates(
+    ctx: &PlanContext<'_>,
+    opts: &PlannerOptions,
+    out: f32,
+    input: f32,
+    mode: M,
+    bounded: bool,
 ) -> Vec<u16> {
     let (a, b) = (ctx.outgoing, ctx.incoming);
     let (ga, gb) = (Grid(a), Grid(b));
@@ -101,7 +143,7 @@ pub(super) fn candidates(
     spans.sort_unstable();
     spans.dedup();
     // Bound candidate work while retaining short, middle and long phrases.
-    if spans.len() > 12 {
+    if bounded && spans.len() > 12 {
         let mut selected = recovery_spans;
         selected.retain(|n| spans.contains(n));
         selected.sort_unstable();

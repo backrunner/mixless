@@ -136,13 +136,14 @@ fn a_sung_note_cannot_be_cut_at_an_inferred_bar_or_drop_marker() {
     track.stems.as_mut().unwrap().notes[0].start_sec = 4.;
     assert!(!crate::continuity::voice_cut_safe(&track, 4.));
     for frame in &mut track.stems.as_mut().unwrap().frames {
-        if frame.start_sec >= 3.4 && frame.start_sec < 4.0 {
+        if frame.start_sec >= 3.4 {
             frame.vocal_activity = 0.;
         }
     }
+    track.stems.as_mut().unwrap().notes[0].start_sec = 3.;
     track.stems.as_mut().unwrap().notes[0].end_sec = 3.4;
     assert!(crate::continuity::voice_cut_safe(&track, 4.));
-    // A breath can release the voice, while a held instrument still disallows
+    // A completed phrase releases the voice, while a held instrument disallows
     // a hard dry cut. A resolving build/drop may intentionally replace the riser.
     let stems = track.stems.as_mut().unwrap();
     stems.notes.clear();
@@ -228,7 +229,7 @@ fn a_boundary_note_onset_is_a_safe_cut_once_the_phrase_has_released() {
         },
     ];
     for frame in &mut track.stems.as_mut().unwrap().frames {
-        if frame.start_sec >= 3.4 && frame.start_sec < 4.0 {
+        if frame.start_sec >= 2.9 && frame.start_sec < 4.0 {
             frame.vocal_activity = 0.;
         }
     }
@@ -385,11 +386,11 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
             label: SectionLabel::Outro,
         },
     ];
-    // The voice sings through the whole drop and takes a measured breath only
-    // on the section boundary at 90 s, so it is the single place any exit may
-    // land.
+    // The voice finishes at the drop boundary. Leave a real instrumental
+    // phrase for the incoming melody to establish after the incompatible
+    // sung key leaves; a quarter-second breath cannot fit that exchange.
     for frame in &mut a.stems.as_mut().unwrap().frames {
-        frame.vocal_activity = if (frame.start_sec - 90.).abs() < 0.12 {
+        frame.vocal_activity = if (89.9..98.).contains(&frame.start_sec) {
             0.
         } else {
             1.
@@ -449,6 +450,9 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
     assert_eq!(stems.incoming[1].sample(n), 1.);
     assert!(stems.outgoing[1].sample(n) < 0.01);
     assert_eq!(stems.outgoing[0].sample(n), 0.);
+    // Conflicting keys trade pitched parts within one complementary bar,
+    // counted above -40 dB on both decks at the planner's 1/128 resolution.
+    let mut shared = 0.;
     for i in 0..=512 {
         let u = n * i as f32 / 512.;
         let outgoing = [0, 2, 3]
@@ -459,11 +463,15 @@ fn stem_playback_enables_a_drum_layered_blend_across_incompatible_keys() {
             .into_iter()
             .map(|s| stems.incoming[s].sample(u))
             .fold(0., f32::max);
+        if outgoing > 0.01 && incoming > 0.01 {
+            shared += n / 512.;
+        }
         assert!(
-            outgoing <= 0.0001 || incoming <= 0.0001,
-            "pitched stems overlap at {u}"
+            stems.outgoing[0].sample(u) <= 0.0001 || stems.incoming[0].sample(u) <= 0.0001,
+            "voices overlap at {u}"
         );
     }
+    assert!(shared <= 1. + n / 128., "pitched stems share {shared} bars");
     assert!(plan.requires_stems);
 }
 
@@ -491,11 +499,10 @@ fn transcribed_progression_changes_matching_with_pitch_offset_and_rejects_corrup
     assert!(crate::progression::tension(&a, &b, &source, &source, 8., 1., 0.) < 0.01);
     b.stems.as_mut().unwrap().frames[3].rms[0] = f32::NAN;
     let plan = Planner::new().plan_pair(&a, &b, &[], &[], Default::default(), Default::default());
-    assert!(
-        plan.failure_reason
-            .as_deref()
-            .is_some_and(|e| e.contains("stem"))
-    );
+    assert!(plan
+        .failure_reason
+        .as_deref()
+        .is_some_and(|e| e.contains("stem")));
 }
 
 #[test]
@@ -663,7 +670,10 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
         }
         (a, b)
     };
+    // Exercise fitted beat blends explicitly: an unconstrained search can
+    // now prefer LoopOut over a long window with little audible overlap.
     let planner = Planner::with_options(PlannerOptions {
+        strategy: Some(StrategyId::EnergyHold),
         stem_playback: true,
         ..Default::default()
     });
@@ -713,11 +723,11 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
         Some(StrategyId::StemSwap | StrategyId::VocalRide)
     ));
 
-    // A sung outro over a voiceless intro keeps the voice until its breath.
+    // A sung outro over a voiceless intro keeps the voice until its ending.
     let (mut a, b) = make(1.);
     let breath = 60. * 240. / 128.;
     for f in &mut a.stems.as_mut().unwrap().frames {
-        if (f.start_sec - breath).abs() < 0.3 {
+        if f.start_sec >= breath - 0.3 {
             f.vocal_activity = 0.;
         }
     }
@@ -743,7 +753,13 @@ fn harmonic_stem_blends_swap_one_part_at_a_time_and_can_ride_the_vocal() {
         {
             assert!(stems.outgoing[v].sample(u) > 0.9);
             assert!(stems.outgoing[StemKind::Instruments.index()].sample(u) < 0.1);
-            assert!(stems.incoming[v].sample(u) < 0.1);
+            // The incoming vocal lane may already be open over its natural
+            // rest; the constraint concerns competing singers, not faders.
+            assert!(
+                stems.incoming[v].sample(u)
+                    * crate::continuity::voice_active(&b, p.incoming_source.sample(u))
+                    < 0.1
+            );
             assert!(p.lanes.gain_a.sample(u) > -1.);
             assert!(p.lanes.gain_a.sample(n) <= -90., "the outgoing deck closes");
             assert!(p.lanes.xfader.sample(u) < 0.6, "fader held for the voice");

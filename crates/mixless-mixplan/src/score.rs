@@ -1,4 +1,4 @@
-use crate::{Candidate, grid::Grid};
+use crate::{grid::Grid, Candidate};
 use mixless_protocol::{BarMap, Cue, CueKind, SectionLabel as S, StrategyId as Id, TrackAnalysis};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -60,6 +60,21 @@ pub(crate) fn window_key_match(
     pa: f32,
     pb: f32,
 ) -> (f32, f32, bool) {
+    let ga = Grid(a);
+    let gb = Grid(b);
+    if let Some(local) = overlap_key_match(
+        a,
+        b,
+        (ga.sec(ga.beat(out) - 8. * ga.meter()).max(0.), out),
+        (
+            input,
+            gb.sec(gb.beat(input) + 8. * gb.meter()).min(b.duration_sec),
+        ),
+        pa,
+        pb,
+    ) {
+        return local;
+    }
     let local = |t: &TrackAnalysis, anchor: f32, kind| {
         t.mix_regions
             .iter()
@@ -90,35 +105,10 @@ fn compatibility(a: (i32, bool), b: (i32, bool)) -> f32 {
     }
 }
 
-/// Prefer tonal evidence from the audio actually overlapped. An exit anchor's
-/// previous eight bars can describe the drop, while the mix is in its break.
-pub(crate) fn overlap_key_match(
-    a: &TrackAnalysis,
-    b: &TrackAnalysis,
-    range_a: (f32, f32),
-    range_b: (f32, f32),
-    pa: f32,
-    pb: f32,
-) -> Option<(f32, f32, bool)> {
-    let local = |t: &TrackAnalysis, (start, end): (f32, f32)| {
-        let mut chroma = [0.; 12];
-        for bar in &t.bars {
-            let weight = (bar.end_sec.min(end) - bar.start_sec.max(start)).max(0.) * bar.rms;
-            for i in 0..12 {
-                chroma[i] += bar.chroma[i] * weight;
-            }
-        }
-        if chroma.iter().sum::<f32>() <= 1e-8 {
-            return None;
-        }
-        let (_, key, confidence) = mixless_protocol::estimate_harmonic_key(&chroma);
-        Some((key?, confidence))
-    };
-    let ((ka, ca), (kb, cb)) = (local(a, range_a)?, local(b, range_b)?);
-    let (score, shift) = match_keys(&ka, &kb, pa, pb)?;
-    Some((score, shift, ca >= 0.55 && cb >= 0.55))
-}
+mod tonal;
+pub(crate) use tonal::{measured_shift, overlap_dissonance, overlap_key_match, tonality, Tonality};
 
+#[cfg(test)]
 pub(crate) fn key_match(a: &TrackAnalysis, b: &TrackAnalysis, pa: f32, pb: f32) -> (f32, f32) {
     a.camelot
         .as_deref()
@@ -127,10 +117,28 @@ pub(crate) fn key_match(a: &TrackAnalysis, b: &TrackAnalysis, pa: f32, pb: f32) 
         .unwrap_or((0., 0.))
 }
 
+/// Largest automatic transposition, in semitones from the recording's own
+/// key. DJs rarely transpose, and then almost always by one semitone; a
+/// larger shift changes how the record sounds for its whole pass. The second
+/// semitone is priced as a last resort (`shift_cost`), for pairs that would
+/// otherwise only play the outgoing record out. Keys beyond reach stay a
+/// conflict, which the planner answers by keeping the pitched parts apart
+/// or by a phrase handoff.
+pub(crate) const MAX_KEY_SHIFT: f32 = 2.;
+
+/// Ranking cost of transposing the incoming record by `semitones`. The first
+/// semitone is a small preference for the recorded key; every further one
+/// has to beat a mix that leaves the record alone by a clear margin.
+pub(crate) fn shift_cost(semitones: f32) -> f32 {
+    let s = semitones.abs();
+    0.025 * s + 0.06 * (s - 1.).max(0.)
+}
+
 // Match the sounding keys, including fine tuning carried from an unlocked
 // tempo control. Only the inaudible incoming deck moves; the outgoing deck
 // never snaps back to an equal-tempered key. Absolute bounds prevent drift.
-fn match_keys(a: &str, b: &str, pa: f32, pb: f32) -> Option<(f32, f32)> {
+// `None` means unreadable keys; readable keys out of reach score zero.
+pub(super) fn match_keys(a: &str, b: &str, pa: f32, pb: f32) -> Option<(f32, f32)> {
     if !pa.is_finite() || !pb.is_finite() {
         return None;
     }
@@ -144,13 +152,13 @@ fn match_keys(a: &str, b: &str, pa: f32, pb: f32) -> Option<(f32, f32)> {
     let shift = (-6..=6)
         .filter_map(|semitones| {
             let pitch = semitones as f32 + detune;
-            (pitch.abs() <= 6.
+            (pitch.abs() <= MAX_KEY_SHIFT + 0.5
                 && shifted_camelot(b, semitones as f32)
                     .is_some_and(|k| compatibility(ka, k) >= 0.85))
             .then_some(pitch - pb)
         })
-        .min_by(|a, b| a.abs().total_cmp(&b.abs()))?;
-    Some((0.5 / shift.abs().max(1.), shift))
+        .min_by(|a, b| a.abs().total_cmp(&b.abs()));
+    Some(shift.map_or((0., 0.), |shift| (0.5 / shift.abs().max(1.), shift)))
 }
 
 pub(crate) fn section(track: &TrackAnalysis, sec: f32) -> S {

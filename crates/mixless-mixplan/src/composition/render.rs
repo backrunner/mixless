@@ -1,18 +1,81 @@
-use super::{ease, gains, highpass, power, Frame, Shape};
+use super::{gains, highpass, power, Frame, Shape};
 use mixless_protocol::{MixPlan, Polyline, StemMix};
 
-fn db(x: f32) -> f32 {
-    if x <= 0.000016 {
-        -96.
-    } else {
-        (20. * x.log10()).clamp(-96., 12.)
+/// Source-clock observations shared by every shape of one arrangement.
+pub(super) struct Prepared {
+    voices: [Vec<(f32, f32)>; 2],
+    points: Vec<f32>,
+}
+
+impl Prepared {
+    pub(super) fn new(p: &MixPlan, ctx: &crate::PlanContext<'_>, n: f32) -> Self {
+        let voices: [Vec<(f32, f32)>; 2] = std::array::from_fn(|d| {
+            let (t, source) = if d == 0 {
+                (ctx.outgoing, &p.outgoing_source)
+            } else {
+                (ctx.incoming, &p.incoming_source)
+            };
+            let start = source.sample(0.);
+            let end = source.sample(n);
+            let notes: Vec<_> = t
+                .stems
+                .iter()
+                .flat_map(|s| &s.notes)
+                .filter(|note| {
+                    note.stem == mixless_protocol::StemKind::Vocals
+                        && note.confidence >= 0.45
+                        && note.end_sec > start
+                        && note.start_sec < end
+                })
+                .collect();
+            t.stems
+                .iter()
+                .flat_map(|s| &s.frames)
+                .filter(|f| {
+                    f.end_sec > start
+                        && f.start_sec <= end
+                        && (f.vocal_activity >= 0.2
+                            || notes.iter().any(|note| {
+                                note.start_sec < f.end_sec && note.end_sec > f.start_sec
+                            }))
+                        && f.rms[0].powi(2) > (f.rms[1].powi(2) + f.rms[2].powi(2)) * 0.0001
+                })
+                .map(|f| {
+                    let u = super::bar_at(source, f.start_sec);
+                    (u, p.clock.sample(u))
+                })
+                .collect()
+        });
+        Self {
+            voices,
+            points: (0..=n as usize * 64).map(|i| i as f32 / 64.).collect(),
+        }
     }
 }
 
-pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<()> {
+pub(super) fn apply_prepared(
+    p: &mut MixPlan,
+    frames: &[Frame],
+    shape: &Shape,
+    prepared: &Prepared,
+) -> Option<()> {
     let n = p.summary.as_ref()?.length_bars as f32;
+    // Channel EQ also attenuates the singer. Reserve its restoration before
+    // each audible vocal entrance, even while that lane is still muted.
+    // Exact source frames avoid losing a word between the fitter's coarse
+    // energy samples. No extra analysis field or callback work is needed.
+    let voice_times: [Vec<f32>; 2] = std::array::from_fn(|d| {
+        prepared.voices[d]
+            .iter()
+            .filter_map(|&(u, sec)| {
+                let gain = shape[d][0].at(u);
+                let gain = if d == 0 { 1. - gain } else { gain };
+                (gain > 0.01).then_some(sec)
+            })
+            .collect()
+    });
     let last = p.clock.nodes.last()?.0.max(n);
-    let mut points: Vec<f32> = (0..=n as usize * 64).map(|i| i as f32 / 64.).collect();
+    let mut points = prepared.points.clone();
     points.extend(shape.iter().flatten().flat_map(|f| [f.start, f.end]));
     points.sort_by(f32::total_cmp);
     points.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
@@ -20,16 +83,6 @@ pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<
         outgoing: std::array::from_fn(|_| Polyline::default()),
         incoming: std::array::from_fn(|_| Polyline::default()),
     };
-    let opening = shape[1]
-        .iter()
-        .map(|f| f.start)
-        .fold(n, f32::min)
-        .clamp(0.125, 0.5);
-    let closing = shape[0]
-        .iter()
-        .map(|f| f.end)
-        .fold(0f32, f32::max)
-        .min(n - 0.125);
     let mut eq = [
         [
             Polyline::default(),
@@ -44,6 +97,7 @@ pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<
     ];
     let mut previous = [[0f32; 3]; 2];
     let mut prev_sec = 0.;
+    let mut previous_x = -1.;
     let l = &mut p.lanes;
     for line in [&mut l.xfader, &mut l.gain_a, &mut l.gain_b] {
         line.nodes.clear();
@@ -86,29 +140,26 @@ pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<
                 // One dB per second, with enough reserved time to finish dry.
                 let cut = requested
                     .clamp(previous[d][b] - dt, previous[d][b] + dt)
-                    .max(-remaining);
+                    .max(-remaining)
+                    .max(
+                        voice_times[d]
+                            .get(voice_times[d].partition_point(|at| *at < sec - 0.05))
+                            .map_or(-12., |at| -(at - sec - 0.05).max(0.)),
+                    );
                 eq[d][b].nodes.push((u, cut));
                 previous[d][b] = cut;
             }
         }
-        let x = if u < opening {
-            -1. + ease(u / opening)
-        } else if u > closing {
-            ease((u - closing) / (n - closing))
-        } else {
-            0.
-        };
+        let routing = crate::part_routing::route(g);
+        let x = routing.crossfader;
         l.xfader.nodes.push((u, x));
         for d in 0..2 {
-            // Factor the desired part levels into a channel level and stem
-            // ratios. The crossfader stays centred during the audible mix;
-            // compensate the engine's square-root law exactly, not sin/cos.
-            let level = g[d].iter().copied().fold(0f32, f32::max);
-            let fader = (if d == 0 { (1. - x) / 2. } else { (1. + x) / 2. }).sqrt();
-            let gain = if level == 0. {
+            // Route the outgoing envelope through the crossfader first; its
+            // channel fader is only housekeeping once that side is closed.
+            let gain = if d == 0 && x == 1. && (previous_x == 1. || u >= n) {
                 -96.
             } else {
-                db(level / fader.max(0.0001))
+                routing.gain_db
             };
             let lane = if d == 0 { &mut l.gain_a } else { &mut l.gain_b };
             lane.nodes.push((u, gain));
@@ -118,15 +169,12 @@ pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<
                 &mut mix.incoming
             };
             for s in 0..4 {
-                let ratio = if level > 0. {
-                    g[d][s] / level
-                } else {
-                    f32::from(d == 1 && u >= n)
-                };
+                let ratio = routing.stems[d][s].max(f32::from(d == 1 && u >= n));
                 stems[s].nodes.push((u, ratio));
             }
         }
         prev_sec = sec;
+        previous_x = x;
     }
     for (d, lanes) in [&mut l.eq_a, &mut l.eq_b].into_iter().enumerate() {
         [lanes.low, lanes.mid, lanes.high] = eq[d].clone();
@@ -151,4 +199,15 @@ pub(super) fn apply(p: &mut MixPlan, frames: &[Frame], shape: &Shape) -> Option<
     s.used_fallback = false;
     p.stages = stages;
     Some(())
+}
+
+#[cfg(test)]
+pub(super) fn apply(
+    p: &mut MixPlan,
+    frames: &[Frame],
+    shape: &Shape,
+    ctx: &crate::PlanContext<'_>,
+) -> Option<()> {
+    let prepared = Prepared::new(p, ctx, p.summary.as_ref()?.length_bars as f32);
+    apply_prepared(p, frames, shape, &prepared)
 }

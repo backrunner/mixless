@@ -1,39 +1,70 @@
 //! Protect heard vocal phrases, independently of instrumental tonal foreground.
 use mixless_protocol::{BarFeature, TrackAnalysis};
 
+mod evidence;
+pub(crate) mod pattern;
+pub(crate) use evidence::{continuation, held_note, note_supported, Continuation, Scope};
+
+pub(crate) fn continues(t: &TrackAnalysis, sec: f32) -> bool {
+    continuation(t, sec) == Continuation::Continuing
+}
+
+#[cfg(test)]
+mod phrase_tests {
+    use super::*;
+    use mixless_protocol::SectionLabel;
+
+    #[test]
+    fn interword_rests_do_not_release_a_line_across_gain_grid_or_source_position() {
+        for bpm in [60., 120., 240.] {
+            for gain in [0.01, 1., 4.] {
+                for shift in [0., 12.] {
+                    let mut t = crate::stem_regressions::with_stems(crate::tests::track(
+                        1,
+                        bpm,
+                        "8A",
+                        SectionLabel::Outro,
+                        64,
+                        0.8,
+                        0.3,
+                    ));
+                    for f in &mut t.stems.as_mut().unwrap().frames {
+                        let at = f.start_sec - shift;
+                        f.vocal_activity = if (2.0..3.6).contains(&at) || (4.4..7.0).contains(&at) {
+                            1.
+                        } else {
+                            0.
+                        };
+                        for rms in &mut f.rms {
+                            *rms *= gain;
+                        }
+                    }
+                    assert!(continues(&t, shift + 4.), "{bpm} {gain} {shift}");
+                    assert!(!safe_entry(&t, shift + 4.));
+                    assert!(!crate::continuity::voice_released(&t, shift + 4.));
+                    assert!(!continues(&t, shift + 7.2));
+                    assert!(crate::continuity::voice_released(&t, shift + 7.2));
+                    // A full phrase can begin after a longer instrumental rest.
+                    for f in &mut t.stems.as_mut().unwrap().frames {
+                        if f.start_sec >= shift + 3.2 && f.start_sec < shift + 4.4 {
+                            f.vocal_activity = 0.;
+                        }
+                    }
+                    assert!(!continues(&t, shift + 4.4));
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn risk(bar: &BarFeature) -> f32 {
     bar.vocal_confidence.unwrap_or(bar.vocal_presence)
 }
 
-/// A chopped vocal is rhythmic material: many short, repeated voice notes
-/// rather than a held line. Chops may be cut through, entered over and
-/// layered like any other percussion, while a sung line may not. Judged on
-/// the measured note lengths, so a held note is never called a chop.
+/// Only repeated, articulated local motifs may behave as a rhythmic layer.
+/// Dense short notes alone do not distinguish chops from a sung sentence.
 pub(crate) fn chops(t: &TrackAnalysis, start: f32, end: f32) -> bool {
-    let Some(stems) = &t.stems else { return false };
-    if end <= start + 0.05 {
-        return false;
-    }
-    let notes: Vec<_> = stems
-        .notes
-        .iter()
-        .filter(|n| {
-            n.stem == mixless_protocol::StemKind::Vocals
-                && n.confidence >= 0.45
-                && n.start_sec < end
-                && n.end_sec > start
-        })
-        .collect();
-    if notes.len() < 6 {
-        return false;
-    }
-    let bar = 240. / t.tempo.global_bpm.max(30.);
-    let per_bar = notes.len() as f32 / ((end - start) / bar).max(0.25);
-    let short = notes
-        .iter()
-        .filter(|n| (n.end_sec - n.start_sec).clamp(0.05, 2.) <= 0.35)
-        .count();
-    per_bar >= 4. && short * 2 >= notes.len()
+    pattern::window(t, start, end)
 }
 
 pub(crate) fn phrases(t: &TrackAnalysis) -> Vec<(f32, f32)> {
@@ -63,6 +94,9 @@ pub(crate) fn safe_exit(t: &TrackAnalysis, end: f32) -> bool {
 }
 
 pub(crate) fn safe_entry(t: &TrackAnalysis, start: f32) -> bool {
+    if continues(t, start) {
+        return false;
+    }
     if t.stems
         .as_ref()
         .is_some_and(|s| s.note_crossing(start, mixless_protocol::StemKind::Vocals))
@@ -182,7 +216,7 @@ pub(crate) fn protect(plan: &mut mixless_protocol::MixPlan, t: &TrackAnalysis) -
         mixless_protocol::MixStage {
             start_bar: 0.,
             end_bar: hold,
-            label: "Layer rhythm · hold vocal foreground".into(),
+            label: "Layer rhythm and hold vocal foreground".into(),
         },
         mixless_protocol::MixStage {
             start_bar: hold,
@@ -195,13 +229,13 @@ pub(crate) fn protect(plan: &mut mixless_protocol::MixPlan, t: &TrackAnalysis) -
 }
 
 #[cfg(test)]
-mod chop_tests {
+pub(crate) mod chop_tests {
     use super::*;
     use mixless_protocol::{
         SectionLabel as S, StemAnalysis, StemFrame, StemKind, StemNote, TrackId,
     };
 
-    fn track(vocal: bool) -> TrackAnalysis {
+    pub(crate) fn track(vocal: bool) -> TrackAnalysis {
         let mut t = crate::tests::track(1, 128., "8A", S::Drop, 32, 0.9, 0.3);
         let mut stems = StemAnalysis {
             version: 2,
@@ -209,26 +243,32 @@ mod chop_tests {
             notes_sha256: String::new(),
             duration_sec: t.duration_sec,
             residual_rms: 0.01,
-            frames: (0..(t.duration_sec / 0.05) as usize)
-                .map(|i| StemFrame {
-                    start_sec: i as f32 * 0.05,
-                    end_sec: (i + 1) as f32 * 0.05,
-                    rms: if vocal {
-                        [0.05, 0.02, 0.02]
-                    } else {
-                        [0., 0., 0.]
-                    },
-                    band_db: [[-30.; 3]; 3],
-                    onset: [0.; 3],
-                    drum_low_onset: 0.,
-                    vocal_activity: f32::from(vocal) * 0.8,
-                    note_chroma: [0.; 12],
+            frames: (0..(t.duration_sec / 0.025) as usize)
+                .map(|i| {
+                    let active = ((i as f32 + 0.5) * 0.025).rem_euclid(0.25) < 0.1;
+                    StemFrame {
+                        start_sec: i as f32 * 0.025,
+                        end_sec: (i + 1) as f32 * 0.025,
+                        rms: if vocal {
+                            [if active { 0.05 } else { 0.001 }, 0.02, 0.02]
+                        } else {
+                            [0., 0., 0.]
+                        },
+                        band_db: [[-30.; 3]; 3],
+                        onset: [0.; 3],
+                        drum_low_onset: 0.,
+                        vocal_activity: f32::from(vocal && active) * 0.8,
+                        note_chroma: [0.; 12],
+                    }
                 })
                 .collect(),
             notes: vec![],
         };
-        // A chop repeats every 16th note; a sung line holds for a bar.
-        let step = if vocal { 60. / 128. / 4. } else { 240. / 128. };
+        // Repeated source samples: the envelope corroborates the short notes.
+        t.tempo.global_bpm = 120.;
+        t.tempo.beats.clear();
+        t.tempo.segments.clear();
+        let step = if vocal { 0.25 } else { 2. };
         let length = if vocal { 0.1 } else { 1.6 };
         let mut at = 0.;
         while at < t.duration_sec - 1. {
@@ -257,5 +297,50 @@ mod chop_tests {
         assert!(!chops(&sung, 4., 12.), "a held vocal line is not a chop");
         assert!(!chops(&track(false), 4., 12.));
         assert!(!chops(&chopped, 4., 4.02));
+    }
+
+    #[test]
+    fn a_chop_rest_releases_the_pattern_but_not_the_middle_of_a_slice() {
+        let chopped = track(true);
+        assert!(pattern::at(&chopped, 8.18).is_some());
+        assert!(safe_entry(&chopped, 8.18));
+        assert!(safe_exit(&chopped, 8.18));
+        assert!(crate::continuity::voice_released(&chopped, 8.18));
+        assert!(!safe_entry(&chopped, 8.05));
+        assert!(!safe_exit(&chopped, 8.05));
+        assert!(!crate::continuity::voice_released(&chopped, 8.05));
+        let mut sung = chopped.clone();
+        // A vocal line over a repeated backing retains its protection.
+        sung.stems.as_mut().unwrap().notes.push(StemNote {
+            stem: StemKind::Vocals,
+            start_sec: 7.,
+            end_sec: 10.,
+            midi: 67,
+            confidence: 0.9,
+        });
+        sung.stems
+            .as_mut()
+            .unwrap()
+            .notes
+            .sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec));
+        assert!(!safe_exit(&sung, 8.18));
+    }
+
+    #[test]
+    fn pattern_cache_does_not_survive_edits_or_nested_planning() {
+        let mut a = track(true);
+        let b = track(false);
+        {
+            let _outer = pattern::Scope::new(&a, &b);
+            assert!(pattern::at(&a, 8.).is_some());
+            {
+                let _inner = pattern::Scope::new(&b, &b);
+                assert!(pattern::at(&b, 8.).is_none());
+            }
+            assert!(pattern::at(&a, 8.).is_some());
+        }
+        a.stems.as_mut().unwrap().notes.clear();
+        let _next = pattern::Scope::new(&a, &b);
+        assert!(pattern::at(&a, 8.).is_none());
     }
 }

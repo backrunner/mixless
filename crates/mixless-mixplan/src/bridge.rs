@@ -1,12 +1,12 @@
 //! Actual overlap for filter, echo and dry phrase transitions. A transition
 //! name must not disguise a last-beat launch and a 40 ms crossfader cut.
 use crate::{
-    PlanContext,
     constraints::covers_user_range,
     grid::Grid,
     musical::{beatless, feature, percussion_only},
     policy::Technique,
     smooth::grid_reliable,
+    PlanContext,
 };
 use mixless_protocol::{BarMap, MixPlan, MixStage, Polyline, StrategyId};
 
@@ -170,18 +170,30 @@ pub(super) fn expand(
     plan.handoff_bar = Some(n * 0.55);
     let echo = technique == Technique::EchoOut;
     let filter = technique == Technique::FilterBridge;
+    let mut previous_x = -1.;
     // Different foregrounds enter in stages; no filter reset while audible.
     for i in 0..=n as usize * 64 {
         let u = i as f32 / 64.;
         let t = u / n;
         let p = ease((t - 0.08) / 0.84);
         let xf = 2. * p - 1.;
-        let angle = p * std::f32::consts::FRAC_PI_2;
+
         let la = 1. - ease((t - 0.88) / 0.12);
         let lb = ease(t / 0.12);
-        lanes.xfader.nodes.push((u, xf));
-        lanes.gain_a.nodes.push((u, db(la)));
-        lanes.gain_b.nodes.push((u, (trim + db(lb)).max(-96.)));
+        let a = ((1. - xf) / 2.).sqrt() * la;
+        let b = ((1. + xf) / 2.).sqrt() * lb;
+        let routing = crate::part_routing::route([[a; 4], [b; 4]]);
+        lanes.xfader.nodes.push((u, routing.crossfader));
+        lanes.gain_a.nodes.push((
+            u,
+            if routing.crossfader == 1. && (previous_x == 1. || u >= n) {
+                -96.
+            } else {
+                routing.gain_db
+            },
+        ));
+        lanes.gain_b.nodes.push((u, trim + routing.gain_db));
+        previous_x = routing.crossfader;
         let bass_width = if locked {
             (0.5 / (ga.meter() * n)).max(0.02)
         } else {
@@ -193,12 +205,12 @@ pub(super) fn expand(
             .eq_a
             .low
             .nodes
-            .push((u, db(bass.cos().max(0.) / (angle.cos() * la).max(0.00002))));
+            .push((u, db(bass.cos().max(0.) / a.max(0.00002))));
         lanes
             .eq_b
             .low
             .nodes
-            .push((u, db(bass.sin().max(0.) / (angle.sin() * lb).max(0.00002))));
+            .push((u, db(bass.sin().max(0.) / b.max(0.00002))));
         lanes.eq_a.mid.nodes.push((
             u,
             -if voice[1] > 0.5 { 12. } else { 4. } * ease((t - 0.4) / 0.5),

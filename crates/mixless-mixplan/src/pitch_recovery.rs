@@ -1,6 +1,6 @@
 //! Solo key restoration is part of the committed clock, so the next pair sees
 //! the pitch actually reached. Never change pitch while the records overlap.
-use crate::{PlanContext, Planner, cue_policy::cue_choices, grid::Grid};
+use crate::{cue_policy::cue_choices, grid::Grid, PlanContext, Planner};
 use mixless_protocol::{Cue, MixPlan, MixStage, PerformanceOffset, Polyline, TrackAnalysis};
 
 #[cfg(test)]
@@ -26,6 +26,8 @@ pub(super) fn arrange(
         || plan.transition_mode.is_none()
         || !(0.5..=6.).contains(&distance)
         || plan.insert_a.is_some()
+        // An unlocked deck's pitch is its speed: the tempo glide restores it.
+        || plan.incoming_varispeed
     {
         return;
     }
@@ -66,10 +68,13 @@ pub(super) fn arrange(
         return;
     }
     let reserve = g.sec(g.beat(b.duration_sec) - 8. * g.meter());
-    // The preferred next exit is a candidate, not a published constraint yet.
-    // A later equally good departure may make room for restoration. Explicit
-    // cues remain hard constraints in the second planning pass below.
+    // Restoring a key must not occupy a usable next departure. The old score
+    // comparison could replace an early phrase handoff with a long but sparse
+    // tail blend, making a local correction consume the next track's release.
     let mut latest = reserve;
+    if let Some(next) = &future {
+        latest = latest.min(next.t_in_a - rate);
+    }
     latest = latest.min(plan.t_end_b + rate * (1800. - plan.duration_sec()).max(0.));
     if following.is_none() {
         for cue in exit_cues
@@ -102,12 +107,7 @@ pub(super) fn arrange(
                     0.,
                 )
                 .unwrap_or_else(|| {
-                    let (fit, shift) = crate::score::key_match(b, c, pitch, 0.);
-                    (
-                        fit,
-                        shift,
-                        b.key_confidence >= 0.55 && c.key_confidence >= 0.55,
-                    )
+                    crate::score::window_key_match(b, c, p.t_out_a, p.t_in_b, pitch, 0.)
                 });
                 reliable.then_some(shift)
             })
@@ -166,7 +166,7 @@ pub(super) fn arrange(
     append(plan, b, target, window, planner.options.stem_playback);
 }
 
-fn departure(
+pub(super) fn departure(
     planner: &Planner,
     b: &TrackAnalysis,
     c: &TrackAnalysis,
@@ -177,7 +177,7 @@ fn departure(
 ) -> Option<MixPlan> {
     let mut options = planner.options.clone();
     options.earliest_outgoing_sec = plan.t_end_b + plan.incoming_offset_end.rate;
-    options.outgoing_entry_sec = plan.t_in_b;
+    options.outgoing_entry_sec = crate::established_entry(plan, b);
     let planner = Planner::with_options(options);
     let mut best: Option<MixPlan> = None;
     for out in cue_choices(exit_cues, true) {
@@ -195,8 +195,7 @@ fn departure(
             });
             if p.failure_reason.is_none()
                 && best.as_ref().is_none_or(|old| {
-                    p.summary.as_ref().map_or(0., |s| s.score)
-                        > old.summary.as_ref().map_or(0., |s| s.score)
+                    crate::experience::merit(&p, b, c) > crate::experience::merit(old, b, c)
                 })
             {
                 best = Some(p);

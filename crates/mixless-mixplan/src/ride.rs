@@ -480,11 +480,10 @@ mod tests {
                 (prev_in, prev_out) = (c, o);
             }
             assert!(plan.send_fx.is_some_and(|fx| fx.valid()));
-            assert!(
-                plan.stages
-                    .windows(2)
-                    .all(|s| s[1].start_bar >= s[0].end_bar - 0.001)
-            );
+            assert!(plan
+                .stages
+                .windows(2)
+                .all(|s| s[1].start_bar >= s[0].end_bar - 0.001));
             assert_eq!(plan.stages.last().map(|s| s.end_bar), Some(n));
         }
     }

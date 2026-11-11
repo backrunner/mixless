@@ -43,11 +43,9 @@ mod tests {
                     novelty,
                 }];
                 assert!(!exit_boundary(&t, interior));
-                assert!(
-                    !points(&t, &[], true, 0.)
-                        .iter()
-                        .any(|p| (Grid(&t).sec(*p) - interior).abs() < 0.08)
-                );
+                assert!(!points(&t, &[], true, 0.)
+                    .iter()
+                    .any(|p| (Grid(&t).sec(*p) - interior).abs() < 0.08));
             }
             for novelty in [0.16, 0.3, 0.8] {
                 t.phrase_boundaries[0].novelty = novelty;
@@ -129,6 +127,23 @@ pub(crate) fn layer_entry(t: &TrackAnalysis, sec: f32) -> bool {
 }
 
 pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) -> Vec<f32> {
+    search_points(t, cues, out, earliest, true)
+}
+
+// Offline reference search keeps every evidence-generated anchor. Musical
+// eligibility and explicit cues are deliberately identical to production.
+#[cfg(test)]
+pub(crate) fn audit_points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) -> Vec<f32> {
+    search_points(t, cues, out, earliest, false)
+}
+
+fn search_points(
+    t: &TrackAnalysis,
+    cues: &[Cue],
+    out: bool,
+    earliest: f32,
+    bounded: bool,
+) -> Vec<f32> {
     let g = Grid(t);
     let explicit: Vec<_> = cues
         .iter()
@@ -286,7 +301,7 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
                         && sec >= earliest
                         && sec <= audible_end
                         && vocal_release(t, sec)
-                        && !stems.note_crossing(sec, mixless_protocol::StemKind::Vocals)
+                        && !crate::vocals::held_note(t, sec)
                         && !vocal_ends.contains(&beat)
                     {
                         vocal_ends.push(beat);
@@ -304,7 +319,11 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         b.is_finite()
             && sec >= 0.
             && sec <= audible_end + 0.001
-            && (!out || is_manual || exit_boundary(t, sec) || vocal_release(t, sec))
+            && (!out
+                || is_manual
+                || exit_boundary(t, sec)
+                || vocal_release(t, sec)
+                || crate::recovery::relative(t, sec))
             && if out {
                 sec + 0.001 >= earliest && (is_manual || sec >= (t.duration_sec * 0.25).min(60.))
             } else {
@@ -404,7 +423,9 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             .take(16)
             .collect()
     };
-    unique.truncate(8);
+    if bounded {
+        unique.truncate(8);
+    }
     // A vocal release is exactly where the merit score is worst (a sounding
     // voice is penalized), so keep it out of the truncation: it is the point
     // a long carry hands over on, and it is not replaceable by a louder one.
@@ -414,7 +435,9 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
         }
     }
     for beat in window_points.into_iter().chain(rhythm_entries) {
-        if (!out || exit_boundary(t, g.sec(beat))) && !unique.contains(&beat) {
+        if (!out || exit_boundary(t, g.sec(beat)) || crate::recovery::relative(t, g.sec(beat)))
+            && !unique.contains(&beat)
+        {
             unique.push(beat);
         }
     }
@@ -428,12 +451,102 @@ pub(crate) fn points(t: &TrackAnalysis, cues: &[Cue], out: bool, earliest: f32) 
             unique.push(beat);
         }
     }
+    if !out && explicit.is_empty() && t.stems.is_some() {
+        // Preserve the ordinary candidates. A later recovery with a complete
+        // peak ahead is an additional option, never a replacement for the intro
+        // merely because it scores better before part fitting has run.
+        for (start, end) in t
+            .sections
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.label,
+                    mixless_protocol::SectionLabel::Break
+                        | mixless_protocol::SectionLabel::Breakdown
+                )
+            })
+            .map(|s| (s.start_sec, s.end_sec))
+            .chain(crate::recovery::windows(t))
+        {
+            if end < t.duration_sec * 0.5 {
+                continue;
+            }
+            let first = g.ceil_bar(start.max(t.duration_sec * 0.5));
+            let mut offered = 0;
+            for bar in 0..=4 {
+                let beat = first + bar as f32 * g.meter();
+                let sec = g.sec(beat);
+                if sec >= end - 0.05 {
+                    break;
+                }
+                if crate::drops::entry_allowed(t, sec)
+                    && (boundary_quality(t, sec) >= 0.5 || layer_entry(t, sec))
+                    && !unique.iter().any(|old| (*old - beat).abs() < 0.01)
+                {
+                    unique.push(beat);
+                    offered += 1;
+                    if offered == 2 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
     unique
 }
 
 #[cfg(test)]
 mod entry_tests {
     use super::*;
+    #[test]
+    fn late_recovery_adds_an_entry_without_crowding_out_the_intro() {
+        use mixless_protocol::{Section, SectionLabel as S};
+        for tempo in [90., 120., 174.] {
+            let mut t = crate::stem_regressions::with_stems(crate::tests::track(
+                1,
+                tempo,
+                "8A",
+                S::Intro,
+                128,
+                0.8,
+                0.2,
+            ));
+            let bar = 240. / tempo;
+            t.sections = [
+                (0., 16., S::Intro),
+                (16., 48., S::Drop),
+                (48., 72., S::Verse),
+                (72., 88., S::Breakdown),
+                (88., 112., S::Drop),
+                (112., 128., S::Outro),
+            ]
+            .into_iter()
+            .map(|(a, b, label)| Section {
+                start_sec: a * bar,
+                end_sec: b * bar,
+                label,
+            })
+            .collect();
+            let g = Grid(&t);
+            let points: Vec<_> = points(&t, &[], false, 0.)
+                .into_iter()
+                .map(|b| g.sec(b))
+                .collect();
+            assert!(points.iter().any(|s| *s < 16. * bar));
+            assert!(
+                points.iter().any(|s| (*s - 72. * bar).abs() < 0.05),
+                "{tempo}: {points:?}"
+            );
+            assert!(!points.iter().any(|s| *s >= 112. * bar - 0.05));
+            let cue = Cue {
+                index: 0,
+                frame: (8. * bar * t.sample_rate as f32) as u64,
+                kind: CueKind::In,
+                user_set: true,
+            };
+            assert_eq!(super::points(&t, &[cue], false, 0.).len(), 1);
+        }
+    }
     #[test]
     fn layered_pickup_requires_a_measured_clock_and_keeps_manual_entry() {
         let mut t = crate::tests::track(

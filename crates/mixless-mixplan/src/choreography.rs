@@ -138,6 +138,7 @@ pub(super) fn arrange(
     ] {
         line.nodes.clear();
     }
+    let mut previous_x = -1.;
     for j in 0..=n as usize * 64 {
         let u = j as f32 / 64.;
         // Open the mixer, hold the layered middle, then finish the crossfade.
@@ -150,12 +151,20 @@ pub(super) fn arrange(
         };
         let level_a = 1. - ease((u - mid_end) / (n - mid_end));
         let level_b = ease(u / intro);
-        lanes.xfader.nodes.push((u, xf));
-        lanes.gain_a.nodes.push((u, db(level_a)));
-        lanes.gain_b.nodes.push((u, (db(level_b) + trim).max(KILL)));
-        let x = (xf + 1.) * std::f32::consts::FRAC_PI_4;
-        let envelope_a = x.cos() * level_a;
-        let envelope_b = x.sin() * level_b;
+        let envelope_a = ((1. - xf) / 2.).sqrt() * level_a;
+        let envelope_b = ((1. + xf) / 2.).sqrt() * level_b;
+        let routing = crate::part_routing::route([[envelope_a; 4], [envelope_b; 4]]);
+        lanes.xfader.nodes.push((u, routing.crossfader));
+        lanes.gain_a.nodes.push((
+            u,
+            if routing.crossfader == 1. && (previous_x == 1. || u >= n) {
+                KILL
+            } else {
+                routing.gain_db
+            },
+        ));
+        lanes.gain_b.nodes.push((u, routing.gain_db + trim));
+        previous_x = routing.crossfader;
         let bass_width = 0.5 / meter;
         let phases = [
             ease((u - (bass - bass_width)) / (2. * bass_width)),
