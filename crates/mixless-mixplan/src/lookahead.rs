@@ -2,6 +2,7 @@
 //! safe current plans, but can never override their musical safety gates.
 use crate::{PlanContext, Planner};
 use mixless_protocol::{Cue, MixPlan, TrackAnalysis};
+mod selection;
 
 impl Planner {
     pub fn plan_with_following(
@@ -94,41 +95,12 @@ impl Planner {
             let alternative = results.pop().unwrap().remove(0);
             (results.pop().unwrap(), alternative, held)
         };
-        let mut candidates = first;
-        for p in [alternative, held] {
-            if !candidates.iter().any(|old| {
-                old.t_in_a == p.t_in_a
-                    && old.t_out_a == p.t_out_a
-                    && old.t_in_b == p.t_in_b
-                    && old.t_end_b == p.t_end_b
-                    && old.incoming_offset_end == p.incoming_offset_end
-            }) {
-                candidates.push(p);
-            }
-        }
-        // Each candidate settles its incoming tempo before B→C is forecast,
-        // so the comparison sees the state the next pair really starts from.
-        for p in &mut candidates {
-            crate::tempo_recovery::arrange(self, ctx, Some(next), exit_cues, p);
-        }
-        // A distinct incoming phrase changes which peak and recovery B can
-        // still play. Evaluate B→C from that exact state, without recursive
-        // lookahead. Whole-track tempo/key guesses cannot see this restriction.
-        let mut best = candidates.remove(0);
-        if !candidates.is_empty() {
-            let current = |p: &MixPlan| {
-                crate::order::audible_cost(p, ctx.outgoing, ctx.incoming, 0., 0.)
-                    + carried_offset(p, ctx)
-            };
-            let key = |p: &MixPlan| {
-                [
-                    crate::established_entry(p, ctx.incoming).to_bits(),
-                    p.t_end_b.to_bits(),
-                    p.incoming_offset_end.rate.to_bits(),
-                    p.incoming_offset_end.pitch_semitones.to_bits(),
-                ]
-            };
-            let forecast = |p: &MixPlan| {
+        let best = selection::choose(
+            ctx,
+            first,
+            [alternative, held],
+            |p| crate::tempo_recovery::arrange(self, ctx, Some(next), exit_cues, p),
+            |p| {
                 crate::pitch_recovery::departure(
                     self,
                     ctx.incoming,
@@ -141,55 +113,8 @@ impl Planner {
                 .map_or(1.5, |next_plan| {
                     crate::order::audible_cost(&next_plan, ctx.incoming, next, 0., 0.)
                 })
-            };
-            let mut forecasts = Vec::new();
-            let mut best_cost = if best.failure_reason.is_some() {
-                f32::INFINITY
-            } else {
-                let future = forecast(&best);
-                forecasts.push((key(&best), future));
-                current(&best) + 0.5 * future
-            };
-            // The first complete cost bounds useful forecasts. Remaining
-            // departures are independent; compute each distinct carried state
-            // once, then retain the original pruning, reduction and tie order.
-            // Speculation is bounded by the existing entrance shortlist.
-            let mut pending = Vec::new();
-            for p in &candidates {
-                if p.failure_reason.is_some() || current(p) >= best_cost {
-                    continue;
-                }
-                let k = key(p);
-                if !forecasts.iter().any(|(old, _)| *old == k)
-                    && !pending.iter().any(|(old, _)| *old == k)
-                {
-                    pending.push((k, p));
-                }
-            }
-            let compute = |i: usize| (pending[i].0, forecast(pending[i].1));
-            forecasts.extend(if cfg!(feature = "trace") {
-                (0..pending.len()).map(compute).collect::<Vec<_>>()
-            } else {
-                crate::order::parallel::map(pending.len(), compute)
-            });
-            for candidate in candidates {
-                let cost = current(&candidate);
-                if cost >= best_cost || candidate.failure_reason.is_some() {
-                    continue;
-                }
-                let k = key(&candidate);
-                let future = forecasts
-                    .iter()
-                    .find(|(old, _)| *old == k)
-                    .expect("eligible departure was forecast")
-                    .1;
-                let cost = cost + 0.5 * future;
-                if cost < best_cost - 0.0001 {
-                    best = candidate;
-                    best_cost = cost;
-                }
-            }
-        }
+            },
+        );
         if best.failure_reason.is_some() {
             // Exhaust the already-computed native/held alternatives before
             // resorting to a terminal handoff.

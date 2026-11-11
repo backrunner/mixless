@@ -4,7 +4,7 @@
 //! playlist, then played round and round in that order.
 /// Bump when ordering, pair scoring, or planner behavior can change Best order.
 /// Persisted orders also fingerprint the actual analyses and all planner options.
-pub const ORDER_VERSION: u32 = 27;
+pub const ORDER_VERSION: u32 = 28;
 
 use crate::{Planner, PlannerOptions};
 use mixless_protocol::TrackAnalysis;
