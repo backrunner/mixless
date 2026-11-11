@@ -5,6 +5,7 @@ mod automix;
 mod beat_sync;
 mod branding;
 mod controls;
+mod downgrade;
 mod fader;
 mod fx;
 mod icons;
@@ -13,6 +14,8 @@ mod menus;
 mod motion;
 mod performance;
 mod preferences;
+#[cfg(debug_assertions)]
+mod queue_preview;
 mod root;
 #[cfg(target_os = "macos")]
 mod self_install;
@@ -37,6 +40,8 @@ use gpui::{
 const UI_FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
+    #[cfg(debug_assertions)]
+    queue_preview::check_environment();
     #[cfg(debug_assertions)]
     if views::preview_automix() {
         return;
@@ -94,118 +99,137 @@ fn main() {
     );
     tracing::info!(build = %build_id, profile = env!("MIXLESS_BUILD_PROFILE"), "starting mixless");
 
-    #[cfg(target_os = "macos")]
-    self_install::relocate_from_disk_image();
-
     let application = Application::new().with_assets(icons::Assets);
     application.run(|cx: &mut App| {
         branding::set_dock_icon();
-        let core = state::app_core();
-        let shutdown_core = core.clone();
-        cx.on_app_quit(move |_| {
-            shutdown_core
-                .shutting_down
-                .store(true, std::sync::atomic::Ordering::Release);
-            async {}
+        cx.spawn(async |cx| {
+            // Return from applicationDidFinishLaunching before entering a
+            // modal event loop. Keep the GPUI App borrow out of that loop.
+            cx.background_executor()
+                .timer(Duration::from_millis(1))
+                .await;
+            #[cfg(target_os = "macos")]
+            self_install::relocate_from_disk_image();
+            let session = downgrade::prepare_or_exit();
+            cx.update(move |cx| open_workspace(session, cx))
+                .expect("open workspace");
         })
         .detach();
-        cx.on_window_closed(|cx| {
-            // AppKit keeps the process alive by default, even with no windows.
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-
-        let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("mixless".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(point(px(16.), px(24.))),
-            }),
-            // Disable AppKit's implicit titlebar mover at construction time.
-            // The explicitly empty header area still calls performWindowDrag.
-            is_movable: false,
-            window_min_size: Some(size(px(1180.), px(760.))),
-            window_background: WindowBackgroundAppearance::Opaque,
-            ..Default::default()
-        };
-
-        let window = cx
-            .open_window(options, |_window, cx| {
-                cx.new(|cx| state::UiState::new(core.clone(), cx))
-            })
-            .expect("open window");
-
-        window
-            .update(cx, |state, window, cx| {
-                cx.observe_window_activation(window, |state, window, cx| {
-                    if !window.is_window_active() {
-                        state.brand_menu.open = false;
-                        state.end_drag();
-                        state.end_momentary_fx();
-                        state.cancel_transport_press();
-                        cx.notify();
-                    }
-                })
-                .detach();
-                let (controller_tx, controller_rx) = async_channel::bounded::<()>(1);
-                let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(move || {
-                    let _ = controller_tx.try_send(());
-                });
-                *state.core.controller_wake.lock().expect("controller wake") = Some(wake.clone());
-                if let Some(hub) = state.core.midi.lock().expect("controllers").as_ref() {
-                    hub.set_notify(wake);
-                }
-                cx.spawn(async move |this, cx| {
-                    while controller_rx.recv().await.is_ok() {
-                        if this
-                            .update(cx, |state, cx| {
-                                state.poll();
-                                cx.notify();
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-                branding::configure_main_window();
-                state.refresh_playlists();
-                state.poll();
-                cx.notify();
-                cx.spawn(async move |this, cx| {
-                    loop {
-                        // Active windows poll immediately before painting.
-                        cx.background_executor().timer(UI_FRAME_INTERVAL).await;
-                        if this
-                            .update(cx, |state, cx| {
-                                // Poll unconditionally: the animating flag is
-                                // derived from poll-refreshed state, so gating
-                                // poll on it can latch a dead render chain and
-                                // freeze every polled surface for good.
-                                let animating = state.needs_continuous_repaint();
-                                let changed = state.poll();
-                                if changed || (!animating && state.needs_continuous_repaint()) {
-                                    cx.notify();
-                                }
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-            })
-            .expect("init state");
-
-        menus::init(core.clone(), window, cx);
-        #[cfg(target_os = "macos")]
-        update::launch(&core);
-        cx.activate(true);
     });
+}
+
+fn open_workspace(data_session: downgrade::Session, cx: &mut App) {
+    let core = state::app_core_with_session(data_session);
+    #[cfg(debug_assertions)]
+    queue_preview::start(&core);
+    let shutdown_core = core.clone();
+    cx.on_app_quit(move |_| {
+        shutdown_core
+            .shutting_down
+            .store(true, std::sync::atomic::Ordering::Release);
+        async {}
+    })
+    .detach();
+    cx.on_window_closed(|cx| {
+        // AppKit keeps the process alive by default, even with no windows.
+        if cx.windows().is_empty() {
+            cx.quit();
+        }
+    })
+    .detach();
+
+    let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("mixless".into()),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(16.), px(24.))),
+        }),
+        // Disable AppKit's implicit titlebar mover at construction time.
+        // The explicitly empty header area still calls performWindowDrag.
+        is_movable: false,
+        window_min_size: Some(size(px(1180.), px(760.))),
+        window_background: WindowBackgroundAppearance::Opaque,
+        ..Default::default()
+    };
+
+    let window = cx
+        .open_window(options, |_window, cx| {
+            cx.new(|cx| state::UiState::new(core.clone(), cx))
+        })
+        .expect("open window");
+
+    window
+        .update(cx, |state, window, cx| {
+            cx.observe_window_activation(window, |state, window, cx| {
+                if !window.is_window_active() {
+                    state.brand_menu.open = false;
+                    state.end_drag();
+                    state.end_momentary_fx();
+                    state.cancel_transport_press();
+                    cx.notify();
+                }
+            })
+            .detach();
+            let (controller_tx, controller_rx) = async_channel::bounded::<()>(1);
+            let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(move || {
+                let _ = controller_tx.try_send(());
+            });
+            *state.core.controller_wake.lock().expect("controller wake") = Some(wake.clone());
+            if let Some(hub) = state.core.midi.lock().expect("controllers").as_ref() {
+                hub.set_notify(wake);
+            }
+            cx.spawn(async move |this, cx| {
+                while controller_rx.recv().await.is_ok() {
+                    if this
+                        .update(cx, |state, cx| {
+                            state.poll();
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
+            branding::configure_main_window();
+            state.refresh_playlists();
+            state.poll();
+            cx.notify();
+            cx.spawn(async move |this, cx| {
+                loop {
+                    // Active windows poll immediately before painting.
+                    cx.background_executor().timer(UI_FRAME_INTERVAL).await;
+                    if this
+                        .update(cx, |state, cx| {
+                            // Poll unconditionally: the animating flag is
+                            // derived from poll-refreshed state, so gating
+                            // poll on it can latch a dead render chain and
+                            // freeze every polled surface for good.
+                            let animating = state.needs_continuous_repaint();
+                            let changed = state.poll();
+                            if changed || (!animating && state.needs_continuous_repaint()) {
+                                cx.notify();
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        })
+        .expect("init state");
+
+    menus::init(core.clone(), window, cx);
+    #[cfg(target_os = "macos")]
+    if !cfg!(debug_assertions)
+        || std::env::args().nth(1).as_deref() != Some("--preview-automix-queue")
+    {
+        update::launch(&core);
+    }
+    cx.activate(true);
 }

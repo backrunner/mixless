@@ -1,5 +1,5 @@
 use crate::{
-    controls::{KnobSpec, knob},
+    controls::{KnobSpec, knob_with_enabled},
     state::{KnobCtl, UiState},
     theme,
 };
@@ -12,10 +12,7 @@ impl UiState {
         cx: &mut gpui::Context<Self>,
         deck: DeckId,
         d: &DeckSnapshot,
-    ) -> Option<gpui::AnyElement> {
-        if !d.stems_ready {
-            return None;
-        }
+    ) -> gpui::AnyElement {
         let mut column = gpui::div()
             .flex()
             .flex_wrap()
@@ -31,51 +28,50 @@ impl UiState {
             (StemKind::Bass, "BASS", theme::DECK_B),
             (StemKind::Instruments, "OTHER", theme::MUTED),
         ] {
-            if stem == StemKind::Bass && !d.bass_ready {
-                column = column.child(
-                    gpui::div()
-                        .w(px(36.))
-                        .h(px(36.))
-                        .text_size(px(8.))
-                        .text_color(theme::MUTED)
-                        .child("BASS —"),
-                );
-                continue;
-            }
+            let enabled = d.stem_available(stem);
             let value = d.stem_gain[stem.index()];
             let state = cx.entity();
             let toggle = gpui::div()
                 .id(SharedString::from(format!("stem-{deck:?}-{stem:?}")))
+                .debug_selector(move || format!("stem-toggle-{deck:?}-{stem:?}"))
                 .w_full()
                 .text_size(px(8.))
                 .line_height(px(10.))
                 .text_center()
-                .text_color(if value > 0. { color } else { theme::MUTED })
-                .cursor_pointer()
+                .text_color(if enabled && value > 0. {
+                    color
+                } else {
+                    theme::MUTED
+                })
+                .when(!enabled, |el| el.opacity(0.35))
                 .child(label)
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                    state.update(cx, |s, cx| {
-                        let current = s.deck(deck).stem_gain[stem.index()];
-                        s.dispatch(Command::SetStemGain {
-                            deck,
-                            stem,
-                            value: if current > 0. { 0. } else { 1. },
-                        });
-                        cx.notify();
-                    });
+                .when(enabled, |el| {
+                    el.cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            state.update(cx, |s, cx| {
+                                let current = s.deck(deck).stem_gain[stem.index()];
+                                s.dispatch(Command::SetStemGain {
+                                    deck,
+                                    stem,
+                                    value: if current > 0. { 0. } else { 1. },
+                                });
+                                cx.notify();
+                            });
+                        })
                 });
             column = column.child(
                 gpui::div()
                     .flex()
                     .flex_col()
+                    .debug_selector(move || format!("stem-control-{deck:?}-{stem:?}"))
                     .flex_none()
                     .w(px(36.))
                     .h(px(36.))
                     .items_center()
                     .gap(px(2.))
-                    .child(knob(
+                    .child(knob_with_enabled(
                         KnobSpec {
                             ctl: KnobCtl::Stem(deck, stem),
                             value,
@@ -86,11 +82,15 @@ impl UiState {
                             label: "",
                             bipolar: false,
                         },
+                        enabled,
                         cx,
                     ))
                     .child(toggle),
             );
         }
-        Some(column.into_any_element())
+        column.into_any_element()
     }
 }
+
+#[cfg(test)]
+mod tests;

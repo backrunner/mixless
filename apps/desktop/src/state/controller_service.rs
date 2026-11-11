@@ -34,6 +34,11 @@ impl AppCore {
         let snapshot = self.engine.snapshot();
         let action = event.action;
         match action.target {
+            Stem { deck, stem } if !snapshot.deck(deck).stem_available(stem) => {
+                // Consume disabled performance input instead of queuing it
+                // for the UI to replay after stems become ready.
+                return true;
+            }
             LoadSelected { deck } => {
                 self.controller_loading[deck.index()].store(true, Ordering::Release);
                 return false;
@@ -171,6 +176,26 @@ mod tests {
             received_at: std::time::Instant::now(),
             action: MidiAction { target, value },
         }
+    }
+    #[test]
+    fn unavailable_stem_events_are_consumed_without_ui_replay() {
+        let (_temp, core, _) = crate::automix::tests::fixture();
+        for deck in [DeckId::A, DeckId::B] {
+            let before = core.engine.snapshot().deck(deck).stem_gain;
+            for stem in [
+                mixless_protocol::StemKind::Vocals,
+                mixless_protocol::StemKind::Drums,
+                mixless_protocol::StemKind::Bass,
+                mixless_protocol::StemKind::Instruments,
+            ] {
+                assert!(core.apply_controller_event(event(
+                    MidiTarget::Stem { deck, stem },
+                    MidiValue::Normalized(0.)
+                )));
+            }
+            assert_eq!(core.engine.snapshot().deck(deck).stem_gain, before);
+        }
+        assert!(core.controller_effects.lock().unwrap().is_empty());
     }
     #[test]
     fn performance_commands_dispatch_without_ui_and_library_load_preserves_order() {

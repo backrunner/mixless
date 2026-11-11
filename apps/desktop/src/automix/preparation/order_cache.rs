@@ -55,6 +55,18 @@ pub(super) fn key(
     )
 }
 
+pub(super) fn track_keys(
+    tracks: &[crate::analysis::PreparedTrack],
+    options: &mixless_mixplan::PlannerOptions,
+) -> Result<Vec<String>, serde_json::Error> {
+    // Hash each payload once, then combine these fixed-size fingerprints for
+    // every directional pair. Playlist insertion or reordering preserves them.
+    tracks
+        .iter()
+        .map(|track| key(std::slice::from_ref(track), options))
+        .collect()
+}
+
 fn fingerprint<'a>(
     tracks: impl Iterator<Item = (TrackId, &'a str, &'a mixless_protocol::TrackAnalysis)>,
     options: &mixless_mixplan::PlannerOptions,
@@ -95,7 +107,12 @@ fn fingerprint<'a>(
     for track in tracks {
         serde_json::to_writer(&mut sink, &track)?;
     }
-    Ok(format!("{:x}", sink.0.finalize()))
+    Ok(sink
+        .0
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>())
 }
 
 #[cfg(test)]
@@ -118,6 +135,7 @@ mod tests {
             mix_regions: vec![],
             bars: vec![],
             moments: vec![],
+            tonal_frames: vec![],
             stems: None,
             waveform_path: None,
             partial: false,

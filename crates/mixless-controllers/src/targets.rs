@@ -143,6 +143,8 @@ pub enum MidiTarget {
     BeatForward {
         deck: DeckId,
     },
+    /// Performance input is ignored until this stem's playback audio is ready.
+    /// The target remains available for MIDI learning on an unloaded deck.
     Stem {
         deck: DeckId,
         stem: StemKind,
@@ -438,6 +440,16 @@ impl MidiTarget {
             LoadSelected { deck } => format!("Load selected track → {deck:?}"),
             LoadFocused => "Load selected track → focused deck".into(),
             Focus { deck } => format!("Focus deck {deck:?}"),
+        }
+    }
+    pub fn availability_hint(&self) -> Option<&'static str> {
+        match self {
+            Self::Stem {
+                stem: StemKind::Bass,
+                ..
+            } => Some("Available when this deck's bass stem is ready."),
+            Self::Stem { .. } => Some("Available when this deck's stems are ready."),
+            _ => None,
         }
     }
     pub fn label(&self) -> String {

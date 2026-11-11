@@ -175,7 +175,7 @@ impl UiState {
                         cx,
                     )),
             )
-            .children(self.render_stems(cx, deck, d));
+            .child(self.render_stems(cx, deck, d));
         let pitch_column = gpui::div()
             .flex()
             .flex_none()

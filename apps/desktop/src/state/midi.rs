@@ -70,23 +70,31 @@ impl UiState {
     fn midi_browse_tracks(&mut self, steps: i16) {
         // Browse the rows as shown, including AUTO's BEST order.
         let tracks = self.shown_tracks();
+        let entries = self.shown_entries(&tracks);
         let current = self
             .midi_track_cursor
             .filter(|(index, id)| {
                 self.track_sel == Some(id.0)
                     && tracks.get(*index).is_some_and(|track| track.id == *id)
+                    && self
+                        .track_sel_entry
+                        .is_none_or(|entry| entries.get(*index) == Some(&entry))
             })
             .map(|(index, _)| index)
             .or_else(|| {
-                tracks
-                    .iter()
-                    .position(|track| Some(track.id.0) == self.track_sel)
+                entries.iter().position(|entry| {
+                    Some(entry.track.0) == self.track_sel
+                        && self
+                            .track_sel_entry
+                            .is_none_or(|selected| selected == *entry)
+                })
             });
         let Some(index) = stepped_index(current, tracks.len(), steps) else {
             return;
         };
         self.track_menu = None;
         self.track_sel = Some(tracks[index].id.0);
+        self.track_sel_entry = self.shown_entries(&tracks).get(index).copied();
         self.midi_track_cursor = Some((index, tracks[index].id));
         let rows = crate::views::library::import_rows::rows(tracks.len(), &self.playlist_imports);
         let row = rows
@@ -112,13 +120,23 @@ impl UiState {
         let Some(index) = stepped_index(current, selections.len(), steps) else {
             return;
         };
-        let (selection, row) = selections[index];
+        let (selection, _) = selections[index];
         if selection != self.playlist_sel {
             self.select_playlist(selection);
         }
-        if let Some(row) = row {
-            self.playlist_scroll
-                .scroll_to_item(row, gpui::ScrollStrategy::Top);
+        if let Some(id) = selection {
+            if let Some(playlist) = self.playlists.iter().find(|p| p.id == id) {
+                self.source_tree.reveal(playlist.folder_path.is_some());
+            }
+            if let Some(row) =
+                self.source_tree
+                    .playlist_row(&self.playlists, id, &self.playlist_scroll)
+            {
+                self.playlist_scroll.scroll_to(gpui::ListOffset {
+                    item_ix: row,
+                    offset_in_item: gpui::px(0.),
+                });
+            }
             self.library_key = None;
         }
     }

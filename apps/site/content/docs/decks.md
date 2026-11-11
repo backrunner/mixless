@@ -53,6 +53,8 @@ Choose waveform placement and visibility in General preferences. Artwork appears
 
 Prepared stems expose **VOCAL**, **DRUMS**, **BASS**, and **OTHER** gain in a 2×2 control grid. They share the deck's transport. With all voices at unity, the original audio is preserved. Preparation happens locally and can continue while you play.
 
+All four knobs stay visible but disabled until the deck's stem audio is ready. Mute clicks and MIDI adjustments are also ignored while unavailable. If a cache has no independent bass stem, **BASS** remains disabled. MIDI mappings can still be learned in Preferences.
+
 ## Effects
 
 Each deck has four insert slots and a catalogue of 70 effects. Open **⋯** on a slot for grouped effects, beat timing, and parameter editing. Echo, reverb, filters, and rhythmic effects can help shape a handoff; use the level controls to manage the result.

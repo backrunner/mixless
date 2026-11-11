@@ -11,14 +11,17 @@ fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
     impl Render for Library {
         fn render(
             &mut self,
-            _: &mut gpui::Window,
+            window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
-            self.0.update(cx, |s, cx| s.render_library(cx, 160., false))
+            self.0
+                .update(cx, |s, cx| s.render_library(window, cx, 160., false))
         }
     }
 
     let (_dir, core, tracks) = super::super::tests::fixture();
+    let (sender, _requests) = std::sync::mpsc::channel();
+    core.mix_preparation.sender.set(sender).unwrap();
     let state = cx.new(|cx| {
         let mut s = UiState::new(core.clone(), cx);
         s.tracks = Arc::new(
@@ -28,7 +31,7 @@ fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
                 .collect(),
         );
         s.automix_active = true;
-        for (i, id) in [tracks[0], tracks[2]].into_iter().enumerate() {
+        for (i, id) in [tracks[1], tracks[2]].into_iter().enumerate() {
             s.snapshot.decks[i].track_id = Some(id);
             s.snapshot.decks[i].frames = 48_000 * 8;
             s.presentation_frames[i] = 48_000. * (i + 1) as f64;
@@ -50,6 +53,21 @@ fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
         order: reordered.clone(),
         stamp: Some(order_cache::Stamp::current(&core)),
     });
+    set_order_mode(&core, OrderMode::Best, tracks.clone());
+    state.read_with(cx, |s, _| {
+        assert_eq!(
+            s.shown_tracks().iter().map(|t| t.id).collect::<Vec<_>>(),
+            tracks
+        )
+    });
+    core.mix_preparation.publish_queue_on(
+        core.mix_preparation.queue_intent(),
+        entries(&reordered),
+        mixless_protocol::DeckId::B,
+    );
+    state.update(cx, |s, _| {
+        s.automix_queue = core.mix_preparation.queue_view()
+    });
     state.read_with(cx, |s, _| {
         assert_eq!(
             s.shown_tracks().iter().map(|t| t.id).collect::<Vec<_>>(),
@@ -68,7 +86,7 @@ fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
     library.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
     for (name, id) in [
-        ("library-playhead-a", tracks[0]),
+        ("library-playhead-a", tracks[1]),
         ("library-playhead-b", tracks[2]),
     ] {
         let marker = cx.debug_bounds(name).expect("loaded deck marker");
@@ -82,7 +100,18 @@ fn best_order_invalidates_paused_library_and_keeps_markers_on_their_tracks(
         );
     }
     let best_key = state.read_with(cx, |s, _| s.library_render_key(1440., 2.));
-    core.mix_preparation.best.store(false, Ordering::Release);
+    set_order_mode(&core, OrderMode::Order, tracks.clone());
+    state.read_with(cx, |s, _| {
+        assert_eq!(
+            s.shown_tracks().iter().map(|t| t.id).collect::<Vec<_>>(),
+            reordered
+        )
+    });
+    core.mix_preparation
+        .publish_queue(core.mix_preparation.queue_intent(), entries(&tracks));
+    state.update(cx, |s, _| {
+        s.automix_queue = core.mix_preparation.queue_view()
+    });
     state.read_with(cx, |s, _| {
         assert_ne!(best_key, s.library_render_key(1440., 2.));
         assert_eq!(
@@ -133,6 +162,42 @@ fn sequence_carries_entries_and_offsets_and_reuses_the_published_decisions() {
         &pairs[1].as_ref().unwrap().plan
     ));
     assert!(plan_sequence(&core, &tracks, &|| false).is_none());
+}
+
+#[test]
+fn repeated_recordings_forecast_from_the_committed_occurrence_until_the_actual_wrap() {
+    let (_dir, core, ids) = super::super::tests::fixture();
+    let (tx, _rx) = std::sync::mpsc::channel();
+    core.mix_preparation.sender.set(tx).unwrap();
+    let tracks = vec![ids[0], ids[1], ids[0], ids[2]];
+    set_order_mode(&core, OrderMode::Order, tracks.clone());
+    let initial = plan_sequence(&core, &tracks, &|| true).unwrap();
+    assert!(initial[..3].iter().all(Option::is_some));
+    let anchor = initial[1].as_ref().unwrap().plan.clone();
+    committed(&core, anchor.clone());
+    assert!(
+        plan_sequence(&core, &tracks, &|| true).is_none(),
+        "do not guess the duplicate before acknowledgement"
+    );
+    let mut actual = entries(&tracks);
+    actual.rotate_left(1); // B -> the second A, then C -> the first A.
+    core.mix_preparation
+        .publish_queue(core.mix_preparation.queue_intent(), actual);
+    let forecast = plan_sequence(&core, &tracks, &|| true).unwrap();
+    assert!(Arc::ptr_eq(&forecast[1].as_ref().unwrap().plan, &anchor));
+    assert!(
+        forecast[0].is_none(),
+        "the previous occurrence stays attached to the previous lap"
+    );
+    assert!(forecast[2].is_some() && forecast[3].is_some());
+    assert_eq!(
+        forecast[2].as_ref().unwrap().plan.outgoing_offset,
+        anchor.incoming_offset_end
+    );
+    assert!(
+        forecast[2].as_ref().unwrap().plan.t_in_a
+            >= anchor.t_end_b + STAGING_SECONDS * anchor.incoming_offset_end.rate
+    );
 }
 
 #[test]

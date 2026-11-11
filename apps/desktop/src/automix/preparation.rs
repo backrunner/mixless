@@ -1,11 +1,23 @@
 //! Prepare one continuous set and publish its dependent decisions together.
 mod order_cache;
 mod ordering;
+mod pair_cache;
 mod preview;
+mod queue;
+mod selection;
+pub use queue::{OrderMode, QueueEntry, QueueView};
+#[cfg(test)]
+mod queue_tests;
 use super::*;
 use ordering::{OrderingJob, arrange};
 pub use ordering::{arranged, order_ready};
 use preview::Sequence;
+pub(super) use queue::Intent;
+pub(super) use queue::entries;
+#[cfg(test)]
+pub use selection::set_best;
+pub use selection::set_order_mode;
+pub use selection::{default_to_best, prefer_cached_best, reset_order_for_playlist};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
     Mutex, OnceLock,
@@ -29,11 +41,15 @@ pub struct Preparation {
     sequence: Mutex<Sequence>,
     pub preview_revision: AtomicU64,
     best: std::sync::atomic::AtomicBool,
+    /// Warm Best independently of the order used by this AUTO session.
+    warming: std::sync::atomic::AtomicBool,
+    /// Startup waits only for a cache lookup, never the optimizer.
+    defaulting: std::sync::atomic::AtomicBool,
     /// Last displayed order and the evidence revision it was validated against.
     arranged: Mutex<Option<order_cache::Arranged>>,
     /// The playlist a worker is arranging now, so it is measured only once.
     arranging: Mutex<Option<Arc<OrderingJob>>>,
-    /// The user has picked an order; AUTO leaves it alone from then on.
+    /// The current source has an explicit order choice.
     chosen: std::sync::atomic::AtomicBool,
 }
 
@@ -50,6 +66,8 @@ impl Default for Preparation {
             sequence: Mutex::default(),
             preview_revision: AtomicU64::default(),
             best: std::sync::atomic::AtomicBool::new(false),
+            warming: std::sync::atomic::AtomicBool::new(false),
+            defaulting: std::sync::atomic::AtomicBool::new(false),
             chosen: std::sync::atomic::AtomicBool::new(false),
             arranged: Mutex::default(),
             arranging: Mutex::default(),
@@ -89,15 +107,17 @@ pub(super) fn following(
     if core.mix_preparation.tracks().is_empty() {
         return;
     }
-    let mut queue = vec![incoming];
-    queue.extend(order.preview(count, shuffle));
-    if queue.len() > 1 && queue.last() == Some(&incoming) {
+    let Some(entry) = order.current_entry().filter(|e| e.track == incoming) else {
+        return;
+    };
+    let mut queue = vec![entry];
+    queue.extend(order.preview_entries(count, shuffle));
+    if queue.len() > 1 && queue.last() == Some(&entry) {
         queue.pop();
     }
     let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
-    if sequence.following.as_ref() == Some(&queue) {
-        return;
-    }
+    // Also refresh an unchanged circuit after its committed entrance changes.
+    // This runs after the worker publishes the exact active occurrences.
     sequence.following = Some(queue);
     drop(sequence);
     prepare(core, core.mix_preparation.tracks(), true, false);
@@ -110,36 +130,17 @@ pub fn prepare_playlist(core: &Arc<AppCore>, tracks: Vec<TrackId>) {
         .lock()
         .expect("selected playlist");
     *selected = tracks.clone();
-    prepare(core, arrange(core, tracks), false, true);
-}
-
-impl Preparation {
-    pub fn best(&self) -> bool {
-        self.best.load(Ordering::Acquire)
+    let arranged = arrange(core, tracks.clone());
+    if core.mix_preparation.best() && tracks.len() >= 3 {
+        if ordering::arranged(core, &tracks).is_none() && !core.mix_preparation.tracks().is_empty()
+        {
+            return;
+        }
+        if ordering::arranged(core, &tracks).is_some() {
+            core.mix_preparation.best_ready();
+        }
     }
-    /// The user has picked an order; AUTO leaves it alone from then on.
-    pub fn order_chosen(&self) -> bool {
-        self.chosen.load(Ordering::Acquire)
-    }
-}
-
-/// Switch the set between playlist order and best mixing order. `playlist`
-/// is the order the user sees; the arranged order replaces it for AUTO only.
-pub fn set_best(core: &Arc<AppCore>, on: bool, playlist: Vec<TrackId>) {
-    core.mix_preparation.best.store(on, Ordering::Release);
-    core.mix_preparation.chosen.store(true, Ordering::Release);
-    prepare_playlist(core, playlist);
-}
-
-/// AUTO plays the smoothest order unless the user has picked one: the first
-/// automatic start turns it on, and an explicit ORDER, BEST or SHUFFLE
-/// choice sticks from then on.
-pub fn default_to_best(core: &Arc<AppCore>, playlist: Vec<TrackId>) {
-    if core.mix_preparation.order_chosen() || playlist.len() < 3 {
-        return;
-    }
-    core.mix_preparation.best.store(true, Ordering::Release);
-    prepare_playlist(core, playlist);
+    prepare(core, arranged, false, true);
 }
 
 pub fn refresh_previews(core: &Arc<AppCore>) {
@@ -149,6 +150,7 @@ pub fn refresh_previews(core: &Arc<AppCore>) {
 pub(super) fn reset_session(core: &Arc<AppCore>) {
     let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
     sequence.following = None;
+    sequence.anchor_entries = None;
     let changed = sequence.anchor.take().is_some();
     if changed {
         core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel);
@@ -196,16 +198,22 @@ fn prepare(core: &Arc<AppCore>, tracks: Vec<TrackId>, force: bool, input: bool) 
         .lock()
         .expect("playlist preparation");
     let changed = *current != tracks;
-    if !changed && !force {
+    let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
+    let mode_changed = sequence.queue.prepared_mode != sequence.queue.target.mode;
+    if !changed && !force && !mode_changed {
         return;
     }
-    if input {
+    let input_revision = if input {
         core.mix_preparation
             .input_revision
-            .fetch_add(1, Ordering::AcqRel);
-    }
+            .fetch_add(1, Ordering::AcqRel)
+            + 1
+    } else {
+        core.mix_preparation.revision()
+    };
     *current = tracks.clone();
-    let mut sequence = core.mix_preparation.sequence.lock().expect("set plan");
+    sequence.queue.prepared_mode = sequence.queue.target.mode;
+    sequence.queue.target.revision = input_revision;
     let revision = core.mix_preparation.revision.fetch_add(1, Ordering::AcqRel) + 1;
     if changed {
         sequence.select(&tracks);
@@ -275,31 +283,45 @@ pub(super) fn plan_sequence(
     tracks: &[TrackId],
     active: &impl Fn() -> bool,
 ) -> Option<Vec<Option<ScheduledPair>>> {
-    let following = core
-        .mix_preparation
-        .sequence
-        .lock()
-        .expect("set plan")
-        .following
-        .clone();
-    let tracks = following.as_deref().unwrap_or(tracks);
+    let (following, anchor, anchor_entries) = {
+        let sequence = core.mix_preparation.sequence.lock().expect("set plan");
+        (
+            sequence.following.clone(),
+            sequence.anchor.clone(),
+            sequence.anchor_entries,
+        )
+    };
+    let rows = following.clone().unwrap_or_else(|| entries(tracks));
+    let following_tracks: Option<Vec<_>> = following
+        .as_ref()
+        .map(|rows| rows.iter().map(|e| e.track).collect());
+    let tracks = following_tracks.as_deref().unwrap_or(tracks);
     let mut pairs = vec![None; tracks.len()];
     if tracks.len() < 2 {
         return Some(pairs);
     }
-    let anchor = core
-        .mix_preparation
-        .sequence
-        .lock()
-        .expect("set plan")
-        .anchor
-        .clone();
-    let anchor_index = adjacent_index(
-        tracks,
+    let exact_pair = anchor_entries.filter(|p| {
         anchor
             .as_ref()
-            .and_then(|p| p.summary.as_ref().map(|s| s.pair)),
-    );
+            .and_then(|a| a.summary.as_ref())
+            .map(|s| s.pair)
+            == Some((p[0].track, p[1].track))
+    });
+    if anchor.is_some() && exact_pair.is_none() && rows.iter().any(|r| r.occurrence > 0) {
+        // Wait for playback acknowledgement instead of guessing which copy is
+        // sounding. `following` schedules another forecast after publication.
+        return None;
+    }
+    let anchor_index = if let Some(pair) = exact_pair {
+        (0..rows.len()).find(|i| [rows[*i], rows[(*i + 1) % rows.len()]] == pair)
+    } else {
+        adjacent_index(
+            tracks,
+            anchor
+                .as_ref()
+                .and_then(|p| p.summary.as_ref().map(|s| s.pair)),
+        )
+    };
     // Snapshot all analyses first, so following-track evidence is available
     // for the very first decision as well as the last one.
     let mut prepared = Vec::with_capacity(tracks.len());
@@ -313,16 +335,27 @@ pub(super) fn plan_sequence(
         prepared.push(track);
         stems.push(ready);
     }
-    let root = anchor
-        .as_ref()
-        .and_then(|p| p.summary.as_ref())
-        .map(|s| s.pair.0);
+    let root = exact_pair.map(|p| p[0]).or_else(|| {
+        let track = anchor.as_ref()?.summary.as_ref()?.pair.0;
+        rows.iter().find(|entry| entry.track == track).copied()
+    });
     let (first, count, mut entry, mut earliest, mut offset_a) = if let Some(plan) = anchor {
         let pair = plan.summary.as_ref()?.pair;
-        let Some(incoming) = tracks.iter().position(|id| *id == pair.1) else {
+        let incoming = if let Some(exact) = exact_pair {
+            rows.iter().position(|entry| *entry == exact[1])
+        } else {
+            tracks.iter().position(|id| *id == pair.1)
+        };
+        let Some(incoming) = incoming else {
             return Some(pairs);
         };
-        let cursor = (plan.t_in_b, plan.t_end_b, plan.incoming_offset_end);
+        let cursor = (
+            prepared[incoming].as_ref().map_or(plan.t_end_b, |track| {
+                mixless_mixplan::established_entry(&plan, &track.analysis)
+            }),
+            plan.t_end_b,
+            plan.incoming_offset_end,
+        );
         if let Some(i) = anchor_index {
             pairs[i] = Some(ScheduledPair {
                 key: String::new(),
@@ -355,7 +388,7 @@ pub(super) fn plan_sequence(
         }
         let i = (first + step) % tracks.len();
         let j = (i + 1) % tracks.len();
-        if Some(tracks[j]) == root {
+        if Some(rows[j]) == root {
             break;
         }
         let (Some(a), Some(b)) = (&prepared[i], &prepared[j]) else {
@@ -408,7 +441,7 @@ pub(super) fn plan_sequence(
                 pair.plan.incoming_offset_end
             );
         }
-        entry = pair.plan.t_in_b;
+        entry = mixless_mixplan::established_entry(&pair.plan, &b.analysis);
         earliest = pair.plan.t_end_b;
         offset_a = pair.plan.incoming_offset_end;
         pairs[i] = Some(pair);
@@ -419,3 +452,24 @@ pub(super) fn plan_sequence(
 #[cfg(test)]
 #[path = "preparation/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn cache_best_order(core: &AppCore, tracks: &[TrackId], order: &[usize]) {
+    core.library
+        .save_best_order(&best_order_key(core, tracks), order)
+        .unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn best_order_key(core: &AppCore, tracks: &[TrackId]) -> String {
+    let prepared: Vec<_> = tracks
+        .iter()
+        .map(|id| crate::analysis::prepare(core, *id).unwrap())
+        .collect();
+    let options = mixless_mixplan::PlannerOptions {
+        harmonic_key_shift: true,
+        live_moves: core.settings.get().live_moves,
+        ..Default::default()
+    };
+    order_cache::key(&prepared, &options).unwrap()
+}

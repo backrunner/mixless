@@ -2309,6 +2309,172 @@
       "macOS": "27.0.1 (26A434)",
       "audioDevice": "Offline",
       "scope": "Hovering empty cue 8 gives it a subtle purple tint and outline. Assigned pads remain solid and idle empty pads stay dark; the pad geometry does not change between states. Isolated app instance with a copy of the existing library. Original live playback was not interrupted. Static visual evidence only; no listening or frame-time measurements."
+    },
+    "sidebar-collapse-expanded": {
+      "file": "sidebar-collapse/expanded.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-24T08:34:39.157320+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T08:33:10Z"
+      },
+      "binarySha256": "ce78c8b8fc30b216867f9e6eefb1c6aae2fafba63fa3c7bdc1daedf635fd1a0e",
+      "previewBinarySha256": "540e22623dcb51a08717abf74b06d2d01bdfd32b7d0ea706c0fabeca1ad93f21",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Both groups expanded with Downloads selected. Isolated database copy with source paths redirected to unavailable fixture files; the File not found rows are expected. The temporary preview uses a separate bundle identity and ad hoc signature. Static UI evidence; no frame-time or listening measurements."
+    },
+    "sidebar-collapse-folders-collapsed": {
+      "file": "sidebar-collapse/folders-collapsed.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-24T08:34:39.157563+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T08:33:10Z"
+      },
+      "binarySha256": "ce78c8b8fc30b216867f9e6eefb1c6aae2fafba63fa3c7bdc1daedf635fd1a0e",
+      "previewBinarySha256": "540e22623dcb51a08717abf74b06d2d01bdfd32b7d0ea706c0fabeca1ad93f21",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Local Folders collapsed using Space while Playlists remains expanded. Isolated database copy with source paths redirected to unavailable fixture files; the File not found rows are expected. The temporary preview uses a separate bundle identity and ad hoc signature. Static UI evidence; no frame-time or listening measurements."
+    },
+    "sidebar-collapse-both-collapsed": {
+      "file": "sidebar-collapse/both-collapsed.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-24T08:34:39.157773+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T08:33:10Z"
+      },
+      "binarySha256": "ce78c8b8fc30b216867f9e6eefb1c6aae2fafba63fa3c7bdc1daedf635fd1a0e",
+      "previewBinarySha256": "540e22623dcb51a08717abf74b06d2d01bdfd32b7d0ea706c0fabeca1ad93f21",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Both groups collapsed independently. The selected library and visible track rows remain unchanged. Isolated database copy with source paths redirected to unavailable fixture files; the File not found rows are expected. The temporary preview uses a separate bundle identity and ad hoc signature. Static UI evidence; no frame-time or listening measurements."
+    },
+    "sidebar-collapse-restored": {
+      "file": "sidebar-collapse/restored.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-24T08:34:39.158019+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T08:33:10Z"
+      },
+      "binarySha256": "ce78c8b8fc30b216867f9e6eefb1c6aae2fafba63fa3c7bdc1daedf635fd1a0e",
+      "previewBinarySha256": "540e22623dcb51a08717abf74b06d2d01bdfd32b7d0ea706c0fabeca1ad93f21",
+      "capture": "Original native macOS window JPEG at 2x from cua_repl; no resizing or painted UI.",
+      "macOS": "27.0.1 (26A434)",
+      "audioDevice": "Offline",
+      "scope": "Both groups restored after Return, Space and a rapid double-click on the folder header. Isolated database copy with source paths redirected to unavailable fixture files; the File not found rows are expected. The temporary preview uses a separate bundle identity and ad hoc signature. Static UI evidence; no frame-time or listening measurements."
+    },
+    "downgrade-warning": {
+      "file": "downgrade-safety/warning-native.jpg",
+      "width": 1040,
+      "height": 658,
+      "capturedAt": "2026-10-24T18:28:10.558973+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T17:19:34Z"
+      },
+      "binarySha256": "ac8e3b91cd9d082a4b85a21a5f39aef45ff83bc96f7a353734b5a4e537dcefd5",
+      "sha256": "2ab3339b8289fdd16bb00511e9c28d2874870aac0a984395919f88ec755c7d9b",
+      "platform": "macOS 27.0.1 (26A434)",
+      "capture": "Native macOS window capture at 2x; original JPEG bytes from the capture tool, no re-encoding, upscaling or painted UI.",
+      "scope": "Native NSAlert for a synthetic future-version ledger; Quit is the default. No live data."
+    },
+    "stems-unavailable": {
+      "file": "stem-controls/unavailable-native.jpg",
+      "width": 2880,
+      "height": 1800,
+      "capturedAt": "2026-10-24T18:32:00.854097+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T17:19:34Z"
+      },
+      "binarySha256": "ac8e3b91cd9d082a4b85a21a5f39aef45ff83bc96f7a353734b5a4e537dcefd5",
+      "sha256": "7da64dc00f5accbacf19ab8b6ff7ed7cc1ccd5cf5417a0b552bc1aec43c74a9a",
+      "platform": "macOS 27.0.1 (26A434)",
+      "capture": "Native macOS window capture at 2x; original JPEG bytes from the capture tool, no re-encoding, upscaling or painted UI.",
+      "scope": "Isolated empty offline workspace; unavailable controls are dimmed. No inference or listening result."
+    },
+    "order-switch-shuffle": {
+      "file": "order-switch/shuffle-native.jpg",
+      "width": 2880,
+      "height": 1344,
+      "capturedAt": "2026-10-24T18:32:44.561059+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T17:19:34Z"
+      },
+      "binarySha256": "ac8e3b91cd9d082a4b85a21a5f39aef45ff83bc96f7a353734b5a4e537dcefd5",
+      "sha256": "38eeee3f38fd40acbbd4e7fa2dce783ec55199655845bb17e1601fdcd1d49cd9",
+      "platform": "macOS 27.0.1 (26A434)",
+      "capture": "Native macOS window capture at 2x; original JPEG bytes from the capture tool, no re-encoding, upscaling or painted UI.",
+      "scope": "Synthetic native toolbar preview after an OS mouse click; no active optimizer or playback."
+    },
+    "order-switch-best": {
+      "file": "order-switch/best-native.jpg",
+      "width": 2880,
+      "height": 1344,
+      "capturedAt": "2026-10-24T18:32:51.225528+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T17:19:34Z"
+      },
+      "binarySha256": "ac8e3b91cd9d082a4b85a21a5f39aef45ff83bc96f7a353734b5a4e537dcefd5",
+      "sha256": "a76cf6300d362d87a22fe047baece57d657c86431f31b4c2521f4cc28e84ac9c",
+      "platform": "macOS 27.0.1 (26A434)",
+      "capture": "Native macOS window capture at 2x; original JPEG bytes from the capture tool, no re-encoding, upscaling or painted UI.",
+      "scope": "Synthetic native toolbar preview after an OS mouse click; in-progress worker races are covered separately by regression tests."
+    },
+    "order-switch-order": {
+      "file": "order-switch/order-native.jpg",
+      "width": 2880,
+      "height": 1344,
+      "capturedAt": "2026-10-24T18:32:58.557488+00:00",
+      "build": {
+        "version": "0.1.0-beta.5",
+        "channel": "dev",
+        "revision": "v0.1.0-beta.5-1-g9651628-dirty",
+        "profile": "debug",
+        "built": "2026-10-24T17:19:34Z"
+      },
+      "binarySha256": "ac8e3b91cd9d082a4b85a21a5f39aef45ff83bc96f7a353734b5a4e537dcefd5",
+      "sha256": "5d5ee3d5cdab43fe41668cfacf599b6382f6fce9c160a64e674a8d6cdb78d9f7",
+      "platform": "macOS 27.0.1 (26A434)",
+      "capture": "Native macOS window capture at 2x; original JPEG bytes from the capture tool, no re-encoding, upscaling or painted UI.",
+      "scope": "Synthetic native toolbar preview after switching from BEST to ORDER with OS mouse clicks."
     }
   }
 }

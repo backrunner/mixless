@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct AutomixTip {
     pub transition: Transition,
     pub gap: f32,
+    pub stale: bool,
     pub _subscription: Option<gpui::Subscription>,
 }
 
@@ -15,18 +16,23 @@ impl AutomixTip {
         cx: &mut gpui::Context<Self>,
     ) -> Self {
         let subscription = state.upgrade().map(|state| {
-            cx.observe(&state, |tip, state, cx| {
-                if let Some(transition) = state.read(cx).transition()
-                    && transition != tip.transition
-                {
+            cx.observe(&state, |tip, state, cx| match state.read(cx).transition() {
+                Some(transition) if transition != tip.transition || tip.stale => {
                     tip.transition = transition;
+                    tip.stale = false;
                     cx.notify();
                 }
+                None if !tip.stale => {
+                    tip.stale = true;
+                    cx.notify();
+                }
+                _ => {}
             })
         });
         Self {
             transition,
             gap,
+            stale: false,
             _subscription: subscription,
         }
     }
@@ -49,6 +55,9 @@ impl gpui::Render for AutomixTip {
         window: &mut gpui::Window,
         _: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        if self.stale {
+            return div();
+        }
         let t = &self.transition;
         let live = if t.paused {
             theme::WARN

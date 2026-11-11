@@ -65,14 +65,15 @@ impl Transition {
         let now = a.frame as f32 / a.src_sample_rate.max(1) as f32;
         let until = (plan.t_in_a - now) / a.rate.max(0.01);
         let stage = plan.stage_at_elapsed(snapshot.automix_progress * plan.duration_sec());
-        let active_stage = (until <= 0.)
+        let active_stage = (!snapshot.automix_modified
+            && (snapshot.automix_progress > 0. || until <= 0.))
             .then(|| {
                 stage.and_then(|active| plan.stages.iter().position(|s| std::ptr::eq(s, active)))
             })
             .flatten();
         let mut phase = if snapshot.automix_paused {
             "Paused".into()
-        } else if until > 0. {
+        } else if until > 0. && snapshot.automix_progress == 0. {
             format!("Starts in {}", time(until))
         } else {
             format!("Transition {:.0}%", snapshot.automix_progress * 100.)
@@ -85,29 +86,44 @@ impl Transition {
         // A published technique describes the whole plan. Its incoming deck
         // may still be cued, or playing a silent lead-in with all stems shut.
         // Do not present either state as an exchange already in progress.
-        let closed = |deck: &mixless_protocol::DeckSnapshot| {
-            deck.fader <= 0. || (deck.stems_ready && deck.stem_gain.iter().all(|gain| *gain <= 0.))
+        let closed = |id: DeckId| {
+            let deck = snapshot.deck(id);
+            let x = snapshot.xfader * if snapshot.xf_reverse { -1. } else { 1. };
+            !deck.playing
+                || deck.fader <= 0.001
+                || deck.gain_db <= -90.
+                || (if id == DeckId::A {
+                    x >= 0.999
+                } else {
+                    x <= -0.999
+                })
+                || (deck.stems_ready && deck.stem_gain.iter().all(|gain| *gain <= 0.001))
         };
         let status = if snapshot.automix_paused {
             "Paused".into()
-        } else if until > 0. {
+        } else if snapshot.automix_modified {
+            phase = "Manual controls".into();
+            "Manual".into()
+        } else if until > 0. && snapshot.automix_progress == 0. {
             format!("In {}", time(until))
-        } else if closed(b) {
+        } else if closed(incoming) {
             phase = format!("Waiting for {} entry", label(incoming));
             "Waiting".into()
-        } else if closed(a) {
+        } else if closed(out) {
             phase = "Completing transition".into();
             "Finishing".into()
         } else {
             name.into()
         };
-        let windows = [
-            format!("{}–{}", time(plan.t_in_a), time(plan.t_out_a)),
-            format!("{}–{}", time(plan.t_in_b), time(plan.t_end_b)),
-        ];
+        let windows = (!snapshot.automix_modified)
+            .then(|| plan.mix_windows())
+            .flatten()
+            .map_or(["—".into(), "—".into()], |w| {
+                [w.outgoing, w.incoming].map(|(a, b)| format!("{}–{}", time(a), time(b)))
+            });
         let parameters = [
             format!("{:.1}", b.sounding_bpm),
-            format!("{:+.0}", b.pitch_semitones),
+            format!("{:+.0}", b.sounding_pitch_semitones()),
             format!("{:.0}%", b.fader * 100.),
         ];
         // Planner labels can contain inline separators. Present each stage as
@@ -115,11 +131,15 @@ impl Transition {
         let stages = plan
             .stages
             .iter()
+            .filter(|_| !snapshot.automix_modified)
             .map(|s| s.label.replace(" · ", ", "))
             .collect();
         let echo = (a.send > 0.001 || b.send > 0.001).then(|| {
             format!(
-                "ECHO  {} {:.0}%  /  {} {:.0}%",
+                "{}  {} {:.0}%  /  {} {:.0}%",
+                plan.send_fx
+                    .filter(|_| !snapshot.automix_modified)
+                    .map_or("Send", |fx| fx.kind.label()),
                 label(out),
                 a.send * 100.,
                 label(incoming),
@@ -144,18 +164,31 @@ impl Transition {
 
 impl UiState {
     pub fn transition_window(&self, deck: DeckId) -> Option<(f32, f32)> {
+        if !self.snapshot.automix_on || self.snapshot.automix_modified {
+            return None;
+        }
         let (out, plan) = self.automix_plan.as_ref()?;
         let summary = plan.summary.as_ref()?;
+        let windows = plan.mix_windows()?;
         let (id, window) = if *out == deck {
-            (summary.pair.0, (plan.t_in_a, plan.t_out_a))
+            (summary.pair.0, windows.outgoing)
         } else {
-            (summary.pair.1, (plan.t_in_b, plan.t_end_b))
+            (summary.pair.1, windows.incoming)
         };
         (self.automix_active && self.deck(deck).track_id == Some(id)).then_some(window)
     }
 
     fn transition(&self) -> Option<Transition> {
+        if !self.automix_active || !self.snapshot.automix_on {
+            return None;
+        }
         let (out, plan) = self.automix_plan.as_ref()?;
+        let pair = plan.summary.as_ref()?.pair;
+        if self.snapshot.deck(*out).track_id != Some(pair.0)
+            || self.snapshot.decks[1 - out.index()].track_id != Some(pair.1)
+        {
+            return None;
+        }
         Some(Transition::new(*out, plan, &self.snapshot))
     }
 

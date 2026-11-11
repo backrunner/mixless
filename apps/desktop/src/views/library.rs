@@ -8,10 +8,13 @@ mod menu;
 mod metadata;
 mod packages;
 mod playlist_menu;
+mod sources;
 mod status;
 pub use drag::TrackDrag;
 pub use menu::TrackMenu;
 pub use playlist_menu::PlaylistMenu;
+pub(crate) use sources::{SourceEntry, SourceTree, playlist_sources};
+use sources::{SourceIcon, source_count, source_icon};
 
 use std::path::PathBuf;
 
@@ -39,8 +42,7 @@ const COL_BPM: f32 = 56.;
 const COL_KEY: f32 = 56.;
 const COL_TIME: f32 = 52.;
 const ROW_PAD: f32 = 14.;
-// uniform_list measures a single item, so group labels and sources must share
-// the same compact height to keep scrolling and hit targets aligned.
+// Source headers and rows share the same compact height when fully expanded.
 const SOURCE_ROW_HEIGHT: f32 = 24.;
 const SOURCE_ROW_PAD: f32 = 6.;
 const SOURCE_LIST_PAD: f32 = 4.;
@@ -98,123 +100,6 @@ fn track_cover(track: &Track) -> gpui::AnyElement {
         .w(px(COL_COVER))
         .child(tile)
         .into_any_element()
-}
-
-#[derive(Clone, Copy)]
-enum SourceIcon {
-    Collection,
-    Folder,
-    Playlist,
-}
-
-pub(crate) enum SourceEntry {
-    Group(&'static str, usize),
-    Playlist(usize),
-}
-
-pub(crate) fn playlist_sources(playlists: &[mixless_library::PlaylistSummary]) -> Vec<SourceEntry> {
-    let mut sources = Vec::new();
-    for (title, folders) in [("LOCAL FOLDERS", true), ("PLAYLISTS", false)] {
-        let indices: Vec<_> = playlists
-            .iter()
-            .enumerate()
-            .filter(|(_, playlist)| playlist.folder_path.is_some() == folders)
-            .map(|(index, _)| index)
-            .collect();
-        if !indices.is_empty() {
-            sources.push(SourceEntry::Group(title, indices.len()));
-            sources.extend(indices.into_iter().map(SourceEntry::Playlist));
-        }
-    }
-    sources
-}
-
-fn source_count(count: impl ToString) -> gpui::Div {
-    gpui::div()
-        .flex_none()
-        .w(px(SOURCE_TRAILING_WIDTH))
-        .text_align(gpui::TextAlign::Right)
-        .text_size(px(10.))
-        .line_height(px(16.))
-        .text_color(theme::MUTED)
-        .child(count.to_string())
-}
-
-// Source groups are flat: reserve space for the icon, not an empty tree gutter.
-// Both source types share the same geometry so names and counts stay aligned.
-fn source_row(
-    id: impl Into<gpui::ElementId>,
-    name: impl Into<SharedString>,
-    icon: SourceIcon,
-    count: Option<u32>,
-    selected: bool,
-) -> gpui::Stateful<gpui::Div> {
-    let color = if selected {
-        theme::ACCENT
-    } else {
-        theme::MUTED
-    };
-    gpui::div()
-        .id(id)
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(6.))
-        .w_full()
-        .min_w_0()
-        .h(px(SOURCE_ROW_HEIGHT))
-        .px(px(SOURCE_ROW_PAD))
-        .rounded(px(3.))
-        .cursor_pointer()
-        .text_size(px(11.))
-        .line_height(px(16.))
-        .text_color(theme::TEXT)
-        .when(selected, |el| {
-            el.bg(theme::with_alpha(theme::ACCENT, 0.10)).child(
-                gpui::div()
-                    .absolute()
-                    .left_0()
-                    .top(px((SOURCE_ROW_HEIGHT - 14.) / 2.))
-                    .w(px(2.))
-                    .h(px(14.))
-                    .rounded(px(1.))
-                    .bg(theme::ACCENT),
-            )
-        })
-        .when(!selected, |el| el.hover(|s| s.bg(theme::PANEL_RAISED)))
-        .child(source_icon(icon, color))
-        .child(ellipsized_text(name).flex_1().w_0().min_w_0().h(px(16.)))
-        .when_some(count, |el, count| el.child(source_count(count)))
-}
-
-fn source_icon(icon: SourceIcon, color: gpui::Rgba) -> impl IntoElement {
-    gpui::canvas(
-        |_, _, _| {},
-        move |bounds, _, window, _| {
-            let x = f32::from(bounds.origin.x);
-            let y = f32::from(bounds.origin.y);
-            match icon {
-                SourceIcon::Collection => {
-                    for (dx, dy) in [(1., 1.), (7., 1.), (1., 7.), (7., 7.)] {
-                        crate::controls::quad_fill(window, x + dx, y + dy, 4., 4., color);
-                    }
-                }
-                SourceIcon::Folder => {
-                    crate::controls::quad_fill(window, x + 1., y + 2., 5., 2., color);
-                    crate::controls::quad_fill(window, x + 1., y + 4., 10., 7., color);
-                }
-                SourceIcon::Playlist => {
-                    for dy in [1., 5., 9.] {
-                        crate::controls::quad_fill(window, x + 1., y + dy, 2., 2., color);
-                        crate::controls::quad_fill(window, x + 5., y + dy, 6., 2., color);
-                    }
-                }
-            }
-        },
-    )
-    .flex_none()
-    .size(px(12.))
 }
 
 // Downloader-created folder IDs are not useful playlist titles. Keep the
@@ -277,7 +162,7 @@ pub type LibraryKey = (
     usize,
     usize,
     Option<i64>,
-    Option<i64>,
+    (Option<i64>, Option<crate::automix::QueueEntry>),
     mixless_protocol::DeckId,
     [Option<TrackId>; 2],
     [Option<u32>; 2],
@@ -295,220 +180,35 @@ impl gpui::Render for LibraryView {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let compact = f32::from(window.viewport_size().width) < 1360.;
         self.owner
-            .update(cx, |state, cx| state.render_library(cx, 160., compact))
+            .update(cx, |state, cx| {
+                state.render_library(window, cx, 160., compact)
+            })
             .unwrap_or_else(|_| gpui::div().into_any_element())
     }
 }
 
 impl UiState {
     pub fn render_library(
-        &self,
+        &mut self,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
         height: f32,
         compact: bool,
     ) -> gpui::AnyElement {
-        let state = cx.entity();
-
-        let all_selected = self.playlist_sel.is_none();
-        let all_tracks_row = {
-            let el = source_row(
-                "tree-all",
-                "All Tracks",
-                SourceIcon::Collection,
-                None,
-                all_selected,
-            );
-            let st = state.clone();
-            el.on_click(move |_ev, _window, cx| {
-                st.update(cx, |s, cx| {
-                    s.select_playlist(None);
-                    cx.notify();
-                });
-            })
-        };
-
-        let playlists = self.playlists.clone();
-        let playlist_sel = self.playlist_sel;
-        let playlist_state = cx.entity();
-        let sources = playlist_sources(&playlists);
-        let playlist_list = gpui::uniform_list(
-            "playlist-list",
-            sources.len(),
-            move |range, _window, _cx| {
-                let mut rows = Vec::new();
-                for ix in range {
-                    let index = match sources[ix] {
-                        SourceEntry::Group(title, count) => {
-                            rows.push(
-                                gpui::div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .w_full()
-                                    .h(px(SOURCE_ROW_HEIGHT))
-                                    .px(px(SOURCE_ROW_PAD))
-                                    .text_size(px(9.))
-                                    .line_height(px(14.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(theme::MUTED)
-                                    .child(title)
-                                    .child(source_count(count))
-                                    .into_any_element(),
-                            );
-                            continue;
-                        }
-                        SourceEntry::Playlist(index) => index,
-                    };
-                    let pl = &playlists[index];
-                    let selected = playlist_sel == Some(pl.id);
-                    let display_name = folder_name(pl, &playlists);
-                    let row = source_row(
-                        SharedString::from(format!("pl-{}", pl.id)),
-                        display_name.clone(),
-                        if pl.folder_path.is_some() {
-                            SourceIcon::Folder
-                        } else {
-                            SourceIcon::Playlist
-                        },
-                        Some(pl.tracks),
-                        selected,
-                    );
-                    let tooltip = match &pl.folder_path {
-                        Some(path) => format!("{display_name}\n{path}"),
-                        None => display_name.clone(),
-                    };
-                    let row = row.tooltip(move |_, cx| cx.new(|_| TextTip(tooltip.clone())).into());
-                    let st = playlist_state.clone();
-                    let menu_state = playlist_state.clone();
-                    let id = pl.id;
-                    let menu_name = display_name.to_owned();
-                    rows.push(
-                        row.on_click(move |_ev, _window, cx| {
-                            st.update(cx, |s, cx| {
-                                s.select_playlist(Some(id));
-                                cx.notify();
-                            });
-                        })
-                        .on_mouse_down(MouseButton::Right, move |ev, _, cx| {
-                            cx.stop_propagation();
-                            menu_state.update(cx, |s, cx| {
-                                s.track_menu = None;
-                                s.playlist_menu = Some(PlaylistMenu {
-                                    id,
-                                    name: menu_name.clone(),
-                                    position: ev.position,
-                                });
-                                cx.notify();
-                            });
-                        })
-                        .into_any_element(),
-                    );
-                }
-                rows
-            },
-        )
-        .track_scroll(self.playlist_scroll.clone())
-        .flex_1()
-        .w_full()
-        .min_w_0()
-        .min_h_0();
-
-        let side = gpui::div()
-            .flex()
-            .flex_none()
-            .w(px(166.))
-            .flex_col()
-            .min_h_0()
-            .border_r_1()
-            .border_color(theme::LINE)
-            .bg(gpui::rgb(0x0e0e10))
-            .overflow_hidden()
-            .child(
-                gpui::div()
-                    .id("library-header")
-                    .debug_selector(|| "library-header".into())
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|s, ev: &MouseDownEvent, window, cx| {
-                            s.track_menu = None;
-                            s.playlist_menu = None;
-                            s.deck_menu = None;
-                            s.brand_menu.open = false;
-                            s.audio.open = false;
-                            s.package.menu = Some(ev.position);
-                            s.keyboard_focus.focus(window);
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    )
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_between()
-                    .h(px(30.))
-                    .px(px(SOURCE_LIST_PAD + SOURCE_ROW_PAD))
-                    .border_b_1()
-                    .border_color(theme::LINE)
-                    .text_size(px(10.))
-                    .text_color(theme::MUTED)
-                    .child("LIBRARY")
-                    .child(
-                        gpui::div()
-                            .id("library-import")
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .justify_center()
-                            .px(px(SOURCE_IMPORT_PAD))
-                            // Extend the hover background equally around the aligned glyph.
-                            .mr(px(-SOURCE_IMPORT_PAD))
-                            .h(px(18.))
-                            .rounded(px(3.))
-                            .cursor_pointer()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .hover(|s| s.bg(theme::PANEL_RAISED).text_color(theme::TEXT))
-                            .child("+")
-                            .tooltip(|_, cx| cx.new(|_| TextTip("Import music".into())).into())
-                            .on_click(cx.listener(|s, _, _, cx| {
-                                s.package.export_open = false;
-                                s.package.menu = None;
-                                s.show_import_modal = true;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                gpui::div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .w_full()
-                    .min_w_0()
-                    .min_h_0()
-                    .px(px(SOURCE_LIST_PAD))
-                    .py(px(2.))
-                    .child(all_tracks_row)
-                    .when(self.playlists.is_empty(), |el| {
-                        el.child(
-                            gpui::div()
-                                .px(px(SOURCE_ROW_PAD))
-                                .py(px(4.))
-                                .text_size(px(11.))
-                                .text_color(theme::MUTED)
-                                .child("No playlists yet"),
-                        )
-                    })
-                    .child(playlist_list),
-            );
+        let side = self.render_sources(window, cx);
 
         let shown = self.shown_tracks();
         let analysis_statuses = self.core.analysis.statuses();
         let stem_statuses = self.core.analysis.stem_statuses();
         let loaded_tracks = self.snapshot.decks.each_ref().map(|d| d.track_id);
+        let active_rows = self
+            .queue_active_rows(&shown)
+            .zip(self.automix_queue.outgoing);
         let playheads =
             crate::wave::preview::positions(&self.snapshot.decks, self.presentation_frames);
         let track_sel = self.track_sel;
+        let selected_entry = self.track_sel_entry;
+        let shown_entries = self.shown_entries(&shown);
         let focus_deck = self.focus;
         let menu_playlist = self.playlist_sel;
         let track_state = cx.entity();
@@ -605,7 +305,11 @@ impl UiState {
                             }
                         };
                         let t = &shown[ix];
-                        let selected = track_sel == Some(t.id.0);
+                        let entry = shown_entries[ix];
+                        let selected = track_sel == Some(t.id.0)
+                            && selected_entry
+                                .filter(|e| Some(e.track.0) == track_sel)
+                                .is_none_or(|e| e == entry);
                         let key = t.camelot.clone().or_else(|| t.key.clone());
                         let key_color =
                             key.as_deref().map(theme::key_color).unwrap_or(theme::MUTED);
@@ -623,7 +327,10 @@ impl UiState {
                         let dur = fmt_duration(t.duration_ms as u64);
 
                         let row = gpui::div()
-                            .id(SharedString::from(format!("track-{}", t.id.0)))
+                            .id(SharedString::from(format!(
+                                "track-{}-{}",
+                                t.id.0, entry.occurrence
+                            )))
                             .debug_selector({
                                 let id = t.id.0;
                                 move || format!("track-row-{id}")
@@ -652,7 +359,16 @@ impl UiState {
                                         loaded_tracks
                                             .iter()
                                             .enumerate()
-                                            .filter(|(_, id)| **id == Some(t.id))
+                                            .filter(|(deck, id)| {
+                                                **id == Some(t.id)
+                                                    && active_rows.is_none_or(|((a, b), out)| {
+                                                        ix == if *deck == out.index() {
+                                                            a
+                                                        } else {
+                                                            b
+                                                        }
+                                                    })
+                                            })
                                             .map(|(i, _)| {
                                                 gpui::div()
                                                     .flex()
@@ -686,9 +402,12 @@ impl UiState {
                                 &preview_core,
                                 mix_overlays.get(ix).copied().unwrap_or_default(),
                                 std::array::from_fn(|i| {
-                                    (loaded_tracks[i] == Some(t.id))
-                                        .then_some(playheads[i])
-                                        .flatten()
+                                    (loaded_tracks[i] == Some(t.id)
+                                        && active_rows.is_none_or(|((a, b), out)| {
+                                            ix == if i == out.index() { a } else { b }
+                                        }))
+                                    .then_some(playheads[i])
+                                    .flatten()
                                 }),
                             ))
                             .child(metadata::cell(
@@ -769,6 +488,7 @@ impl UiState {
                                 cx.stop_propagation();
                                 menu_state.update(cx, |s, cx| {
                                     s.track_sel = Some(track_id.0);
+                                    s.track_sel_entry = Some(entry);
                                     s.track_menu = Some(TrackMenu {
                                         track: track_id,
                                         playlist: menu_playlist,
@@ -794,6 +514,7 @@ impl UiState {
                                 move |ev: &MouseDownEvent, _window, cx| {
                                     st.update(cx, |s, cx| {
                                         s.track_sel = Some(track_id.0);
+                                        s.track_sel_entry = Some(entry);
                                         if ev.click_count >= 2 {
                                             s.load_deck(focus_deck, track_id);
                                         }

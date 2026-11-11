@@ -7,14 +7,56 @@ pub(super) struct OrderingJob {
     playlist: Vec<TrackId>,
     done: AtomicUsize,
     total: AtomicUsize,
+    lookup_done: AtomicBool,
+}
+
+struct WorkerGuard {
+    core: Arc<AppCore>,
+    job: Arc<OrderingJob>,
+}
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        let mut arranging = self
+            .core
+            .mix_preparation
+            .arranging
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if arranging
+            .as_ref()
+            .is_some_and(|job| Arc::ptr_eq(job, &self.job))
+        {
+            *arranging = None;
+            self.core
+                .mix_preparation
+                .defaulting
+                .store(false, Ordering::Release);
+            self.core
+                .mix_preparation
+                .sequence
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .queue
+                .error =
+                Some("Best order could not be calculated. Select Best order to retry.".into());
+            self.core
+                .mix_preparation
+                .preview_revision
+                .fetch_add(1, Ordering::Release);
+        }
+    }
 }
 
 impl OrderingJob {
-    fn new(playlist: Vec<TrackId>) -> Self {
+    pub(super) fn new(playlist: Vec<TrackId>) -> Self {
         Self {
             playlist,
             done: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
+            lookup_done: AtomicBool::new(false),
         }
     }
     fn report(&self, done: usize, total: usize) {
@@ -40,78 +82,7 @@ impl Preparation {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn completed_orders_are_reused_after_switching_playlists_and_clearing_memory() {
-        let (_dir, core, tracks) = super::super::super::tests::fixture();
-        let prepared: Vec<_> = tracks
-            .iter()
-            .map(|id| crate::analysis::prepare(&core, *id).unwrap())
-            .collect();
-        let options = mixless_mixplan::PlannerOptions {
-            harmonic_key_shift: true,
-            live_moves: core.settings.get().live_moves,
-            ..Default::default()
-        };
-        let key = super::super::order_cache::key(&prepared, &options).unwrap();
-        // A recognizable persisted permutation proves the worker takes the hit
-        // instead of running the optimizer and producing its own answer.
-        core.library.save_best_order(&key, &[2, 0, 1]).unwrap();
-        core.mix_preparation.best.store(true, Ordering::Release);
-        let expected = vec![tracks[2], tracks[0], tracks[1]];
-        let wait = || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while core.mix_preparation.arranging.lock().unwrap().is_some() {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "ordering did not finish"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-        };
-        for input in [
-            tracks.clone(),
-            vec![tracks[1], tracks[2], tracks[0]],
-            tracks.clone(),
-        ] {
-            *core.mix_preparation.arranged.lock().unwrap() = None;
-            arrange(&core, input.clone());
-            wait();
-            assert!(order_ready(&core, &input));
-            if input == tracks {
-                assert_eq!(arranged(&core, &tracks), Some(expected.clone()));
-            }
-        }
-        core.analysis
-            .content_revision
-            .fetch_add(1, Ordering::Release);
-        let cached = core.mix_preparation.arranged.lock().unwrap();
-        assert!(cached.as_ref().unwrap().stamp != Some(Stamp::current(&core)));
-    }
-
-    #[test]
-    fn progress_is_monotonic_and_belongs_to_its_playlist_job() {
-        let preparation = Preparation::default();
-        let playlist = vec![TrackId(1), TrackId(2), TrackId(3)];
-        let job = Arc::new(OrderingJob::new(playlist.clone()));
-        *preparation.arranging.lock().unwrap() = Some(job.clone());
-        assert_eq!(preparation.order_progress(&playlist), None);
-        job.report(40, 100);
-        job.report(20, 100);
-        assert_eq!(preparation.order_progress(&playlist), Some(0.4));
-        assert_eq!(preparation.order_progress(&[TrackId(4)]), None);
-        let replacement = Arc::new(OrderingJob::new(playlist.clone()));
-        *preparation.arranging.lock().unwrap() = Some(replacement.clone());
-        job.report(100, 100);
-        assert_eq!(preparation.order_progress(&playlist), None);
-        replacement.report(10, 100);
-        assert_eq!(preparation.order_progress(&playlist), Some(0.1));
-        *preparation.arranging.lock().unwrap() = None;
-        assert_eq!(preparation.order_progress(&playlist), None);
-    }
-}
+mod tests;
 
 /// The best order when it is known for this playlist; otherwise the playlist
 /// itself while a worker measures it and republishes the set when done.
@@ -123,18 +94,21 @@ pub(super) fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackI
         if arranging
             .as_ref()
             .is_some_and(|job| job.playlist != playlist)
-            || !core.mix_preparation.best()
+            || (!core.mix_preparation.best()
+                && !core.mix_preparation.warming.load(Ordering::Acquire))
             || playlist.len() < 3
         {
             *arranging = None;
         }
     }
-    if !core.mix_preparation.best() || playlist.len() < 3 {
+    if (!core.mix_preparation.best() && !core.mix_preparation.warming.load(Ordering::Acquire))
+        || playlist.len() < 3
+    {
         return playlist;
     }
     // An order measured while tracks were still being analysed is used
     // until the set is ready, then measured again.
-    let mut shown = playlist.clone();
+    let shown = playlist.clone();
     if let Some(cached) = core
         .mix_preparation
         .arranged
@@ -143,12 +117,22 @@ pub(super) fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackI
         .as_ref()
         && cached.input == playlist
     {
-        if cached.stamp == Some(Stamp::current(core))
-            || crate::analysis::needs_work(core, &playlist)
-        {
-            return cached.order.clone();
+        if cached.stamp == Some(Stamp::current(core)) {
+            if cached.stamp == Some(Stamp::current(core))
+                && core
+                    .mix_preparation
+                    .defaulting
+                    .swap(false, Ordering::AcqRel)
+            {
+                core.mix_preparation.best.store(true, Ordering::Release);
+                core.mix_preparation.best_ready();
+            }
+            return if core.mix_preparation.best() {
+                cached.order.clone()
+            } else {
+                playlist
+            };
         }
-        shown = cached.order.clone();
     }
     let job = {
         let mut arranging = core.mix_preparation.arranging.lock().expect("arranging");
@@ -166,6 +150,11 @@ pub(super) fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackI
     let input = playlist.clone();
     std::thread::spawn(move || {
         let Some(core) = weak.upgrade() else { return };
+        let _guard = WorkerGuard {
+            core: core.clone(),
+            job: job.clone(),
+        };
+        background_priority();
         let mut stamp = Stamp::current(&core);
         let mut prepared: Vec<_> = Vec::new();
         // Warming the analysis cache changes readiness. Re-read a stable
@@ -201,6 +190,34 @@ pub(super) fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackI
                 && !crate::analysis::needs_work(&core, &input)
                 && stamp == Stamp::current(&core)
         };
+        // Do not spend CPU optimizing an unfinished snapshot that will change
+        // again when analysis completes. Preparation will retry with that data.
+        if !stable() {
+            let mut arranging = core.mix_preparation.arranging.lock().expect("arranging");
+            if arranging
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &job))
+            {
+                *arranging = None;
+                if known.len() != input.len() && !crate::analysis::needs_work(&core, &input) {
+                    core.mix_preparation
+                        .sequence
+                        .lock()
+                        .expect("set plan")
+                        .queue
+                        .error = Some(
+                        "Best order needs playable tracks. Select Best order to retry.".into(),
+                    );
+                    core.mix_preparation
+                        .defaulting
+                        .store(false, Ordering::Release);
+                    core.mix_preparation
+                        .preview_revision
+                        .fetch_add(1, Ordering::Release);
+                }
+            }
+            return;
+        }
         let cache_key = stable()
             .then(|| {
                 let tracks: Vec<_> = prepared.iter().flatten().cloned().collect();
@@ -216,16 +233,70 @@ pub(super) fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackI
                 })
         });
         let hit = cached.is_some();
-        let indices = cached.unwrap_or_else(|| {
-            mixless_mixplan::order::best_cycle_with_progress(&analyses, &options, |done, total| {
-                job.report(done, total)
+        if !hit {
+            // Release automatic startup before doing any expensive search.
+            let arranging = core.mix_preparation.arranging.lock().expect("arranging");
+            if !arranging
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &job))
+            {
+                return;
+            }
+            core.mix_preparation
+                .defaulting
+                .store(false, Ordering::Release);
+            job.lookup_done.store(true, Ordering::Release);
+        }
+        let pairs = (!hit)
+            .then(|| {
+                let tracks: Vec<_> = prepared.iter().flatten().cloned().collect();
+                super::pair_cache::Pairs::load(&core.library, &tracks, &options)
             })
-            .into_iter()
-            .map(|k| known[k])
-            .chain((0..input.len()).filter(|&i| prepared[i].is_none()))
-            .collect()
-        });
+            .flatten();
+        let indices = if let Some(cached) = cached {
+            cached
+        } else {
+            let active = || {
+                !core.shutting_down.load(Ordering::Acquire)
+                    && stamp == Stamp::current(&core)
+                    && core
+                        .mix_preparation
+                        .arranging
+                        .lock()
+                        .expect("arranging")
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &job))
+            };
+            #[cfg(debug_assertions)]
+            crate::queue_preview::wait_for_best(active);
+            let Some(order) = mixless_mixplan::order::best_cycle_while_cached(
+                &analyses,
+                &options,
+                |done, total| job.report(done, total),
+                active,
+                pairs
+                    .as_ref()
+                    .map(|pairs| pairs as &dyn mixless_mixplan::order::PairCostCache),
+            ) else {
+                let mut arranging = core.mix_preparation.arranging.lock().expect("arranging");
+                if arranging
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &job))
+                {
+                    *arranging = None;
+                }
+                return;
+            };
+            order
+                .into_iter()
+                .map(|k| known[k])
+                .chain((0..input.len()).filter(|&i| prepared[i].is_none()))
+                .collect()
+        };
         let complete = stable();
+        if complete && let Some(pairs) = pairs {
+            pairs.save(&core.library);
+        }
         if complete && let Some(key) = cache_key.as_deref() {
             if !hit && let Err(error) = core.library.save_best_order(key, &indices) {
                 tracing::warn!(%error, "Best order cache write failed");
@@ -233,32 +304,75 @@ pub(super) fn arrange(core: &Arc<AppCore>, playlist: Vec<TrackId>) -> Vec<TrackI
             tracing::debug!(hit, tracks = input.len(), "Best order cache");
         }
         let arranged: Vec<_> = indices.iter().map(|&i| input[i]).collect();
-        let mut arranging = core.mix_preparation.arranging.lock().expect("arranging");
-        if !arranging
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &job))
-        {
-            return;
-        }
-        *core.mix_preparation.arranged.lock().expect("arranged") = Some(Arranged {
-            input: input.clone(),
-            order: arranged.clone(),
-            stamp: complete.then_some(stamp),
-        });
-        *arranging = None;
-        drop(arranging);
-        // Hold selection through publication so a late worker cannot switch
-        // back to the playlist the user just left.
-        let selected = core
-            .mix_preparation
-            .selected
-            .lock()
-            .expect("selected playlist");
-        if core.mix_preparation.best() && *selected == input {
-            prepare(&core, arranged, false, true);
-        }
+        publish_order(&core, &job, arranged, complete.then_some(stamp), hit);
     });
     shown
+}
+
+/// Cache a completed search, applying it only to the still-selected Best mode.
+/// Selection stays locked through publication, including the mode check.
+pub(super) fn publish_order(
+    core: &Arc<AppCore>,
+    job: &Arc<OrderingJob>,
+    order: Vec<TrackId>,
+    stamp: Option<Stamp>,
+    hit: bool,
+) -> bool {
+    let selected = core
+        .mix_preparation
+        .selected
+        .lock()
+        .expect("selected playlist");
+    let mut arranging = core.mix_preparation.arranging.lock().expect("arranging");
+    if !arranging
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, job))
+    {
+        return false;
+    }
+    *core.mix_preparation.arranged.lock().expect("arranged") = Some(Arranged {
+        input: job.playlist.clone(),
+        order: order.clone(),
+        stamp,
+    });
+    let is_selected = *selected == job.playlist;
+    if is_selected
+        && stamp.is_some()
+        && hit
+        && core.mix_preparation.defaulting.load(Ordering::Acquire)
+    {
+        core.mix_preparation.best.store(true, Ordering::Release);
+        core.mix_preparation.best_ready();
+    }
+    job.lookup_done.store(true, Ordering::Release);
+    *arranging = None;
+    drop(arranging);
+    if is_selected && stamp == Some(Stamp::current(core)) && core.mix_preparation.best() {
+        core.mix_preparation.best_ready();
+        prepare(core, order, true, true);
+    }
+    if is_selected && stamp.is_some() && hit {
+        // Publish the prepared queue before releasing a default cache hit.
+        core.mix_preparation
+            .defaulting
+            .store(false, Ordering::Release);
+    }
+    true
+}
+
+fn background_priority() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn pthread_set_qos_class_self_np(class: u32, relative_priority: i32) -> i32;
+        }
+        // SAFETY: QOS_CLASS_UTILITY (Darwin sys/qos.h) and zero relative
+        // priority are valid. This affects only this background thread.
+        let result = unsafe { pthread_set_qos_class_self_np(0x11, 0) };
+        if result != 0 {
+            tracing::warn!(result, "Best order background priority unavailable");
+        }
+    }
 }
 
 /// The set in the order AUTO plays it, when that differs from the playlist.
@@ -271,30 +385,29 @@ pub fn arranged(core: &AppCore, playlist: &[TrackId]) -> Option<Vec<TrackId>> {
         .lock()
         .expect("arranged")
         .as_ref()
-        .filter(|cached| cached.input == playlist)
+        .filter(|cached| cached.input == playlist && cached.stamp == Some(Stamp::current(core)))
         .map(|cached| cached.order.clone())
 }
 
-/// Whether AUTO may start playing: BEST is off, or its order for this
-/// playlist has been measured on the finished analyses. Starts measuring
-/// when nothing is doing so yet.
+/// Startup only waits for a default cache lookup. A cache miss releases AUTO
+/// immediately in playlist order while the optimizer continues in the background.
 pub fn order_ready(core: &Arc<AppCore>, playlist: &[TrackId]) -> bool {
-    if !core.mix_preparation.best() || playlist.len() < 3 {
+    if !core.mix_preparation.defaulting.load(Ordering::Acquire) || playlist.len() < 3 {
         return true;
     }
-    let ready = matches!(
-        core.mix_preparation.arranged.lock().expect("arranged").as_ref(),
-        Some(cached) if cached.input == playlist && cached.stamp == Some(Stamp::current(core))
-    );
-    let measuring = core
+    let lookup_done = core
         .mix_preparation
         .arranging
         .lock()
         .expect("arranging")
         .as_ref()
-        .is_some_and(|job| job.playlist == playlist);
-    if !ready && !measuring {
-        prepare_playlist(core, playlist.to_vec());
+        .is_some_and(|job| job.playlist == playlist && job.lookup_done.load(Ordering::Acquire));
+    if lookup_done {
+        core.mix_preparation
+            .defaulting
+            .store(false, Ordering::Release);
+        return true;
     }
-    ready
+    prepare_playlist(core, playlist.to_vec());
+    !core.mix_preparation.defaulting.load(Ordering::Acquire)
 }

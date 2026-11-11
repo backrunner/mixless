@@ -85,7 +85,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if !self.master_chain.is_valid() {
             return Err("Invalid master processor parameters.".into());
         }

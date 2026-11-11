@@ -13,7 +13,7 @@ pub(super) fn stage(
     played_from: f32,
     order: &mut order::TrackOrder,
     count: usize,
-    shuffle: &AtomicBool,
+    shuffle: bool,
     active: impl Fn() -> bool,
     tx: &Sender<AutomixMsg>,
 ) -> Result<Option<Next>, String> {
@@ -31,7 +31,7 @@ pub(super) fn stage(
         if !active() {
             return Ok(None);
         }
-        let id = order.next(shuffle.load(Ordering::Relaxed));
+        let id = order.next(shuffle);
         let title = core
             .library
             .get_track(id)
@@ -43,6 +43,7 @@ pub(super) fn stage(
             if !active() {
                 return Ok(None);
             }
+            let _ = tx.send(AutomixMsg::Planning(title.clone()));
             let b = crate::analysis::prepare(core, id)?;
             let d = core.engine.snapshot().deck(outgoing).clone();
             if !d.playing && d.frame >= d.frames.saturating_sub(1) {
@@ -67,7 +68,7 @@ pub(super) fn stage(
                 })?;
             }
             let mut lookahead = order.clone();
-            let following = lookahead.next(shuffle.load(Ordering::Relaxed));
+            let following = lookahead.next(shuffle);
             let transition = prepare_and_publish(core, outgoing, &active, || {
                 let snap = core.engine.snapshot();
                 let d = snap.deck(outgoing);
@@ -174,6 +175,45 @@ pub(super) fn prepare_and_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loaded_deck_reports_planning_before_a_delayed_plan_and_then_completes() {
+        let (_dir, core, tracks) = super::super::tests::fixture();
+        load(&core, DeckId::A, tracks[0], || true).unwrap();
+        command(&core, Command::PlayPause { deck: DeckId::A }).unwrap();
+        let mut order = order::TrackOrder::new(tracks.clone(), Some(tracks[0]), 1);
+        // Block planning after decode/publication to reproduce a loaded deck
+        // waiting for its transition, independently of machine speed.
+        let planning = core.mix_preparation.plans.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_core = core.clone();
+        let worker = std::thread::spawn(move || {
+            stage(
+                &worker_core,
+                DeckId::A,
+                0.,
+                &mut order,
+                3,
+                false,
+                || true,
+                &tx,
+            )
+        });
+        let loading = rx.recv_timeout(Duration::from_secs(10));
+        let planned = rx.recv_timeout(Duration::from_secs(10));
+        let loaded = core.engine.snapshot();
+        drop(planning);
+        let next = worker.join().unwrap().unwrap().unwrap();
+        assert!(matches!(loading, Ok(AutomixMsg::Preparing(_))));
+        assert!(matches!(planned, Ok(AutomixMsg::Planning(_))));
+        assert_eq!(loaded.decks[1].track_id, Some(tracks[1]));
+        assert!(!loaded.automix_on);
+        assert!(next.transition.is_some());
+        // Include the callback after outgoing EOF for boundary handoffs.
+        core.engine.render_offline(10 * 48_000);
+        assert_eq!(core.engine.snapshot().automix_progress, 1.);
+        assert!(core.engine.snapshot().decks[1].playing);
+    }
 
     #[test]
     fn missed_publication_replans_the_same_pair_and_completes() {

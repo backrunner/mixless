@@ -9,7 +9,9 @@ use crate::theme;
 mod automix;
 mod master;
 mod menu;
+mod order_menu;
 pub(crate) use menu::BrandMenu;
+pub(crate) use order_menu::OrderMenu;
 
 fn divider() -> gpui::Div {
     gpui::div()

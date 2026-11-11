@@ -25,6 +25,7 @@ pub use transport::TransportButton;
 pub use unloading::{DeckUnloadTarget, UnloadBlock};
 mod library_actions;
 mod library_order;
+#[cfg(test)]
 mod library_recovery;
 mod library_refresh;
 mod update;
@@ -46,6 +47,7 @@ use mixless_protocol::{
 use mixless_spotify::SpotifyClient;
 
 pub struct AppCore {
+    pub(crate) _data_session: Option<crate::downgrade::Session>,
     pub analysis: crate::analysis::AnalysisJobs,
     pub mix_preparation: crate::automix::Preparation,
     pub automix_commit: Mutex<()>,
@@ -66,7 +68,7 @@ pub struct AppCore {
     pub midi: Mutex<Option<Arc<mixless_controllers::MidiHub>>>,
     /// Serializes background loads so a cancelled worker cannot overwrite a manual load.
     pub deck_load: Mutex<()>,
-    /// Set when a newer build's library had to be set aside; shown once at launch.
+    /// A startup notice shown once at launch.
     pub library_notice: Option<String>,
     /// Self-update worker status; `poll_update` turns it into a banner.
     pub update: crate::update::Shared,
@@ -120,40 +122,19 @@ enum ImportRequest {
     SpotifySync(i64, String),
 }
 
+#[cfg(debug_assertions)]
 pub fn app_core() -> Arc<AppCore> {
-    // Same data dir as the previous Tauri build, so libraries carry over.
-    let data_dir = std::env::var_os("MIXLESS_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("app.mixless.desktop")
-        });
+    app_core_with_session(crate::downgrade::prepare_or_exit())
+}
+
+pub(crate) fn app_core_with_session(session: crate::downgrade::Session) -> Arc<AppCore> {
+    let data_dir = session.data_dir.clone();
     std::fs::create_dir_all(&data_dir).ok();
     let acquired_dir = data_dir.join("acquired");
     std::fs::create_dir_all(&acquired_dir).ok();
 
     let db_path = data_dir.join("library.db");
-    let (library, library_notice) = match mixless_library::Library::open(&db_path) {
-        Ok(library) => (library, None),
-        Err(error @ mixless_library::LibraryError::NewerSchema { .. }) => {
-            // A downgrade met a schema this build cannot read. Set the file
-            // aside and open a fresh library instead of crash-looping;
-            // re-adding folders re-imports the tracks.
-            tracing::warn!(%error, "library schema is newer; setting it aside");
-            let backup = library_recovery::quarantine(&db_path)
-                .unwrap_or_else(|e| panic!("cannot preserve incompatible library: {e}"));
-            let notice = format!(
-                "Your library was written by a newer version of mixless. A fresh library was opened; \
-                 the previous database and its journals are preserved in {}. Reinstall the newer \
-                 version and restore these files to recover it.",
-                display_dir(&backup)
-            );
-            let library = mixless_library::Library::open(&db_path).expect("open library");
-            (library, Some(notice))
-        }
-        Err(error) => panic!("open library: {error}"),
-    };
+    let library = mixless_library::Library::open(&db_path).expect("open checked library");
     let settings = crate::settings::SettingsStore::load(data_dir.join("preferences.json"));
     let initial = settings.get();
     let engine = mixless_engine::Engine::new_with_audio(
@@ -179,6 +160,7 @@ pub fn app_core() -> Arc<AppCore> {
         mixless_controllers::MidiHub::start_with_config(data_dir.join("midi.json"), initial.midi);
     let midi_error = midi.as_ref().err().map(ToString::to_string);
     let core = Arc::new(AppCore {
+        _data_session: Some(session),
         analysis: crate::analysis::AnalysisJobs::default(),
         mix_preparation: Default::default(),
         automix_commit: Mutex::new(()),
@@ -209,7 +191,7 @@ pub fn app_core() -> Arc<AppCore> {
         settings_apply: Mutex::new(()),
         midi: Mutex::new(midi.ok().map(Arc::new)),
         deck_load: Mutex::new(()),
-        library_notice,
+        library_notice: None,
         update: Mutex::new(None),
     });
     core.attach_controller_runtime();
@@ -353,7 +335,8 @@ pub struct UiState {
     library_refresh: library_refresh::LibraryRefresh,
     library_order: library_order::LibraryOrder,
     pub track_scroll: gpui::UniformListScrollHandle,
-    pub playlist_scroll: gpui::UniformListScrollHandle,
+    pub playlist_scroll: gpui::ListState,
+    pub source_tree: crate::views::library::SourceTree,
     midi_track_cursor: Option<(usize, TrackId)>,
     pub track_scroll_active: std::rc::Rc<std::cell::Cell<bool>>,
     settings_revision: u64,
@@ -364,11 +347,13 @@ pub struct UiState {
     pub playlists: Arc<Vec<mixless_library::PlaylistSummary>>,
     pub playlist_sel: Option<i64>,
     pub track_sel: Option<i64>,
+    pub track_sel_entry: Option<crate::automix::QueueEntry>,
     pub track_menu: Option<crate::views::library::TrackMenu>,
     pub playlist_menu: Option<crate::views::library::PlaylistMenu>,
     pub deck_menu: Option<crate::views::deck::DeckMenu>,
     pub(crate) popup_motion: crate::root::overlays::Popups,
     pub(crate) brand_menu: crate::views::topbar::BrandMenu,
+    pub(crate) order_menu: crate::views::topbar::OrderMenu,
     /// `(playlist id, display name)` awaiting removal confirmation.
     pub confirm_remove_playlist: Option<(i64, String)>,
     library_actions: Vec<Receiver<Result<TrackId, String>>>,
@@ -433,11 +418,14 @@ pub struct UiState {
     pub automix_active: bool,
     /// Running source, independent of the browsed playlist. None is All tracks.
     automix_playlist: Option<i64>,
-    automix_tracks: Vec<TrackId>,
+    pub(crate) automix_tracks: Vec<TrackId>,
+    automix_order_selection: automix::OrderSelection,
+    pub(crate) automix_queue: crate::automix::QueueView,
     /// The list as AUTO plays it in BEST order: (source list, order, rows).
     best_rows: std::cell::RefCell<Option<(Arc<Vec<Track>>, Vec<TrackId>, Arc<Vec<Track>>)>>,
     pub automix_shuffle: Arc<std::sync::atomic::AtomicBool>,
     pub automix_status: String,
+    automix_order_status: Option<String>,
     pub automix_loading: bool,
     pub automix_preparation_progress: Option<f32>,
     automix_preview_revision: u64,
@@ -445,7 +433,7 @@ pub struct UiState {
     automix_epoch: Arc<AtomicU64>,
     automix_rx: Option<Receiver<crate::automix::AutomixMsg>>,
     automix_retry: Option<std::time::Instant>,
-    /// AUTO's start is waiting for the best order to be measured.
+    /// AUTO's start is waiting for analysis or its initial order cache lookup.
     automix_waiting: bool,
 }
 
@@ -469,7 +457,8 @@ impl UiState {
             library_key: None,
             library_order: library_order::LibraryOrder::default(),
             track_scroll: gpui::UniformListScrollHandle::new(),
-            playlist_scroll: gpui::UniformListScrollHandle::new(),
+            playlist_scroll: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(48.)),
+            source_tree: Default::default(),
             midi_track_cursor: None,
             track_scroll_active: Default::default(),
             library_previews: Default::default(),
@@ -482,10 +471,12 @@ impl UiState {
             playlists: Arc::new(Vec::new()),
             playlist_sel: core.settings.get().last_playlist,
             track_sel: None,
+            track_sel_entry: None,
             track_menu: None,
             playlist_menu: None,
             deck_menu: None,
             brand_menu: Default::default(),
+            order_menu: Default::default(),
             popup_motion: Default::default(),
             confirm_remove_playlist: None,
             library_actions: Vec::new(),
@@ -549,9 +540,12 @@ impl UiState {
             automix_active: false,
             automix_playlist: None,
             automix_tracks: Vec::new(),
+            automix_order_selection: Default::default(),
+            automix_queue: Default::default(),
             best_rows: Default::default(),
             automix_shuffle: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             automix_status: String::new(),
+            automix_order_status: None,
             automix_loading: false,
             automix_preparation_progress: None,
             automix_preview_revision: 0,

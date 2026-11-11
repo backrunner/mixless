@@ -5,9 +5,11 @@ use std::sync::mpsc::{Receiver, channel};
 const REPLACE_LEAD: f32 = 2.;
 
 pub(super) struct Update {
+    pub intent: preparation::Intent,
     revision: u64,
     tracks: Vec<TrackId>,
     pub order: order::TrackOrder,
+    #[cfg(test)]
     candidate: TrackId,
     prepared: Option<(
         crate::analysis::ReadyLoad,
@@ -262,9 +264,11 @@ impl Watch {
         outgoing: DeckId,
         entry: f32,
         order: &order::TrackOrder,
-        shuffle: bool,
+        _shuffle: bool,
     ) -> Option<Update> {
-        let revision = core.mix_preparation.revision();
+        let (tracks, queue_intent) = core.mix_preparation.queue_input();
+        let shuffle = queue_intent.mode == OrderMode::Shuffle;
+        let revision = queue_intent.revision;
         if revision != self.seen {
             // Obsolete preparation must not delay a new queue intent. Its
             // worker checks revision before each expensive dependent step.
@@ -288,7 +292,6 @@ impl Watch {
             return None;
         }
         self.seen = revision;
-        let tracks = core.mix_preparation.tracks();
         if tracks.is_empty() {
             return None;
         }
@@ -296,13 +299,14 @@ impl Watch {
         let a = snapshot.deck(outgoing);
         let Some(id) = a.track_id else { return None };
         let mut proposal = order.clone();
-        let candidate = if order.matches(&tracks) && !order.has_deferred() {
-            // Evidence completion must not draw a fresh random successor.
-            snapshot.decks[1 - outgoing.index()].track_id?
-        } else {
-            proposal.rebase(tracks.clone(), id);
-            proposal.next(shuffle)
-        };
+        let candidate =
+            if order.matches(&tracks) && order.shuffled() == shuffle && !order.has_deferred() {
+                // Evidence completion must not draw a fresh random successor.
+                snapshot.decks[1 - outgoing.index()].track_id?
+            } else {
+                proposal.rebase(tracks.clone(), id);
+                proposal.next(shuffle)
+            };
         let following = proposal.preview(1, shuffle)[0];
         let core = core.clone();
         let sources = [DeckId::A, DeckId::B].map(|d| core.engine.deck_load_revision(d));
@@ -312,9 +316,11 @@ impl Watch {
         // Record the new candidate's next-slot priority immediately, even if
         // decode finishes only after this handoff and this Watch is dropped.
         let intent = Update {
+            intent: queue_intent,
             revision,
             tracks: tracks.clone(),
             order: proposal.clone(),
+            #[cfg(test)]
             candidate,
             prepared: None,
             sources,
@@ -368,9 +374,11 @@ impl Watch {
                 Some((ready, a, plan, dense))
             })();
             let _ = tx.send(Some(Update {
+                intent: queue_intent,
                 revision,
                 tracks,
                 order: proposal,
+                #[cfg(test)]
                 candidate,
                 prepared,
                 sources,
@@ -382,6 +390,7 @@ impl Watch {
 }
 
 impl Update {
+    #[cfg(test)]
     pub fn incoming(&self) -> TrackId {
         self.candidate
     }
@@ -394,7 +403,9 @@ impl Update {
 
     pub fn defer(&self, order: &mut order::TrackOrder) {
         order.replace(self.tracks.clone());
-        order.defer(self.incoming());
+        if let Some(entry) = self.order.current_entry() {
+            order.defer(entry);
+        }
     }
 
     pub fn publish(

@@ -2,6 +2,8 @@ use super::*;
 use std::sync::{Mutex, mpsc::channel};
 use std::time::Instant;
 
+pub(crate) use super::preparation::{best_order_key, cache_best_order};
+
 pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
     let dir = tempfile::tempdir().unwrap();
     let library = mixless_library::Library::open(&dir.path().join("library.db")).unwrap();
@@ -12,6 +14,7 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
     })
     .unwrap();
     let core = Arc::new(AppCore {
+        _data_session: None,
         analysis: Default::default(),
         mix_preparation: Default::default(),
         automix_commit: Mutex::new(()),

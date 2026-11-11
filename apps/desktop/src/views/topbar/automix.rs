@@ -34,24 +34,11 @@ fn button(id: &'static str, active: bool, enabled: bool) -> Stateful<gpui::Div> 
 
 impl UiState {
     pub(super) fn render_automix_controls(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
-        let shuffle = self
-            .automix_shuffle
-            .load(std::sync::atomic::Ordering::Acquire);
-        let best = self.core.mix_preparation.best();
-        let label = if shuffle {
-            "SHUFFLE"
-        } else if best {
-            "BEST"
-        } else {
-            "ORDER"
-        };
-        let tip = if shuffle {
-            "Shuffle. Switch to best order"
-        } else if best {
-            "Best order, repeat. Switch to playlist order"
-        } else {
-            "Playlist order, repeat. Switch to shuffle"
-        };
+        let mode = self.order_button_mode();
+        let shuffle = mode == crate::automix::OrderMode::Shuffle;
+        let best = mode == crate::automix::OrderMode::Best;
+        let label = mode.label();
+        let tip = "Choose playback order";
         let paused = self.snapshot.automix_paused;
         let enabled = self.snapshot.automix_on;
         div()
@@ -61,6 +48,8 @@ impl UiState {
             .gap(px(6.))
             .child(
                 button("automix-order", shuffle || best, true)
+                    .relative()
+                    .child(self.order_menu.anchor_marker())
                     .px_2()
                     .gap(px(5.))
                     .text_size(px(8.))
@@ -81,11 +70,16 @@ impl UiState {
                             }),
                     )
                     .tooltip(move |_, cx| cx.new(|_| TextTip(tip.into())).into())
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        s.cycle_automix_order();
-                        cx.notify();
+                    .on_click(cx.listener(|s, _, window, cx| {
+                        s.open_order_menu(window, cx);
                     })),
             )
+            .children(self.order_status_text().map(|status| {
+                div()
+                    .text_size(px(9.))
+                    .text_color(theme::MUTED)
+                    .child(status)
+            }))
             .child(
                 button("automix-pause", paused, enabled)
                     .w(px(26.))

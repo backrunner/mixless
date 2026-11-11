@@ -231,7 +231,7 @@ impl MidiAction {
             LoopDouble { deck } => Command::LoopDouble { deck },
             BeatBack { deck } => Command::BeatJump { deck, bars: -1 },
             BeatForward { deck } => Command::BeatJump { deck, bars: 1 },
-            Stem { deck, stem } => Command::SetStemGain {
+            Stem { deck, stem } if d?.stem_available(stem) => Command::SetStemGain {
                 deck,
                 stem,
                 value: range(d?.stem_gain[stem.index()], 0., 1.),

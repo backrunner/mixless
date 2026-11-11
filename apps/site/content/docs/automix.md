@@ -13,6 +13,10 @@ imageType: image/png
 
 Select a playlist and enable **AUTO**. With empty decks, the first playable song starts in list order, even with shuffle enabled. Subsequent songs follow sequence or shuffle. Each shuffle cycle visits every entry before reshuffling, and the playlist loops continuously.
 
+Unless you have selected an order mode, AUTO uses **BEST** when a valid cached order is ready. On a cache miss, playback starts in the current playlist order while Best is calculated in the background. Completing that calculation keeps this session's order unchanged; the result is available at the next AUTO start or when you select **BEST**. During the current app session, each source playlist remembers its own **ORDER**, **SHUFFLE** or **BEST** selection, including **All Tracks**. Switching sources restores that source's choice or checks its own Best cache. Restoring **BEST** also requires a valid cache; a missing or outdated result falls back to **ORDER** and is recalculated in the background without changing this pass. Browsing with **Keep current** leaves the playing source's mode unchanged.
+
+While **BEST** is calculating, the order button remains available. Switch to **ORDER** or **SHUFFLE** without waiting; the calculation continues to warm the cache and cannot change your selection.
+
 AutoMix prepares its source playlist in the background. Each track’s entry, completed incoming mix and carried tempo/key constrain its exit. The list and playback share these plans; a new lap is planned separately so its entrance does not overlap the current lap’s exit.
 
 In **Preferences → General → AutoMix**, **On playlist change** controls what happens when you select another playlist:
@@ -26,9 +30,15 @@ The choice is saved and applies to subsequent playlist selections, including **A
 
 mixless compares entry and exit regions using local tempo, phrase boundaries, key compatibility, energy, rhythm, and vocal evidence. Prepared stems and note analysis add information about foreground material and harmonic movement.
 
-For overlaps, AutoMix checks the sounding keys in the transition windows, including carried pitch and effect tails. When the evidence supports a match, it transposes the incoming track before it becomes audible, choosing the nearest compatible key within six semitones of the recording. The pitch stays fixed through the overlap. Vocal rides also compare the transposed notes; uncertain harmony uses a separated drum layer, filtered transition, or cut instead.
+For overlaps, AutoMix checks the sounding keys in the transition windows, including carried pitch and effect tails. When the evidence supports a match, it transposes the incoming track before it becomes audible, choosing the nearest compatible key within two semitones of the recording and preferring a single semitone. The pitch stays fixed through the overlap. Vocal rides also compare the transposed notes. Keys further apart are not transposed; these and uncertain harmony use a separated drum layer, filtered transition, or cut instead.
+
+A track played faster with **KEY LOCK** off also sounds higher; about 6% is one semitone. When the tempo an overlap holds the incoming track at is itself the transposition the keys need, within 10 cents, AutoMix plays that track with KEY LOCK off instead of stretching and shifting it. The deck's key badge shows the sounding key.
 
 During solo playback, AutoMix can move the track back toward its original pitch in a measured, quieter passage. It considers the following track's key and departure window, then chooses a full or partial restoration with a smooth pitch curve, filter, EQ and available stems. Active vocals, held vocal notes, peaks and insufficient time prevent the move; sustained instrumental beds allow only a smaller, slower adjustment. Without a suitable window, the current pitch carries forward. Manual tuning stays authoritative. Taking over a masking control or pressing SKIP holds the pitch actually reached, which is used when planning the next handoff.
+
+Beat-matching can leave the incoming track faster or slower than recorded. Once it plays alone, AutoMix glides it back to its own tempo at the slow rate used inside transitions; a 12% change takes about a minute. It keeps part of the change, up to 6%, only when the following track needs a move in the same direction. A short remaining track gets a partial correction. Changing the tempo yourself takes over, and SKIP moves straight to the tempo the glide was heading for.
+
+A track playing with KEY LOCK off returns all the way to its own tempo, and its pitch returns with it at no more than about 6 cents a second. KEY LOCK switches back on once the track is at its recorded speed. SKIP during this glide holds the tempo and pitch reached, with KEY LOCK left off.
 
 | Technique | Musical purpose |
 | --- | --- |

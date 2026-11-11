@@ -24,6 +24,269 @@ fn drain(view: &Entity<UiState>, cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn cached_best_to_uncached_source_warms_without_switching_back_to_best(cx: &mut TestAppContext) {
+    let (_temp, core, ids) = crate::automix::tests::fixture();
+    let next = vec![ids[2], ids[1], ids[0]];
+    let source = core
+        .library
+        .replace_playlist("Cached source", &ids)
+        .unwrap()
+        .0;
+    let target = core
+        .library
+        .replace_playlist("Uncached source", &next)
+        .unwrap()
+        .0;
+    crate::automix::tests::cache_best_order(&core, &ids, &[2, 0, 1]);
+    let key = crate::automix::tests::best_order_key(&core, &next);
+    assert!(
+        core.library
+            .load_best_order(&key, next.len())
+            .unwrap()
+            .is_none()
+    );
+    let view = cx.new(|cx| UiState::new(core.clone(), cx));
+    view.update(cx, |s, _| s.select_playlist(Some(source)));
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        s.automix_active = true;
+        s.automix_playlist = Some(source);
+        s.automix_tracks = ids.clone();
+        s.cycle_automix_order();
+        s.cycle_automix_order();
+        assert!(core.mix_preparation.best());
+        s.select_playlist(Some(target));
+        assert!(!core.mix_preparation.best());
+    });
+    drain(&view, cx);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while core
+        .library
+        .load_best_order(&key, next.len())
+        .unwrap()
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "uncached source did not warm Best"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    view.update(cx, |s, _| s.refresh_tracks());
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        assert!(
+            !core.mix_preparation.best(),
+            "cache completion changed the playing order"
+        );
+        assert_eq!(core.mix_preparation.tracks(), next);
+        assert!(!core.mix_preparation.order_chosen());
+        s.stop_automix();
+    });
+}
+
+#[gpui::test]
+fn returning_to_best_with_a_changed_playlist_falls_back_and_only_warms_cache(
+    cx: &mut TestAppContext,
+) {
+    let (_temp, core, ids) = crate::automix::tests::fixture();
+    let source = core
+        .library
+        .replace_playlist("Remembered Best", &ids)
+        .unwrap()
+        .0;
+    let other = core
+        .library
+        .replace_playlist("Other source", &ids[..2])
+        .unwrap()
+        .0;
+    crate::automix::tests::cache_best_order(&core, &ids, &[2, 0, 1]);
+    let view = cx.new(|cx| UiState::new(core.clone(), cx));
+    view.update(cx, |s, _| s.select_playlist(Some(source)));
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        s.automix_active = true;
+        s.automix_playlist = Some(source);
+        s.automix_tracks = ids.clone();
+        s.cycle_automix_order();
+        s.cycle_automix_order();
+        assert!(core.mix_preparation.best());
+        s.select_playlist(Some(other));
+    });
+    drain(&view, cx);
+    let changed = vec![ids[2], ids[1], ids[0]];
+    core.library
+        .reorder_tracks(Some(PlaylistId(source)), &ids, &changed)
+        .unwrap();
+    view.update(cx, |s, _| {
+        s.select_playlist(Some(source));
+        assert!(
+            !core.mix_preparation.best(),
+            "remembered BEST must wait for a valid cache"
+        );
+    });
+    drain(&view, cx);
+    let key = crate::automix::tests::best_order_key(&core, &changed);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while core
+        .library
+        .load_best_order(&key, changed.len())
+        .unwrap()
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "fallback did not warm Best in the background"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // A same-source refresh after completion must still leave this pass in ORDER.
+    view.update(cx, |s, _| s.refresh_tracks());
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        assert!(
+            !core.mix_preparation.best(),
+            "background completion changed this pass to BEST"
+        );
+        assert_eq!(core.mix_preparation.tracks(), changed);
+        assert!(crate::automix::arranged(&core, &changed).is_none());
+        s.stop_automix();
+    });
+}
+
+#[gpui::test]
+fn order_modes_belong_to_the_source_playlist(cx: &mut TestAppContext) {
+    let (_temp, core, ids) = crate::automix::tests::fixture();
+    crate::automix::tests::cache_best_order(&core, &ids, &[2, 0, 1]);
+    let first = core
+        .library
+        .replace_playlist("Best source", &ids)
+        .unwrap()
+        .0;
+    let second = core
+        .library
+        .replace_playlist("Order source", &ids[..2])
+        .unwrap()
+        .0;
+    let view = cx.new(|cx| UiState::new(core.clone(), cx));
+    view.update(cx, |s, _| s.select_playlist(Some(first)));
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        // Model an active source without starting a competing playback worker.
+        s.automix_active = true;
+        s.automix_playlist = Some(first);
+        s.automix_tracks = ids.clone();
+        s.cycle_automix_order(); // SHUFFLE
+        s.cycle_automix_order(); // BEST
+        assert!(core.mix_preparation.best());
+        s.select_playlist(Some(second));
+        assert!(
+            !core.mix_preparation.best(),
+            "new source inherited the previous source's BEST"
+        );
+        assert!(!s.automix_shuffle.load(Ordering::Acquire));
+    });
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        assert_eq!(s.automix_tracks, ids[..2]);
+        assert!(!core.mix_preparation.best());
+        s.cycle_automix_order(); // SHUFFLE
+        s.cycle_automix_order(); // BEST
+        s.cycle_automix_order(); // explicit ORDER
+        s.select_playlist(Some(first));
+    });
+    drain(&view, cx);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !crate::automix::order_ready(&core, &ids) {
+        assert!(
+            Instant::now() < deadline,
+            "returning source cache lookup stalled"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    view.update(cx, |s, _| {
+        assert!(
+            core.mix_preparation.best(),
+            "returning source lost its cached BEST"
+        );
+        s.select_playlist(Some(second));
+    });
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        assert!(
+            !core.mix_preparation.best(),
+            "returning source lost its explicit ORDER"
+        );
+        assert!(!s.automix_shuffle.load(Ordering::Acquire));
+        s.stop_automix();
+    });
+}
+
+#[gpui::test]
+fn new_sources_resolve_their_cache_and_all_tracks_has_its_own_choice(cx: &mut TestAppContext) {
+    let (_temp, core, ids) = crate::automix::tests::fixture();
+    let first = core
+        .library
+        .replace_playlist("Manual order", &ids[..2])
+        .unwrap()
+        .0;
+    let second = core
+        .library
+        .replace_playlist("Cached best", &ids)
+        .unwrap()
+        .0;
+    crate::automix::tests::cache_best_order(&core, &ids, &[2, 0, 1]);
+    let view = cx.new(|cx| UiState::new(core.clone(), cx));
+    view.update(cx, |s, _| s.select_playlist(Some(first)));
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        s.automix_active = true;
+        s.automix_playlist = Some(first);
+        s.automix_tracks = ids[..2].to_vec();
+        for _ in 0..3 {
+            s.cycle_automix_order();
+        } // explicit ORDER
+        assert!(core.mix_preparation.order_chosen());
+        s.select_playlist(Some(second));
+        assert!(
+            !core.mix_preparation.order_chosen(),
+            "manual ORDER leaked to a different source"
+        );
+    });
+    drain(&view, cx);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !crate::automix::order_ready(&core, &ids) {
+        assert!(Instant::now() < deadline, "new source cache lookup stalled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    view.update(cx, |s, _| {
+        assert!(core.mix_preparation.best());
+        assert_eq!(core.mix_preparation.tracks(), vec![ids[2], ids[0], ids[1]]);
+        s.cycle_automix_order(); // explicit ORDER on second
+        s.cycle_automix_order(); // explicit SHUFFLE on second
+        s.select_playlist(None);
+        assert!(
+            !s.automix_shuffle.load(Ordering::Acquire),
+            "All tracks inherited playlist shuffle"
+        );
+        assert!(!core.mix_preparation.order_chosen());
+    });
+    drain(&view, cx);
+    view.update(cx, |s, _| {
+        s.select_playlist(Some(second));
+        assert!(
+            s.automix_shuffle.load(Ordering::Acquire),
+            "playlist shuffle was not restored"
+        );
+        s.select_playlist(Some(first));
+        assert!(!core.mix_preparation.best());
+        assert!(!s.automix_shuffle.load(Ordering::Acquire));
+        assert!(core.mix_preparation.order_chosen());
+        s.stop_automix();
+    });
+}
+
+#[gpui::test]
 fn keep_current_isolates_browsing_reorders_and_refreshes_the_running_source(
     cx: &mut TestAppContext,
 ) {
@@ -46,11 +309,17 @@ fn keep_current_isolates_browsing_reorders_and_refreshes_the_running_source(
     drain(&view, cx);
     view.update(cx, |s, _| {
         s.toggle_automix();
+        s.cycle_automix_order(); // SHUFFLE
+        s.cycle_automix_order(); // BEST belongs to the pinned source
         s.select_playlist(Some(other));
     });
     drain(&view, cx);
     view.update(cx, |s, _| {
         assert_eq!(s.automix_playlist, Some(source));
+        assert!(
+            core.mix_preparation.best(),
+            "browsing changed the pinned source's order mode"
+        );
         assert_eq!(s.automix_tracks, ids[..2]);
         assert_eq!(s.tracks.iter().map(|t| t.id).collect::<Vec<_>>(), ids[1..]);
         let drag = crate::views::library::TrackDrag {

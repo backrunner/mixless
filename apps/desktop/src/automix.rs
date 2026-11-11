@@ -8,9 +8,12 @@ mod performance;
 mod preparation;
 mod start;
 mod updates;
+#[cfg(test)]
+pub use preparation::set_best;
 pub use preparation::{
-    Preparation, arranged, default_to_best, order_ready, prepare_playlist, refresh_previews,
-    set_best,
+    OrderMode, Preparation, QueueEntry, QueueView, arranged, default_to_best, order_ready,
+    prefer_cached_best, prepare_playlist, refresh_previews, reset_order_for_playlist,
+    set_order_mode,
 };
 
 use crate::state::AppCore;
@@ -25,7 +28,8 @@ use std::time::Duration;
 pub enum AutomixMsg {
     Status(String),
     Preparing(String),
-    Plan(DeckId, Arc<mixless_protocol::MixPlan>),
+    Planning(String),
+    Plan(DeckId, Arc<mixless_protocol::MixPlan>, String),
     Done(Result<(), String>),
 }
 
@@ -124,7 +128,7 @@ fn cue_frame(core: &AppCore, track: &crate::analysis::PreparedTrack) -> Result<u
 fn offset(d: &mixless_protocol::DeckSnapshot) -> PerformanceOffset {
     PerformanceOffset {
         rate: d.rate,
-        pitch_semitones: d.pitch_semitones + if d.keylock { 0. } else { 12. * d.rate.log2() },
+        pitch_semitones: d.sounding_pitch_semitones(),
     }
 }
 
@@ -202,6 +206,17 @@ pub fn run(
     tx: Sender<AutomixMsg>,
 ) {
     let active = || epoch.load(Ordering::Acquire) == generation;
+    if !core.mix_preparation.has_selection() {
+        set_order_mode(
+            &core,
+            if shuffle.load(Ordering::Acquire) {
+                OrderMode::Shuffle
+            } else {
+                OrderMode::Order
+            },
+            tracks.clone(),
+        );
+    }
     preparation::reset_session(&core);
     let result = (|| -> Result<(), String> {
         if tracks.is_empty() {
@@ -213,7 +228,7 @@ pub fn run(
             return Ok(());
         };
         while active() {
-            let current = core.mix_preparation.tracks();
+            let (current, intent) = core.mix_preparation.queue_input();
             if current.is_empty() && core.mix_preparation.has_selection() {
                 let _ = tx.send(AutomixMsg::Status("Waiting for playlist tracks".into()));
                 while active() && core.mix_preparation.tracks().is_empty() {
@@ -230,14 +245,24 @@ pub fn run(
             } else {
                 DeckId::A
             };
-            let staged_revision = core.mix_preparation.revision();
+            let staged_revision = intent.revision;
+            let shuffled = intent.mode == OrderMode::Shuffle;
+            let outgoing_entry = order.current_entry().unwrap_or(QueueEntry {
+                track: core
+                    .engine
+                    .snapshot()
+                    .deck(outgoing)
+                    .track_id
+                    .ok_or("Deck unloaded")?,
+                occurrence: 0,
+            });
             let Some(next) = next::stage(
                 &core,
                 outgoing,
                 played_from,
                 &mut order,
                 tracks.len(),
-                &shuffle,
+                shuffled,
                 &active,
                 &tx,
             )?
@@ -255,16 +280,19 @@ pub fn run(
                 continue;
             }
             let mut plan = next.transition.unwrap();
-            let mut start = plan.t_in_a;
-            let mut next_entry = plan.t_in_b;
-            let _ = tx.send(AutomixMsg::Plan(outgoing, plan.clone()));
-            preparation::following(
-                &core,
-                b.track.id,
-                &order,
-                tracks.len(),
-                shuffle.load(Ordering::Relaxed),
+            core.mix_preparation.publish_queue_on(
+                intent,
+                order.queue_rows(outgoing_entry, shuffled),
+                outgoing,
             );
+            let mut start = plan.t_in_a;
+            let mut next_entry = mixless_mixplan::established_entry(&plan, &b.analysis);
+            let _ = tx.send(AutomixMsg::Plan(
+                outgoing,
+                plan.clone(),
+                b.track.title.clone(),
+            ));
+            preparation::following(&core, b.track.id, &order, tracks.len(), shuffled);
             let mut updates = updates::Watch::new(staged_revision);
             // Live gestures on the playing deck until the plan's automation
             // takes the lanes over. The status line already shows "Next: …";
@@ -301,7 +329,7 @@ pub fn run(
             // Look one track ahead while the staged pair plays. Decode is
             // bounded by the shared PCM cache, independent of the UI clock.
             let mut lookahead = order.clone();
-            let next = lookahead.next(shuffle.load(Ordering::Relaxed));
+            let next = lookahead.next(shuffled);
             let warm_core = core.clone();
             std::thread::spawn(move || {
                 if let Ok(track) = crate::analysis::prepare(&warm_core, next) {
@@ -319,13 +347,20 @@ pub fn run(
                     outgoing,
                     played_from,
                     &order,
-                    shuffle.load(Ordering::Relaxed),
+                    core.mix_preparation.queue_intent().mode == OrderMode::Shuffle,
                 ) {
+                    let update_intent = update.intent;
+                    let update_shuffle = update_intent.mode == OrderMode::Shuffle;
                     let proposed_order = update.order.clone();
                     let mut deferred_order = order.clone();
                     update.defer(&mut deferred_order);
                     if update.unchanged(&plan) {
                         order = proposed_order;
+                        core.mix_preparation.publish_queue_on(
+                            update_intent,
+                            order.queue_rows(outgoing_entry, update_shuffle),
+                            outgoing,
+                        );
                     } else if let Some(next) = update.publish(&core, outgoing, &plan, &active)? {
                         release(&mut performer);
                         a = next.outgoing;
@@ -333,7 +368,7 @@ pub fn run(
                         if let Some(replacement) = next.transition {
                             plan = replacement;
                             start = plan.t_in_a;
-                            next_entry = plan.t_in_b;
+                            next_entry = mixless_mixplan::established_entry(&plan, &b.analysis);
                             let d = core.engine.snapshot().deck(outgoing).clone();
                             let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
                             performer =
@@ -344,20 +379,23 @@ pub fn run(
                                     core.engine.stems_ready(outgoing),
                                     core.settings.get().live_moves,
                                 ));
-                            let _ = tx.send(AutomixMsg::Plan(outgoing, plan.clone()));
+                            let _ = tx.send(AutomixMsg::Plan(
+                                outgoing,
+                                plan.clone(),
+                                b.track.title.clone(),
+                            ));
                         }
                         order = proposed_order;
+                        core.mix_preparation.publish_queue_on(
+                            update_intent,
+                            order.queue_rows(outgoing_entry, update_shuffle),
+                            outgoing,
+                        );
                     } else {
                         order = deferred_order;
                     }
                     tracks = core.mix_preparation.tracks();
-                    preparation::following(
-                        &core,
-                        b.track.id,
-                        &order,
-                        tracks.len(),
-                        shuffle.load(Ordering::Relaxed),
-                    );
+                    preparation::following(&core, b.track.id, &order, tracks.len(), update_shuffle);
                 }
                 let snapshot = core.engine.snapshot();
                 if !snapshot.automix_on {

@@ -35,7 +35,7 @@ impl Preferences {
         } else {
             theme::LED_GREEN
         };
-        let tip = format!(
+        let mut tip = format!(
             "{}\n{}",
             target.label(),
             if assigned.is_empty() {
@@ -44,6 +44,10 @@ impl Preferences {
                 assigned.join("\n")
             }
         );
+        if let Some(hint) = target.availability_hint() {
+            tip.push('\n');
+            tip.push_str(hint);
+        }
         let mut control = diagram_rect(rect)
             .occlude()
             .debug_selector(|| format!("diagram-{target:?}"))
@@ -358,7 +362,8 @@ impl Preferences {
                 .border_color(theme::LINE)
                 .rounded(px(2.)),
         );
-        // Keep the wireframe in the same 2×2 order as the native deck.
+        // Keep the same four always-visible slots as the native deck. Learning
+        // stays available even while the live performance controls are disabled.
         for (stem, label, r) in [
             (StemKind::Vocals, "VOCAL", [49., 110., 40., 26.]),
             (StemKind::Drums, "DRUMS", [94., 110., 40., 26.]),

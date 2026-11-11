@@ -48,6 +48,7 @@ fn relocate(install_only: bool) -> io::Result<()> {
     if dest == bundle {
         return Ok(());
     }
+    confirm_replacement(&dest)?;
     tracing::info!(from = %bundle.display(), to = %dest.display(), "installing mixless");
     install_bundle(&bundle, &dest)?;
     // The installed copy keeps the quarantine attribute; clearing it skips the
@@ -63,6 +64,32 @@ fn relocate(install_only: bool) -> io::Result<()> {
     match Command::new("/usr/bin/open").arg("-n").arg(&dest).status() {
         Ok(status) if status.success() => process::exit(0),
         other => tracing::warn!(?other, "installed but relaunch failed; continuing in place"),
+    }
+    Ok(())
+}
+
+fn confirm_replacement(destination: &Path) -> io::Result<()> {
+    let plist = destination.join("Contents/Info.plist");
+    if !plist.exists() {
+        return Ok(());
+    }
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
+        .arg(&plist)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            "Could not check the installed version; the installed app was kept.",
+        ));
+    }
+    let installed = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if crate::downgrade::installed_app_is_newer(&installed) {
+        if !crate::downgrade::confirm_install(&format!(
+            "A newer version of mixless ({installed}) is already installed. This installer contains {}.\n\nUse the latest version to keep your analyses and models. Continuing replaces the installed app. Library data is checked separately before playback starts.",
+            env!("CARGO_PKG_VERSION")
+        )) {
+            process::exit(0);
+        }
     }
     Ok(())
 }

@@ -41,6 +41,14 @@ Caches are not evicted automatically. Clearing derived caches does not remove so
 
 For a new Mac that will stay offline, transfer the installer with models and your local audio files to it. On Apple Silicon, you can then install, import music and run new stem analyses without downloading models. With the standard installer, download models before disconnecting. Both variants use the same library, and automatic updates preserve the installed variant. Local playback and prepared analysis do not need a cloud service. Spotify metadata, missing artwork, optional audio acquisition, and update checks require their respective network services.
 
+## Opening data with an older version
+
+mixless checks the app, library, analysis, waveform, Best order and model versions before starting playback or background analysis. If it finds newer or incompatible data, it recommends the latest version and asks before replacing anything. **Quit**, Return and Escape keep the existing data.
+
+Choose **Continue and replace data** to back up the database and affected files in `downgrade-backups` inside the app data folder, then regenerate incompatible results with the current version. Source audio, playlists and manual cues are retained. Preferences that this version cannot read are reset while compatible choices are kept. If the library cannot be converted without losing known user records, startup stops and leaves the original library in place. Close all copies of mixless before restoring a backup.
+
+These checks apply to versions that include this protection. Previously published older apps and installers keep their original behavior.
+
 ## Remove application data
 
 Uninstalling mixless does not automatically remove its application support directory. Back up the library and any downloaded audio you want to keep before removing that directory. The Storage preferences provide controls for inspecting local data locations.

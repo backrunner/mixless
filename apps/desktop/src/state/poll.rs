@@ -94,6 +94,15 @@ impl UiState {
             self.apply_midi(action);
         }
         let snapshot = self.core.engine.snapshot();
+        if let Some(DragCtl::Knob {
+            ctl: KnobCtl::Stem(deck, stem),
+            ..
+        }) = self.drag.as_ref()
+            && (self.snapshot.deck(*deck).track_id != snapshot.deck(*deck).track_id
+                || !snapshot.deck(*deck).stem_available(*stem))
+        {
+            self.end_drag();
+        }
         if self.automix_active {
             if let Some(deck) = super::automix::newly_playing_deck(&self.snapshot, &snapshot) {
                 self.focus = deck;

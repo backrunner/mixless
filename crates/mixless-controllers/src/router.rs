@@ -479,7 +479,14 @@ pub(crate) fn target_value(target: &MidiTarget, s: &EngineSnapshot) -> f64 {
                 .get(*index as usize)
                 .is_some_and(|v| v.is_some()),
         ) as f32,
-        Stem { stem, .. } => d.unwrap().stem_gain[stem.index()],
+        Stem { stem, .. } => {
+            let d = d.unwrap();
+            if d.stem_available(*stem) {
+                d.stem_gain[stem.index()]
+            } else {
+                0.
+            }
+        }
         TemporaryCue { .. } => u8::from(d.unwrap().temporary_cue_frame.is_some()) as f32,
         Brake { .. } => u8::from(d.unwrap().brake) as f32,
         Resonance { .. } => d.unwrap().filter_resonance,

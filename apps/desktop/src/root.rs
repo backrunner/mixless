@@ -203,6 +203,11 @@ impl Render for UiState {
                     cx.stop_propagation();
                     return;
                 }
+                if s.order_menu.open {
+                    s.order_menu_key(&ev.keystroke, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if s.brand_menu.open {
                     s.brand_menu_key(&ev.keystroke, window, cx);
                     cx.stop_propagation();

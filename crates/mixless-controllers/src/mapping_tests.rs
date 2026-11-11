@@ -181,6 +181,55 @@ fn catalogue_is_complete_unique_and_validates_every_default_binding() {
 }
 
 #[test]
+fn stem_performance_waits_for_playback_audio_but_targets_remain_learnable() {
+    for deck in [DeckId::A, DeckId::B] {
+        for (ready, bass) in [(false, false), (false, true), (true, false), (true, true)] {
+            let mut snapshot = EngineSnapshot::default();
+            snapshot.decks[deck.index()].stems_ready = ready;
+            snapshot.decks[deck.index()].bass_ready = bass;
+            snapshot.decks[deck.index()].stem_gain = [0.6; 4];
+            for stem in [
+                StemKind::Vocals,
+                StemKind::Drums,
+                StemKind::Bass,
+                StemKind::Instruments,
+            ] {
+                let target = MidiTarget::Stem { deck, stem };
+                let available = ready && (stem != StemKind::Bass || bass);
+                assert!(target.availability_hint().is_some());
+                validate(&cc(target.clone(), MidiControlMode::Auto)).unwrap();
+                for value in [
+                    MidiValue::Absolute(0),
+                    MidiValue::Normalized(0.75),
+                    MidiValue::Relative(-8),
+                ] {
+                    let command = MidiAction {
+                        target: target.clone(),
+                        value,
+                    }
+                    .command(&snapshot);
+                    assert_eq!(
+                        command.is_some(),
+                        available,
+                        "{deck:?} {stem:?} ready={ready} bass={bass}"
+                    );
+                    if let Some(Command::SetStemGain {
+                        deck: actual,
+                        stem: kind,
+                        ..
+                    }) = command
+                    {
+                        assert_eq!((actual, kind), (deck, stem));
+                    }
+                }
+                let feedback = crate::router::target_value(&target, &snapshot);
+                assert!((feedback - if available { 0.6 } else { 0. }).abs() < 0.001);
+            }
+        }
+    }
+}
+
+#[test]
 fn absolute_inverted_flips_cc_values_and_still_ignores_note_off() {
     let map = [cc(
         MidiTarget::Tempo { deck: DeckId::A },
@@ -375,13 +424,11 @@ fn invalid_slots_and_relative_buttons_are_rejected() {
     ] {
         assert!(validate(&cc(target, MidiControlMode::Auto)).is_err());
     }
-    assert!(
-        validate(&cc(
-            MidiTarget::Play { deck: DeckId::A },
-            MidiControlMode::RelativeSignedBit
-        ))
-        .is_err()
-    );
+    assert!(validate(&cc(
+        MidiTarget::Play { deck: DeckId::A },
+        MidiControlMode::RelativeSignedBit
+    ))
+    .is_err());
 }
 
 #[test]
@@ -448,13 +495,11 @@ fn progress_ring_position_and_time_display_are_distinct_midi_targets() {
                 matches!(MidiAction { target: MidiTarget::Position { deck }, value: MidiValue::Normalized(value) }.command(&snapshot), Some(Command::Seek { frame: actual, .. }) if actual == frame)
             );
         }
-        assert!(
-            MidiAction {
-                target: MidiTarget::TimeDisplay { deck },
-                value: MidiValue::Press
-            }
-            .command(&snapshot)
-            .is_none()
-        );
+        assert!(MidiAction {
+            target: MidiTarget::TimeDisplay { deck },
+            value: MidiValue::Press
+        }
+        .command(&snapshot)
+        .is_none());
     }
 }

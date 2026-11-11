@@ -1,5 +1,40 @@
 #import <AppKit/AppKit.h>
 
+// Invoked on main before the audio engine or any background data writer starts.
+// Escape must never map to the secondary, destructive action in a two-button alert.
+int mixless_confirm_replacement(const char *description, const char *action) {
+    @autoreleasepool {
+        NSApplication *app = [NSApplication sharedApplication];
+        NSApplicationActivationPolicy policy = app.activationPolicy;
+        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.alertStyle = NSAlertStyleWarning;
+        alert.messageText = @"mixless";
+        alert.informativeText = [NSString stringWithUTF8String:description];
+        NSButton *quit = [alert addButtonWithTitle:@"Quit"];
+        quit.keyEquivalent = @"\r";
+        NSButton *proceed = [alert addButtonWithTitle:[NSString stringWithUTF8String:action]];
+        proceed.keyEquivalent = @"";
+        [alert layout];
+        alert.window.title = @"mixless";
+        [alert.window center];
+        [alert.window makeKeyAndOrderFront:nil];
+        id escape = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+            handler:^NSEvent *(NSEvent *event) {
+                if (event.keyCode == 53) {
+                    [app stopModalWithCode:NSAlertFirstButtonReturn];
+                    return nil;
+                }
+                return event;
+            }];
+        [app activateIgnoringOtherApps:YES];
+        NSModalResponse result = [alert runModal];
+        [NSEvent removeMonitor:escape];
+        [app setActivationPolicy:policy];
+        return result == NSAlertSecondButtonReturn ? 1 : 0;
+    }
+}
+
 int mixless_reduce_motion(void) {
     return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion ? 1 : 0;
 }

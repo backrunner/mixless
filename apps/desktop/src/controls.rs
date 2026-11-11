@@ -172,6 +172,14 @@ pub struct KnobSpec {
 }
 
 pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
+    knob_with_enabled(spec, true, cx)
+}
+
+pub fn knob_with_enabled(
+    spec: KnobSpec,
+    enabled: bool,
+    cx: &mut Context<UiState>,
+) -> impl IntoElement {
     let KnobSpec {
         ctl,
         value,
@@ -182,6 +190,7 @@ pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
         label,
         bipolar,
     } = spec;
+    let color = if enabled { color } else { theme::MUTED };
     let t = if max > min {
         (value - min) / (max - min)
     } else {
@@ -200,16 +209,17 @@ pub fn knob(spec: KnobSpec, cx: &mut Context<UiState>) -> impl IntoElement {
         cx.notify();
     });
 
+    let id = SharedString::from(format!("knob-{ctl:?}-{label}"));
     div()
         // Include the label so separately placed controls can share a parameter.
-        .id(ElementId::Name(SharedString::from(format!(
-            "knob-{ctl:?}-{label}"
-        ))))
+        .id(ElementId::Name(id.clone()))
+        .debug_selector(move || id.to_string())
         .flex()
         .flex_col()
         .items_center()
         .gap_1()
-        .on_mouse_down(MouseButton::Left, down)
+        .when(enabled, |el| el.on_mouse_down(MouseButton::Left, down))
+        .when(!enabled, |el| el.opacity(0.35))
         .child(
             canvas(
                 move |_, _, _| {},

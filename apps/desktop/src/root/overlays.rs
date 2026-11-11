@@ -14,6 +14,7 @@ pub(crate) struct Popups {
     library: Presence<Point<Pixels>>,
     deck: Presence<crate::views::deck::DeckMenu>,
     brand: Presence<()>,
+    order: Presence<()>,
     remove_playlist: Presence<(i64, String)>,
     import: Presence<()>,
     export: Presence<()>,
@@ -53,6 +54,8 @@ impl UiState {
             .render_deck_menu(menu, window, cx));
         popup!(brand, self.brand_menu.open.then_some(()), |(), window| self
             .render_brand_menu(window, cx));
+        popup!(order, self.order_menu.open.then_some(()), |(), window| self
+            .render_order_menu(window, cx));
         popup!(
             remove_playlist,
             self.confirm_remove_playlist.clone(),

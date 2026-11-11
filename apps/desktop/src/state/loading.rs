@@ -12,8 +12,12 @@ impl UiState {
             self.automix_playlist = id;
             // Retry only once the newly selected source has finished loading.
             self.automix_tracks.clear();
+            self.select_automix_order_source(id);
         }
         self.playlist_sel = id;
+        if !self.automix_active {
+            self.select_automix_order_source(id);
+        }
         if let Err(error) = self.core.settings.update(|s| {
             s.last_playlist = id;
             s.library_selection_saved = true;
@@ -21,6 +25,7 @@ impl UiState {
             self.error = error.into();
         }
         self.track_sel = None;
+        self.track_sel_entry = None;
         self.midi_track_cursor = None;
         self.tracks = Arc::new(Vec::new());
         self.playlist_imports.clear();

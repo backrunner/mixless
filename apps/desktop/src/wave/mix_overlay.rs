@@ -10,54 +10,55 @@ pub struct Overlay {
 }
 
 fn ranges(plan: &MixPlan) -> Option<((f32, f32), (f32, f32))> {
-    let n = plan.summary.as_ref()?.length_bars as f32;
-    if plan.failure_reason.is_some() {
-        return None;
-    }
-    // A cut has no musical overlap, even if its scheduler was armed earlier.
-    let cut = plan.incoming_start_bar >= n;
-    Some((
-        (
-            if cut {
-                plan.t_out_a
-            } else if plan.outgoing_source.nodes.is_empty() {
-                plan.t_in_a + plan.clock.sample(plan.incoming_start_bar) * plan.outgoing_offset.rate
-            } else {
-                plan.outgoing_source.sample(plan.incoming_start_bar)
-            },
-            plan.t_out_a,
-        ),
-        // t_end_b accounts for loop repetitions; the unwrapped warp clock does not.
-        (plan.t_in_b, if cut { plan.t_in_b } else { plan.t_end_b }),
-    ))
+    let window = plan.mix_windows()?;
+    Some((window.outgoing, window.incoming))
 }
 
+#[cfg(test)]
 pub fn rows(
     on: bool,
     tracks: &[Track],
     plans: &[Option<Arc<MixPlan>>],
     active: Option<&MixPlan>,
 ) -> Vec<Overlay> {
+    rows_at(on, tracks, plans, active, None)
+}
+
+pub fn rows_at(
+    on: bool,
+    tracks: &[Track],
+    plans: &[Option<Arc<MixPlan>>],
+    active: Option<&MixPlan>,
+    active_rows: Option<(usize, usize)>,
+) -> Vec<Overlay> {
     let mut rows = vec![Overlay::default(); tracks.len()];
     if !on || tracks.is_empty() {
         return rows;
     }
-    for plan in plans.iter().flatten() {
+    for (position, plan) in plans
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| Some((i, p.as_ref()?)))
+    {
         if let Some((outgoing, incoming)) = ranges(plan) {
             let pair = plan.summary.as_ref().unwrap().pair;
-            if active.is_none()
-                && !(0..tracks.len())
-                    .any(|i| (tracks[i].id, tracks[(i + 1) % tracks.len()].id) == pair)
+            if !(0..tracks.len()).any(|i| (tracks[i].id, tracks[(i + 1) % tracks.len()].id) == pair)
             {
                 continue;
             }
-            for (row, track) in rows.iter_mut().zip(tracks) {
-                if track.id == pair.0 {
-                    row.outgoing = Some(outgoing);
-                }
-                if track.id == pair.1 {
-                    row.incoming = Some(incoming);
-                }
+            let matches: Vec<_> = (0..tracks.len())
+                .filter(|i| (tracks[*i].id, tracks[(*i + 1) % tracks.len()].id) == pair)
+                .collect();
+            // Repeated track IDs are separate occurrences. Only an aligned
+            // sequence slot can disambiguate a repeated neighbour pair.
+            let index = if matches.len() == 1 {
+                matches.first().copied()
+            } else {
+                matches.into_iter().find(|i| *i == position)
+            };
+            if let Some(i) = index {
+                rows[i].outgoing = Some(outgoing);
+                rows[(i + 1) % tracks.len()].incoming = Some(incoming);
             }
         }
     }
@@ -65,13 +66,37 @@ pub fn rows(
     // takes priority over the nominal playlist preview on both source rows.
     if let Some((plan, (outgoing, incoming))) = active.and_then(|p| Some((p, ranges(p)?))) {
         let pair = plan.summary.as_ref().unwrap().pair;
-        for (row, track) in rows.iter_mut().zip(tracks) {
+        let neighbours: Vec<_> = (0..tracks.len())
+            .filter(|i| (tracks[*i].id, tracks[(*i + 1) % tracks.len()].id) == pair)
+            .collect();
+        let selected = if let Some((a, b)) = active_rows.filter(|(a, b)| {
+            *a < tracks.len() && *b < tracks.len() && (tracks[*a].id, tracks[*b].id) == pair
+        }) {
+            Some((a, b))
+        } else if neighbours.len() == 1 {
+            Some((neighbours[0], (neighbours[0] + 1) % tracks.len()))
+        } else {
+            let one = |id| {
+                let mut found = tracks.iter().enumerate().filter(|(_, t)| t.id == id);
+                let first = found.next()?.0;
+                found.next().is_none().then_some(first)
+            };
+            one(pair.0).zip(one(pair.1))
+        };
+        for (i, (row, track)) in rows.iter_mut().zip(tracks).enumerate() {
+            if active_rows.is_some() && selected.is_some_and(|(a, b)| i != a && i != b) {
+                continue;
+            }
             if track.id == pair.0 {
-                row.outgoing = Some(outgoing);
+                row.outgoing = None;
             }
             if track.id == pair.1 {
-                row.incoming = Some(incoming);
+                row.incoming = None;
             }
+        }
+        if let Some((a, b)) = selected {
+            rows[a].outgoing = Some(outgoing);
+            rows[b].incoming = Some(incoming);
         }
     }
     // A changed live entrance invalidates a forecasted exit before it. Never
@@ -248,5 +273,29 @@ mod tests {
         let shuffled = rows(true, &tracks, &plans, Some(&active));
         assert_eq!(shuffled[0].outgoing, Some((42., 90.)));
         assert_eq!(shuffled[2].incoming, Some((8., 56.)));
+
+        // A repeated ID is not permission to paint another occurrence's exit.
+        let repeated = vec![
+            tracks[0].clone(),
+            tracks[1].clone(),
+            tracks[0].clone(),
+            tracks[1].clone(),
+        ];
+        let p = vec![
+            Some(plan(1, 2, 40., 88.)),
+            None,
+            Some(plan(1, 2, 70., 118.)),
+            None,
+        ];
+        let shown = rows(true, &repeated, &p, None);
+        assert_eq!(shown[0].outgoing, Some((40., 88.)));
+        assert_eq!(shown[2].outgoing, Some((70., 118.)));
+        let ambiguous = rows(true, &repeated, &p, p[0].as_deref());
+        assert!(ambiguous[0].outgoing.is_none() && ambiguous[2].outgoing.is_none());
+
+        // An unrelated active pair cannot resurrect a removed forecast edge.
+        let changed = vec![tracks[0].clone(), tracks[2].clone(), tracks[1].clone()];
+        let shown = rows(true, &changed, &plans, Some(&active));
+        assert!(shown[2].outgoing.is_none());
     }
 }

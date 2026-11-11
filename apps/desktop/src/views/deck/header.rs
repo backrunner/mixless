@@ -93,6 +93,11 @@ impl UiState {
             let key_color = theme::key_color(key.split_whitespace().next().unwrap_or(&key));
             header_right = header_right.child(
                 gpui::div()
+                    .id(("key-notation", deck.index()))
+                    .tooltip(|_, cx| {
+                        cx.new(|_| crate::views::TextTip("Camelot: A = minor, B = major".into()))
+                            .into()
+                    })
                     .flex_none()
                     .px_2()
                     .rounded(px(8.))
@@ -170,12 +175,7 @@ impl UiState {
 }
 
 pub(super) fn sounding_key(key: &str, deck: &DeckSnapshot) -> String {
-    let pitch = deck.pitch_semitones
-        + if deck.keylock {
-            0.
-        } else {
-            12. * deck.rate.max(0.001).log2()
-        };
+    let pitch = deck.sounding_pitch_semitones();
     let Some(shifted) = mixless_protocol::transpose_camelot(key, pitch.round()) else {
         return if pitch.abs() < 0.005 {
             key.into()

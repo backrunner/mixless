@@ -74,9 +74,13 @@ pub(crate) fn run() -> bool {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
-                        size(px(width), px(460.)),
+                        size(px(width), px(640.)),
                         cx,
                     ))),
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("mixless AutoMix audit".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
                 |_, cx| {
@@ -88,6 +92,8 @@ pub(crate) fn run() -> bool {
                                 "Independent stem exchange",
                                 "Outgoing channel closed",
                                 "Paused",
+                                "Full track with incoming layer",
+                                "Manual controls",
                             ]
                             .into_iter()
                             .enumerate()
@@ -95,6 +101,13 @@ pub(crate) fn run() -> bool {
                                 let state = cx.new(|cx| {
                                     let mut s = UiState::new(core.clone(), cx);
                                     s.automix_active = true;
+                                    s.snapshot.automix_on = true;
+                                    s.snapshot.automix_modified = i == 6;
+                                    s.snapshot.decks[1].track_id = Some(TrackId(1));
+                                    s.snapshot.decks[0].track_id = Some(TrackId(2));
+                                    for deck in &mut s.snapshot.decks {
+                                        deck.playing = true;
+                                    }
                                     s.automix_plan = Some((
                                         DeckId::B,
                                         MixPlan {
@@ -109,6 +122,12 @@ pub(crate) fn run() -> bool {
                                             t_out_a: 18.,
                                             t_in_b: 0.,
                                             t_end_b: 8.,
+                                            outgoing_source: Polyline {
+                                                nodes: vec![(0., 10.), (8., 18.)],
+                                            },
+                                            incoming_source: Polyline {
+                                                nodes: vec![(0., 0.), (8., 8.)],
+                                            },
                                             clock: Polyline {
                                                 nodes: vec![(0., 0.), (8., 8.)],
                                             },
@@ -123,6 +142,9 @@ pub(crate) fn run() -> bool {
                                     s.snapshot.decks[0].fader = if i <= 1 { 0. } else { 1. };
                                     s.snapshot.decks[0].stem_gain =
                                         if i <= 1 { [0.; 4] } else { [0., 1., 0., 0.] };
+                                    s.snapshot.decks[1].stems_ready = true;
+                                    s.snapshot.decks[1].stem_gain =
+                                        if i == 2 { [1., 0., 1., 1.] } else { [1.; 4] };
                                     s.snapshot.decks[1].fader = if i == 3 { 0. } else { 1. };
                                     s.snapshot.automix_progress = if i == 0 { 0. } else { 0.25 };
                                     s.snapshot.automix_paused = i == 4;

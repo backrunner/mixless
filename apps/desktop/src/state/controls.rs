@@ -3,7 +3,17 @@ use super::*;
 mod navigation;
 
 impl UiState {
+    pub(crate) fn knob_enabled(&self, ctl: KnobCtl) -> bool {
+        match ctl {
+            KnobCtl::Stem(deck, stem) => self.deck(deck).stem_available(stem),
+            _ => true,
+        }
+    }
+
     pub fn reset_knob(&mut self, ctl: KnobCtl) {
+        if !self.knob_enabled(ctl) {
+            return;
+        }
         let value = match ctl {
             KnobCtl::Stem(_, _) => 1.,
             KnobCtl::Master => 0.8,
@@ -46,6 +56,9 @@ impl UiState {
     /* ---- drag dispatch --------------------------------------------------- */
 
     pub fn begin_knob(&mut self, ctl: KnobCtl, y: f32) {
+        if !self.knob_enabled(ctl) {
+            return;
+        }
         let (min, max, _) = ctl.range();
         let val = self.knob_value(ctl).clamp(min, max);
         self.drag = Some(DragCtl::Knob {
@@ -149,6 +162,9 @@ impl UiState {
                 start_y,
                 start_val,
             }) => {
+                if !self.knob_enabled(ctl) {
+                    return;
+                }
                 let (min, max, step) = ctl.range();
                 let dv = ((start_y - y) / 120.0) * (max - min);
                 let v = (start_val + dv).clamp(min, max);
@@ -303,6 +319,9 @@ impl UiState {
     }
 
     pub(super) fn set_knob_value(&mut self, ctl: KnobCtl, v: f32) {
+        if !self.knob_enabled(ctl) {
+            return;
+        }
         match ctl {
             KnobCtl::Stem(deck, stem) => self.dispatch(Command::SetStemGain {
                 deck,

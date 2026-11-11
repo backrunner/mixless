@@ -3,7 +3,7 @@ use gpui::{TestAppContext, size};
 use mixless_protocol::{MixPlanSummary, MixStage, Polyline, TrackId};
 
 fn plan() -> MixPlan {
-    MixPlan {
+    let mut p = MixPlan {
         summary: Some(MixPlanSummary {
             pair: (TrackId(1), TrackId(2)),
             strategy: S::PhraseBlend,
@@ -37,6 +37,22 @@ fn plan() -> MixPlan {
             },
         ],
         ..Default::default()
+    };
+    p.outgoing_source = Polyline {
+        nodes: vec![(0., 10.), (8., 18.)],
+    };
+    p.incoming_source = Polyline {
+        nodes: vec![(0., 2.), (8., 10.)],
+    };
+    p
+}
+
+fn live(snapshot: &mut EngineSnapshot, out: DeckId) {
+    snapshot.automix_on = true;
+    snapshot.decks[out.index()].track_id = Some(TrackId(1));
+    snapshot.decks[1 - out.index()].track_id = Some(TrackId(2));
+    for deck in &mut snapshot.decks {
+        deck.playing = true;
     }
 }
 
@@ -44,6 +60,7 @@ fn plan() -> MixPlan {
 fn transition_details_preserve_windows_stages_and_playback_status() {
     for out in [DeckId::A, DeckId::B] {
         let mut snapshot = EngineSnapshot::default();
+        live(&mut snapshot, out);
         let ready = Transition::new(out, &plan(), &snapshot);
         assert_eq!(ready.name, "Phrase blend");
         assert_eq!(ready.phase, "Starts in 0:10");
@@ -73,6 +90,7 @@ fn stem_swap_status_follows_waiting_exchange_and_completion_on_either_deck() {
     for out in [DeckId::A, DeckId::B] {
         let incoming = 1 - out.index();
         let mut snapshot = EngineSnapshot::default();
+        live(&mut snapshot, out);
         snapshot.decks[out.index()].frame = 12 * 44_100;
         snapshot.automix_progress = 0.25;
         snapshot.decks[incoming].stems_ready = true;
@@ -97,6 +115,12 @@ fn stem_swap_status_follows_waiting_exchange_and_completion_on_either_deck() {
         );
         snapshot.decks[incoming].stem_gain[1] = 1.;
         assert_eq!(Transition::new(out, &plan, &snapshot).status, "Stem swap");
+        snapshot.decks[out.index()].stems_ready = true;
+        snapshot.decks[out.index()].stem_gain = [1., 0., 1., 1.];
+        assert_eq!(Transition::new(out, &plan, &snapshot).status, "Stem swap");
+        snapshot.decks[incoming].stem_gain = [1.; 4];
+        assert_eq!(Transition::new(out, &plan, &snapshot).status, "Stem swap");
+        snapshot.decks[incoming].stem_gain = [0., 1., 0., 0.];
         snapshot.decks[incoming].fader = 0.;
         assert_eq!(Transition::new(out, &plan, &snapshot).status, "Waiting");
         snapshot.decks[incoming].fader = 1.;
@@ -130,6 +154,7 @@ fn lifecycle_status_keeps_the_entire_master_control_inside_the_toolbar(cx: &mut 
                 s.automix_active = true;
                 s.automix_plan = Some((DeckId::B, plan().into()));
                 s.snapshot = EngineSnapshot::default();
+                live(&mut s.snapshot, DeckId::B);
                 s.snapshot.decks[1].frame = if scene == 0 { 0 } else { 12 * 44_100 };
                 s.snapshot.decks[0].fader = if scene == 1 { 0. } else { 1. };
                 s.snapshot.decks[1].fader = if scene == 3 { 0. } else { 1. };
@@ -153,6 +178,7 @@ fn tooltip_wraps_stages_inside_its_surface(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| AutomixTip {
         transition,
         gap: 12.,
+        stale: false,
         _subscription: None,
     });
     cx.simulate_resize(size(px(1180.), px(760.)));
@@ -175,7 +201,11 @@ fn tooltip_wraps_stages_inside_its_surface(cx: &mut TestAppContext) {
 fn open_tooltip_follows_countdown_and_pause_changes(cx: &mut TestAppContext) {
     let (_temp, core, _) = crate::automix::tests::fixture();
     let state = cx.new(|cx| UiState::new(core, cx));
-    state.update(cx, |s, _| s.automix_plan = Some((DeckId::A, plan().into())));
+    state.update(cx, |s, _| {
+        s.automix_active = true;
+        s.automix_plan = Some((DeckId::A, plan().into()));
+        live(&mut s.snapshot, DeckId::A);
+    });
     let tip = cx.new(|cx| {
         AutomixTip::new(
             state.read(cx).transition().unwrap(),
@@ -190,6 +220,7 @@ fn open_tooltip_follows_countdown_and_pause_changes(cx: &mut TestAppContext) {
     ] {
         state.update(cx, |s, cx| {
             s.snapshot.decks[0].frame = frame;
+            s.snapshot.decks[0].src_sample_rate = 48_000;
             s.snapshot.automix_paused = paused;
             cx.notify();
         });
@@ -200,11 +231,25 @@ fn open_tooltip_follows_countdown_and_pause_changes(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn transition_stays_next_to_auto_at_supported_window_widths(cx: &mut TestAppContext) {
+    struct Header(gpui::Entity<UiState>);
+    impl gpui::Render for Header {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            self.0.update(cx, |s, cx| {
+                s.render_topbar(window.viewport_size().width.into(), cx)
+            })
+        }
+    }
     let (_temp, core, _) = crate::automix::tests::fixture();
-    let (view, cx) = cx.add_window_view(|_, cx| UiState::new(core, cx));
+    let view = cx.new(|cx| UiState::new(core, cx));
+    let (_, cx) = cx.add_window_view(|_, _| Header(view.clone()));
     view.update(cx, |s, cx| {
         s.automix_active = true;
         s.automix_plan = Some((DeckId::B, plan().into()));
+        live(&mut s.snapshot, DeckId::B);
         cx.notify();
     });
     for width in [1180., 1280., 1440., 1800.] {
@@ -218,6 +263,56 @@ fn transition_stays_next_to_auto_at_supported_window_widths(cx: &mut TestAppCont
         assert!(auto.left() > px(300.), "width={width}, auto={auto:?}");
         assert!(cx.debug_bounds("automix-skip").unwrap().right() < px(width));
     }
+}
+
+#[test]
+fn closed_crossfader_and_manual_takeover_cannot_claim_a_stem_exchange() {
+    for out in [DeckId::A, DeckId::B] {
+        let mut s = EngineSnapshot::default();
+        live(&mut s, out);
+        s.decks[out.index()].frame = 12 * 44_100;
+        s.automix_progress = 0.25;
+        s.xfader = if out == DeckId::A { -1. } else { 1. };
+        assert_eq!(Transition::new(out, &plan(), &s).status, "Waiting");
+        s.xf_reverse = true;
+        assert_eq!(Transition::new(out, &plan(), &s).status, "Finishing");
+        s.automix_modified = true;
+        let manual = Transition::new(out, &plan(), &s);
+        assert_eq!(manual.status, "Manual");
+        assert_eq!(manual.windows, ["—", "—"]);
+        assert!(manual.stages.is_empty());
+        assert_eq!(manual.active_stage, None);
+    }
+}
+
+#[gpui::test]
+fn stale_track_identity_and_completed_plan_hide_the_transition(cx: &mut TestAppContext) {
+    let (_temp, core, _) = crate::automix::tests::fixture();
+    let state = cx.new(|cx| UiState::new(core, cx));
+    state.update(cx, |s, _| {
+        s.automix_active = true;
+        s.automix_plan = Some((DeckId::A, plan().into()));
+        live(&mut s.snapshot, DeckId::A);
+    });
+    let tip = cx.new(|cx| {
+        AutomixTip::new(
+            state.read(cx).transition().unwrap(),
+            12.,
+            state.downgrade(),
+            cx,
+        )
+    });
+    state.update(cx, |s, cx| {
+        s.snapshot.decks[1].track_id = Some(TrackId(99));
+        assert!(s.transition().is_none());
+        live(&mut s.snapshot, DeckId::A);
+        s.snapshot.automix_on = false;
+        assert!(s.transition().is_none());
+        assert!(s.transition_window(DeckId::A).is_none());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(tip.read_with(cx, |t, _| t.stale));
 }
 
 #[gpui::test]

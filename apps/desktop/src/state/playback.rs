@@ -9,6 +9,14 @@ impl UiState {
     /* ---- engine commands ------------------------------------------------ */
 
     pub fn dispatch(&mut self, cmd: Command) {
+        if let Command::SetStemGain { deck, stem, .. } = &cmd {
+            let current = self.core.engine.snapshot();
+            if !current.deck(*deck).stem_available(*stem)
+                || current.deck(*deck).track_id != self.deck(*deck).track_id
+            {
+                return;
+            }
+        }
         if self.automix_active
             && matches!(
                 cmd,
