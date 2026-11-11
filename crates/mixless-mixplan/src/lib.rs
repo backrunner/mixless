@@ -26,8 +26,6 @@ mod eq;
 mod filtered;
 mod foreground;
 mod grid;
-#[cfg(feature = "gpu-audit")]
-pub mod gpu_audit;
 mod level;
 mod lookahead;
 mod melody;

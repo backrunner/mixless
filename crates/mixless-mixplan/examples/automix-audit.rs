@@ -6,14 +6,7 @@ use mixless_protocol::{MixPlan, PerformanceOffset, TrackAnalysis};
 use std::error::Error;
 use std::io::Write;
 
-#[path = "support/gpu.rs"]
-mod gpu;
-
 fn main() -> Result<(), Box<dyn Error>> {
-    gpu::run(run)?
-}
-
-fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let path = args
         .first()

@@ -27,48 +27,6 @@ pub(super) struct Prepared<'a> {
     tonality: Tonality,
 }
 impl<'a> Prepared<'a> {
-    #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-    pub(super) fn audit_input(&self) -> crate::gpu_audit::Input {
-        let frames = self
-            .frames
-            .iter()
-            .zip(&self.data)
-            .map(|(f, d)| {
-                let mut row = [0.; 40];
-                row[..4].copy_from_slice(&[f.u, f.sec, f.voice[0], f.voice[1]]);
-                for (out, value) in row[4..28]
-                    .iter_mut()
-                    .zip(f.bands.iter().flatten().flatten())
-                {
-                    *out = *value;
-                }
-                for (i, values) in [d.full, d.melody, d.vocal, d.foreground, d.weight]
-                    .into_iter()
-                    .enumerate()
-                {
-                    row[28 + i * 2..30 + i * 2].copy_from_slice(&values);
-                }
-                row[38] = d.dt;
-                row[39] = d
-                    .sounding
-                    .iter()
-                    .flatten()
-                    .enumerate()
-                    .fold(0u32, |mask, (i, v)| mask | (u32::from(*v) << i))
-                    as f32;
-                row
-            })
-            .collect();
-        crate::gpu_audit::Input {
-            frames,
-            tonality: match self.tonality {
-                Tonality::Compatible => 0,
-                Tonality::Unknown => 1,
-                Tonality::Conflict => 2,
-            },
-        }
-    }
-
     pub(super) fn new(frames: &'a [Frame], tonality: Tonality) -> Self {
         let data = frames
             .iter()

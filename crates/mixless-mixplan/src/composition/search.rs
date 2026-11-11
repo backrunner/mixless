@@ -26,42 +26,25 @@ struct Cache {
 pub(super) struct Costs<'a> {
     prepared: super::cost::Prepared<'a>,
     values: [Mutex<Cache>; 32],
-    #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-    capture: Option<crate::gpu_audit::Capture>,
 }
 
 impl<'a> Costs<'a> {
     pub(super) fn new(frames: &'a [Frame], tonality: Tonality) -> Self {
         let prepared = super::cost::Prepared::new(frames, tonality);
         Self {
-            #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-            capture: crate::gpu_audit::Capture::new(|| prepared.audit_input()),
             prepared,
             values: std::array::from_fn(|_| Mutex::new(Cache::default())),
         }
     }
 
     pub(super) fn get(&self, shape: &Shape) -> Option<f32> {
-        let result = self.lookup(shape);
-        #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-        self.observe(&[*shape], &[result]);
-        result
+        self.lookup(shape)
     }
 
     /// Independent trials share one immutable frame set. CPU cache lookups
-    /// and scoring retain their original order; only diagnostics run elsewhere.
+    /// and scoring retain their original order.
     pub(super) fn batch<const N: usize>(&self, shapes: &[Shape; N]) -> [Option<f32>; N] {
-        let results = std::array::from_fn(|i| self.lookup(&shapes[i]));
-        #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-        self.observe(shapes, &results);
-        results
-    }
-
-    #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-    fn observe(&self, shapes: &[Shape], scores: &[Option<f32>]) {
-        if let Some(capture) = &self.capture {
-            capture.observe(shapes.iter().map(|s| key(s).map(f32::from_bits)), scores);
-        }
+        std::array::from_fn(|i| self.lookup(&shapes[i]))
     }
 
     fn lookup(&self, shape: &Shape) -> Option<f32> {
@@ -79,22 +62,12 @@ impl<'a> Costs<'a> {
         } else {
             cache.values.get(&key).copied()
         } {
-            #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-            if let Some(capture) = &self.capture {
-                capture.cache_hit();
-            }
             return value;
         }
         // `cost` is a leaf calculation: no other locks, evidence queries or
         // nested worker jobs. Keeping this shard locked coalesces identical
         // cold seeds without blocking unrelated shapes or risking pool starvation.
-        #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-        let started = self.capture.as_ref().map(|_| std::time::Instant::now());
         let value = self.prepared.score(shape);
-        #[cfg(all(feature = "gpu-audit", target_os = "macos"))]
-        if let (Some(started), Some(capture)) = (started, &self.capture) {
-            capture.scored(started.elapsed());
-        }
         let shared_rejection = matches!(value, Err(super::cost::Rejection::Shared));
         let value = value.ok();
         if shared_rejection {

@@ -4,14 +4,7 @@ use mixless_mixplan::{order::best_cycle_with_progress, PlannerOptions};
 use mixless_protocol::TrackAnalysis;
 use std::{error::Error, sync::Mutex, time::Instant};
 
-#[path = "support/gpu.rs"]
-mod gpu;
-
 fn main() -> Result<(), Box<dyn Error>> {
-    gpu::run(run)?
-}
-
-fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let path = args.first().ok_or("expected analyses.json [--stems]")?;
     let tracks: Vec<TrackAnalysis> = serde_json::from_slice(&std::fs::read(path)?)?;

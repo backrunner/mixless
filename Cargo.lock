@@ -4066,9 +4066,7 @@ dependencies = [
 name = "mixless-mixplan"
 version = "0.1.0-beta.5"
 dependencies = [
- "metal",
  "mixless-protocol",
- "objc",
  "rayon",
  "serde_json",
 ]
