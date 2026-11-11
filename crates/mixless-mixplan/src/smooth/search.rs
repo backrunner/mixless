@@ -71,3 +71,94 @@ pub(super) fn entrances(
             .collect(),
     )
 }
+
+/// Batches contain independent exit/entry anchors. Each anchor keeps its
+/// original mode/length traversal and improves its own snapshot bound. A
+/// resolved prefix can change which fallback is attempted: a pruned direct
+/// plan may open a prepared plan. Replay stale anchors with the resolved bound,
+/// including failures, instead of assuming pruning only removes candidates.
+/// Reduce in traversal order so ties never depend on worker completion.
+/// Start serially until an incumbent
+/// exists (the initial -1 sentinel need not bound every penalized merit).
+pub(super) fn single(
+    ctx: &PlanContext<'_>,
+    options: &PlannerOptions,
+    outs: &[f32],
+    ins: &[f32],
+) -> Scored {
+    single_with_batch(
+        ctx,
+        options,
+        outs,
+        ins,
+        2 * std::thread::available_parallelism().map_or(4, |n| n.get()),
+    )
+}
+
+fn single_with_batch(
+    ctx: &PlanContext<'_>,
+    options: &PlannerOptions,
+    outs: &[f32],
+    ins: &[f32],
+    max_batch: usize,
+) -> Scored {
+    let evidence = crate::evidence::Prepared::new(ctx, options.stem_playback);
+    let mut best: Scored = None;
+    let count = outs.len() * ins.len();
+    let mut start = 0;
+    let mut batch = 1;
+    while start < count {
+        let end = (start + batch).min(count);
+        let floor = best.as_ref().map(|p| p.0);
+        let job = |index: usize, floor: Option<f32>| {
+            let out = outs[index / ins.len()];
+            let input = ins[index % ins.len()];
+            let mut selected: Scored = None;
+            for mode in [
+                TransitionMode::BeatBlend,
+                TransitionMode::LoopRoll,
+                TransitionMode::PhraseBridge,
+            ] {
+                for length in crate::duration::candidates(ctx, options, out, input, mode) {
+                    let bound = selected.as_ref().map(|p| p.0).or(floor);
+                    if let Some(plan) =
+                        super::pair(ctx, options, out, input, mode, length, bound.unwrap_or(-1.))
+                    {
+                        let merit = crate::experience::merit(&plan, ctx.outgoing, ctx.incoming);
+                        if bound.is_none_or(|old| merit > old) {
+                            selected = Some((merit, plan));
+                        }
+                    }
+                }
+            }
+            selected
+        };
+        let results = if end - start == 1 {
+            vec![job(start, floor)]
+        } else {
+            crate::order::parallel::map(end - start, |i| evidence.run(|| job(start + i, floor)))
+        };
+        for (i, result) in results.into_iter().enumerate() {
+            let current = best.as_ref().map(|p| p.0);
+            let result = if current.map(f32::to_bits) == floor.map(f32::to_bits) {
+                result
+            } else {
+                job(start + i, current)
+            };
+            if let Some((merit, plan)) = result {
+                if best.as_ref().is_none_or(|old| merit > old.0) {
+                    best = Some((merit, plan));
+                }
+            }
+        }
+        start = end;
+        if best.is_some() {
+            batch = (batch * 2).min(max_batch.max(1));
+        }
+    }
+    best
+}
+
+#[cfg(test)]
+#[path = "search_tests.rs"]
+mod tests;

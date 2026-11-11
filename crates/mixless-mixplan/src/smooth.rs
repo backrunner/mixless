@@ -128,6 +128,8 @@ pub(crate) fn plan(
     let mut entrances: Vec<Option<(f32, MixPlan)>> = vec![None; ins.len()];
     if choices.is_some() && !cfg!(feature = "trace") && ins.len() > 1 {
         (best, entrances) = search::entrances(ctx, options, &outs, &ins);
+    } else if choices.is_none() && !cfg!(feature = "trace") {
+        best = search::single(ctx, options, &outs, &ins);
     } else {
         for &out in &outs {
             for (input_index, &input) in ins.iter().enumerate() {
