@@ -81,7 +81,12 @@ fn valid(path: &Path, expected: &str) -> Result<bool> {
         }
         digest.update(&block[..n]);
     }
-    Ok(format!("{:x}", digest.finalize()) == expected)
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        == expected)
 }
 
 #[cfg(stems_ort)]

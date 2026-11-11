@@ -15,6 +15,7 @@ rustfft = "6"
 cc = "1"
 
 [dev-dependencies]
+mixless-library.workspace = true
 mixless-stems.workspace = true
 blake3.workspace = true
 serde_json = { workspace = true }

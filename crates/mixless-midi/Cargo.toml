@@ -6,6 +6,7 @@ license.workspace = true
 description = "MIDI learn / mapping for Mixless"
 
 [dependencies]
+# GPUI 0.2.2 pins core-foundation 0.10.0; midir 0.11 requires 0.10.1.
 midir = "0.10"
 serde = { workspace = true }
 serde_json = { workspace = true }

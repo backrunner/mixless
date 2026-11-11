@@ -681,7 +681,7 @@ fn read_meta(path: &Path) -> FileMeta {
         .unwrap_or_else(|| "Unknown".into());
     let album = tag.and_then(|t| t.album().map(|s| s.to_string()));
     let isrc = tag.and_then(|t| {
-        t.get_string(&ItemKey::Isrc)
+        t.get_string(ItemKey::Isrc)
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
     });

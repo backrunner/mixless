@@ -311,14 +311,17 @@ impl YoutubeMusicAcquire {
         )
         .map_err(err)?;
         let response=agent.post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false")
-            .send_json(serde_json::json!({"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20260819.01.00","hl":"en"}},"query":format!("{} {}",job.artist,job.title),"params":"EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"}))
+            .send_json(serde_json::json!({"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20260819.01.00","hl":"en"}},"query":format!("{} {}",job.artist,job.title),"params":"EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"})).map_err(mixless_net::HttpError::Transport).and_then(mixless_net::check_response)
             .map_err(|e| {
-                if let ureq::Error::Status(429, response) = &e {
-                    pacing::rate_limited(response.header("Retry-After").and_then(|s| s.parse().ok()).unwrap_or(60));
+                if let mixless_net::HttpError::Status(429, response) = &e {
+                    pacing::rate_limited(response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).and_then(|s| s.parse().ok()).unwrap_or(60));
                 }
                 err(format!("YouTube Music search: {e}"))
             })?;
-        let data: Value = response.into_json().map_err(|e| err(e.to_string()))?;
+        let data: Value = response
+            .into_body()
+            .read_json()
+            .map_err(|e| err(e.to_string()))?;
         let mut result = Vec::new();
         parse_music(job, &data, &mut result);
         Ok(result)

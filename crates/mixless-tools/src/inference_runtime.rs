@@ -24,7 +24,12 @@ fn valid(path: &Path, expected: &str) -> Result<bool> {
         }
         hash.update(&buffer[..n]);
     }
-    Ok(format!("{:x}", hash.finalize()) == expected)
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        == expected)
 }
 
 pub fn verify(dir: &Path) -> Result<()> {

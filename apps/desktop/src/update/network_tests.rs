@@ -65,7 +65,10 @@ fn hash_rejects_a_corrupted_download() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("file");
     fs::write(&path, b"payload").unwrap();
-    let hash = format!("{:x}", Sha256::digest(b"payload"));
+    let hash = Sha256::digest(b"payload")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     verify_sha256(&path, &hash.to_uppercase()).unwrap();
     fs::write(&path, b"tampered").unwrap();
     assert!(verify_sha256(&path, &hash).is_err());

@@ -79,7 +79,11 @@ pub(super) fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
         }
         digest.update(&buf[..n]);
     }
-    let actual = format!("{:x}", digest.finalize());
+    let actual = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     if actual != expected.to_ascii_lowercase() {
         return Err("Update checksum mismatch".into());
     }

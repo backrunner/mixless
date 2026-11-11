@@ -15,7 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 fs2 = "0.4"
 tempfile = "3"
-zstd = "0.13"
+zstd = "0.14"
 
 [dev-dependencies]
 mixless-analyze.workspace = true

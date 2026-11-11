@@ -16,16 +16,19 @@ impl AlbumClient {
             mixless_net::agent(&url, Duration::from_secs(15)).map_err(SpotifyError::Http)?;
         let response = match agent
             .get(&url)
-            .set("User-Agent", "Mozilla/5.0 Mixless/0.1")
+            .header("User-Agent", "Mozilla/5.0 Mixless/0.1")
             .call()
+            .map_err(mixless_net::HttpError::Transport)
+            .and_then(mixless_net::check_response)
         {
             Ok(response) => response,
-            Err(ureq::Error::Status(404, _)) => return Ok(None),
+            Err(mixless_net::HttpError::Status(404, _)) => return Ok(None),
             Err(error) => return Err(http_error(error)),
         };
         const LIMIT: u64 = 4 * 1024 * 1024;
         let mut html = String::new();
         response
+            .into_body()
             .into_reader()
             .take(LIMIT + 1)
             .read_to_string(&mut html)

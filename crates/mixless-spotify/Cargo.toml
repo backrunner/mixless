@@ -7,10 +7,10 @@ description = "Public playlist metadata via Spotify embed. No audio bytes."
 
 [dependencies]
 mixless-net = { path = "../mixless-net" }
-base64 = "0.22"
+base64 = "0.23"
 mixless-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-ureq = { version = "2", features = ["tls"] }
+ureq = { version = "3", features = ["rustls"] }
 url = "2"

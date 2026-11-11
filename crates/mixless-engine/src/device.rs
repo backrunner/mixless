@@ -122,7 +122,7 @@ pub fn output_devices() -> Result<Vec<AudioDevice>, DeviceError> {
         .output_devices()
         .map_err(audio_error)?
         .map(|device| {
-            let name = device.name().map_err(audio_error)?;
+            let name = device.description().map_err(audio_error)?.name().to_owned();
             let configs: Vec<_> = device
                 .supported_output_configs()
                 .map_err(audio_error)?
@@ -132,16 +132,15 @@ pub fn output_devices() -> Result<Vec<AudioDevice>, DeviceError> {
                 .filter(|rate| {
                     configs.iter().any(|c| {
                         supported_format(c.sample_format())
-                            && c.min_sample_rate().0 <= *rate
-                            && c.max_sample_rate().0 >= *rate
+                            && c.min_sample_rate() <= *rate
+                            && c.max_sample_rate() >= *rate
                     })
                 })
                 .collect();
             let current_sample_rate = device
                 .default_output_config()
                 .map_err(audio_error)?
-                .sample_rate()
-                .0;
+                .sample_rate();
             #[cfg(target_os = "macos")]
             let hardware = macos::HardwareOutput::query(Some(&name));
             #[cfg(target_os = "macos")]
@@ -161,7 +160,7 @@ pub fn output_devices() -> Result<Vec<AudioDevice>, DeviceError> {
                         .iter()
                         .copied()
                         .filter(move |rate| {
-                            c.min_sample_rate().0 <= *rate && c.max_sample_rate().0 >= *rate
+                            c.min_sample_rate() <= *rate && c.max_sample_rate() >= *rate
                         })
                         .map(move |sample_rate| AudioOutputFormat {
                             sample_rate,
@@ -201,7 +200,7 @@ fn find_device(name: Option<&str>) -> Result<cpal::Device, DeviceError> {
         Some(name) => host
             .output_devices()
             .map_err(audio_error)?
-            .find(|d| d.name().ok().as_deref() == Some(name))
+            .find(|d| d.description().ok().is_some_and(|d| d.name() == name))
             .ok_or_else(|| audio_error(format!("device unavailable: {name}"))),
     }
 }
@@ -214,7 +213,7 @@ fn stream_config(
     required_channels: u16,
 ) -> Result<(cpal::StreamConfig, cpal::SampleFormat), DeviceError> {
     let default = device.default_output_config().map_err(audio_error)?;
-    let rate = rate.unwrap_or(default.sample_rate().0);
+    let rate = rate.unwrap_or(default.sample_rate());
     if !AudioConfig::supports_sample_rate(rate) {
         return Err(audio_error(
             "sample rate must be between 8000 and 192000 Hz",
@@ -228,8 +227,8 @@ fn stream_config(
                 && (c.channels() >= required_channels
                     || c.channels() == 1 && required_channels == 2)
                 && bit_depth.is_none_or(|bits| c.sample_format().sample_size() * 8 == bits as usize)
-                && c.min_sample_rate().0 <= rate
-                && c.max_sample_rate().0 >= rate
+                && c.min_sample_rate() <= rate
+                && c.max_sample_rate() >= rate
         })
         .min_by_key(|c| {
             (
@@ -244,7 +243,7 @@ fn stream_config(
         })?;
     let buffer_size = select_buffer_size(buffer, supported.buffer_size())?;
     let format = supported.sample_format();
-    let mut config = supported.with_sample_rate(cpal::SampleRate(rate)).config();
+    let mut config = supported.with_sample_rate(rate).config();
     config.buffer_size = buffer_size;
     Ok((config, format))
 }
@@ -317,7 +316,11 @@ impl OutputStreams {
         }
         let settings = &resolved;
         let master_device = find_device(settings.master_device.as_deref())?;
-        let device_name = master_device.name().map_err(audio_error)?;
+        let device_name = master_device
+            .description()
+            .map_err(audio_error)?
+            .name()
+            .to_owned();
         let shared_device = settings.cue_device.as_ref() == Some(&device_name);
         let master_required = settings
             .master_channels
@@ -375,13 +378,13 @@ impl OutputStreams {
         let cue_pair = settings.cue_channels;
         #[cfg(target_os = "macos")]
         let mut hardware = vec![master_hardware];
-        let mut rt = AudioRt::new(config.sample_rate.0 as f32);
+        let mut rt = AudioRt::new(config.sample_rate as f32);
         let cue = if shared_device {
             let (producer, consumer) = rtrb::RingBuffer::new(2048);
             rt.cue_output = Some(CueWriter::new(
                 producer,
-                config.sample_rate.0,
-                config.sample_rate.0,
+                config.sample_rate,
+                config.sample_rate,
             ));
             shared_cue = Some(consumer);
             cue_output = Some(master_output.clone());
@@ -412,8 +415,8 @@ impl OutputStreams {
             let (producer, mut consumer) = rtrb::RingBuffer::<[f32; 2]>::new(8192);
             rt.cue_output = Some(CueWriter::new(
                 producer,
-                config.sample_rate.0,
-                cue_config.sample_rate.0,
+                config.sample_rate,
+                cue_config.sample_rate,
             ));
             let cue_shared = shared.clone();
             let cue_enabled = enabled.clone();
@@ -475,7 +478,7 @@ impl OutputStreams {
             master,
             cue,
             enabled,
-            sample_rate: config.sample_rate.0,
+            sample_rate: config.sample_rate,
             device_name,
             cue_name: settings.cue_device.clone(),
             master_output,
@@ -554,10 +557,10 @@ fn output_snapshot(
     format: cpal::SampleFormat,
 ) -> mixless_protocol::AudioOutputSnapshot {
     mixless_protocol::AudioOutputSnapshot {
-        sample_rate: config.sample_rate.0,
+        sample_rate: config.sample_rate,
         hardware_format: None,
         stream_format: AudioOutputFormat {
-            sample_rate: config.sample_rate.0,
+            sample_rate: config.sample_rate,
             bit_depth: (format.sample_size() * 8) as u16,
             is_float: format.is_float(),
         }
@@ -586,7 +589,7 @@ fn build_stream(
     on_error: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream, DeviceError> {
     let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
+    let sample_rate = config.sample_rate;
     match format {
         cpal::SampleFormat::F32 => device.build_output_stream(
             config,

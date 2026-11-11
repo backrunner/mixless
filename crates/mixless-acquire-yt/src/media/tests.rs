@@ -89,7 +89,7 @@ fn native_aac_encoding_and_remux_preserve_audio_and_metadata() {
         let tag = tagged.primary_tag().unwrap();
         assert_eq!(tag.title().as_deref(), Some(job.title.as_str()));
         assert_eq!(tag.artist().as_deref(), Some(job.artist.as_str()));
-        assert_eq!(tag.get_string(&ItemKey::Isrc), job.isrc.as_deref());
+        assert_eq!(tag.get_string(ItemKey::Isrc), job.isrc.as_deref());
         assert_eq!(packets(&encoded), packets(&remuxed));
     }
 }

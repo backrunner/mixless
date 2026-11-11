@@ -2,13 +2,13 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymError;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::TrackType;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -72,53 +72,53 @@ pub fn decode_file(path: &Path) -> Result<Arc<AudioBuffer>, DecodeError> {
     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe().format(
+    let probed = symphonia::default::get_probe().probe(
         &hint,
         mss,
-        &FormatOptions::default(),
-        &MetadataOptions::default(),
+        FormatOptions::default(),
+        MetadataOptions::default(),
     )?;
-    let mut format = probed.format;
+    let mut format = probed;
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .default_track(TrackType::Audio)
         .ok_or(DecodeError::NoTrack)?;
     let track_id = track.id;
     let mut sr = None;
-    let mut decoder =
-        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let mut decoder = symphonia::default::get_codecs().make_audio_decoder(
+        track
+            .codec_params
+            .as_ref()
+            .and_then(|p| p.audio())
+            .ok_or(DecodeError::NoTrack)?,
+        &AudioDecoderOptions::default().gapless(false),
+    )?;
 
-    let capacity = track
-        .codec_params
-        .n_frames
-        .unwrap_or(0)
-        .min(48_000 * 60 * 30) as usize
-        * 2;
+    let capacity = track.num_frames.unwrap_or(0).min(48_000 * 60 * 30) as usize * 2;
     let mut samples = Vec::with_capacity(capacity);
 
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => break,
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(error) => return Err(error.into()),
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         match decoder.decode(&packet) {
             Ok(buf) => {
-                let rate = buf.spec().rate;
-                let channels = buf.spec().channels.count();
+                let rate = buf.spec().rate();
+                let channels = buf.spec().channels().count();
                 if rate == 0 || channels == 0 || sr.is_some_and(|previous| previous != rate) {
                     return Err(DecodeError::Sym("invalid or changing audio format".into()));
                 }
                 sr = Some(rate);
-                // SampleBuffer handles every Symphonia sample type, including
+                // Generic conversion handles every Symphonia sample type, including
                 // 24-bit PCM. The old match silently discarded those formats.
-                let mut pcm = SampleBuffer::<f32>::new(buf.capacity() as u64, *buf.spec());
-                pcm.copy_interleaved_ref(buf);
-                for frame in pcm.samples().chunks_exact(channels) {
+                let mut pcm = vec![0f32; buf.samples_interleaved()];
+                buf.copy_to_slice_interleaved(&mut pcm);
+                for frame in pcm.chunks_exact(channels) {
                     let l = frame[0];
                     let r = frame[usize::from(channels > 1)];
                     if !l.is_finite() || !r.is_finite() {

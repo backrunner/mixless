@@ -158,12 +158,12 @@ mod tests {
         .write_to(&mut bytes, image::ImageFormat::Png)
         .unwrap();
         let mut id3 = Tag::new(TagType::Id3v2);
-        id3.push_picture(Picture::new_unchecked(
-            PictureType::CoverFront,
-            Some(MimeType::Png),
-            None,
-            bytes.into_inner(),
-        ));
+        id3.push_picture(
+            Picture::unchecked(bytes.into_inner())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(MimeType::Png)
+                .build(),
+        );
         id3.save_to_path(&path, WriteOptions::default()).unwrap();
         let id = core.library.import_file(Path::new(&path)).unwrap();
         let cover = core

@@ -46,7 +46,7 @@ impl Library {
         tx.execute(
             "DELETE FROM best_orders WHERE cache_key NOT IN
             (SELECT cache_key FROM best_orders ORDER BY last_used DESC LIMIT ?1)",
-            [MAX_ORDERS],
+            [MAX_ORDERS as i64],
         )?;
         tx.commit()?;
         Ok(())

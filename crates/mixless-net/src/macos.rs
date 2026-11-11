@@ -128,13 +128,16 @@ fn choose(proxies: CFArrayRef, target: &CFURL, allow_pac: bool) -> Result<Option
                 .read_to_end(&mut bytes)
                 .map_err(|_| "Cannot read the automatic proxy script")?;
             } else if matches!(parsed.scheme(), "http" | "https") {
-                ureq::AgentBuilder::new()
-                    .try_proxy_from_env(false)
-                    .timeout(Duration::from_secs(10))
+                let agent: ureq::Agent = ureq::Agent::config_builder()
+                    .proxy(None)
+                    .timeout_global(Some(Duration::from_secs(10)))
                     .build()
+                    .into();
+                agent
                     .get(&url)
                     .call()
                     .map_err(|_| "Cannot download the automatic proxy script")?
+                    .into_body()
                     .into_reader()
                     .take(1024 * 1024 + 1)
                     .read_to_end(&mut bytes)

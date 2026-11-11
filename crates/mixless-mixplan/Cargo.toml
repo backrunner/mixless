@@ -7,6 +7,7 @@ description = "AI mix planner. Depends only on mixless-protocol."
 
 [dependencies]
 mixless-protocol = { workspace = true }
+rayon = "1"
 
 [features]
 # Count candidate rejections per source line for offline audits.

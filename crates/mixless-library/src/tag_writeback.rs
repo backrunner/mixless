@@ -1,6 +1,7 @@
 //! Atomic tag writeback preserves audio identity and the analyses derived from it.
 use super::*;
 use lofty::{config::WriteOptions, tag::Tag};
+mod mp4;
 
 impl Library {
     /// Runs on an import/analysis worker. Unsupported/read-only files return an
@@ -23,7 +24,7 @@ impl Library {
         let mut changed = false;
         let mut text = |key, value: Option<String>| {
             if let Some(value) = value.filter(|s| !s.trim().is_empty()) {
-                if tag.get_string(&key) != Some(value.as_str()) {
+                if tag.get_string(key) != Some(value.as_str()) {
                     tag.insert_text(key, value);
                     changed = true;
                 }
@@ -41,10 +42,7 @@ impl Library {
         );
         text(ItemKey::AlbumTitle, track.album.clone());
         text(ItemKey::Isrc, track.isrc.clone());
-        if matches!(
-            tag_type,
-            lofty::tag::TagType::Id3v2 | lofty::tag::TagType::Mp4Ilst
-        ) {
+        if tag_type == lofty::tag::TagType::Id3v2 {
             text(
                 ItemKey::IntegerBpm,
                 track
@@ -74,6 +72,13 @@ impl Library {
                 }
             }),
         );
+        // Generic Tag -> MP4 conversion writes text items as UTF-8, even for
+        // IntegerBpm. Keep the format-specific integer and opaque DJ atoms.
+        let mp4 = (tag_type == lofty::tag::TagType::Mp4Ilst).then(|| {
+            let (ilst, repaired) = mp4::with_tempo(tag.clone(), track.bpm);
+            changed |= repaired;
+            ilst
+        });
         if !changed {
             return Ok(false);
         }
@@ -85,6 +90,9 @@ impl Library {
             .into());
         }
         let audio_hash = self.stem_hash(path)?;
+        // Compare source bytes with the current identity algorithm while
+        // retaining an existing cache identity from an older algorithm.
+        let verified_audio = stem_content_hash(path)?;
         // Keep existing container fields, pictures, and unrelated DJ tags.
         let staged = tempfile::Builder::new()
             .prefix(".mixless-tags-")
@@ -94,9 +102,14 @@ impl Library {
             ))
             .tempfile_in(path.parent().unwrap_or(Path::new(".")))?;
         fs::copy(path, staged.path())?;
-        tagged.save_to_path(staged.path(), WriteOptions::default())?;
+        if let Some(ilst) = mp4 {
+            use lofty::prelude::TagExt;
+            ilst.save_to_path(staged.path(), WriteOptions::default())?;
+        } else {
+            tagged.save_to_path(staged.path(), WriteOptions::default())?;
+        }
         fs::File::open(staged.path())?.sync_all()?;
-        if stem_content_hash(staged.path())? != audio_hash {
+        if stem_content_hash(staged.path())? != verified_audio {
             return Err(std::io::Error::other("Tag writer changed the audio stream").into());
         }
         let after = content_hash(staged.path())?;
@@ -146,6 +159,12 @@ mod tests {
     use super::*;
     #[test]
     fn writes_tags_atomically_preserves_audio_cues_analysis_and_unrelated_tags() {
+        for legacy in [false, true] {
+            verify_metadata_write(legacy);
+        }
+    }
+
+    fn verify_metadata_write(legacy: bool) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("source.wav");
         let mut wav = hound::WavWriter::create(
@@ -168,6 +187,13 @@ mod tests {
         tag.save_to_path(&path, WriteOptions::default()).unwrap();
         let lib = Library::open(&dir.path().join("library.db")).unwrap();
         let id = lib.import_file(&path).unwrap();
+        let audio = lib.stem_hash(&path).unwrap();
+        if legacy {
+            lib.conn.lock().unwrap().execute(
+                "UPDATE stem_identities SET audio_hash='audio-v1-existing-cache' WHERE audio_hash=?1",
+                [&audio],
+            ).unwrap();
+        }
         let audio = lib.stem_hash(&path).unwrap();
         lib.set_recording_metadata(id, "Known song", "Known artist", Some("USABC1234567"))
             .unwrap();
@@ -194,11 +220,11 @@ mod tests {
         assert_eq!(saved, track.content_hash);
         let tagged = Probe::open(&path).unwrap().read().unwrap();
         let tag = tagged.primary_tag().unwrap();
-        assert_eq!(tag.get_string(&ItemKey::Comment), Some("Keep this DJ note"));
+        assert_eq!(tag.get_string(ItemKey::Comment), Some("Keep this DJ note"));
         assert_eq!(tag.title().as_deref(), Some("Known song"));
         assert_eq!(tag.artist().as_deref(), Some("Known artist"));
-        assert_eq!(tag.get_string(&ItemKey::InitialKey), Some("Am"));
-        assert_eq!(tag.get_string(&ItemKey::IntegerBpm), Some("128"));
+        assert_eq!(tag.get_string(ItemKey::InitialKey), Some("Am"));
+        assert_eq!(tag.get_string(ItemKey::IntegerBpm), Some("128"));
         assert_eq!(lib.cues(id).unwrap()[0].frame, 1200);
         assert!(!lib.write_track_metadata(id).unwrap());
         fs::write(&path, b"different audio").unwrap();

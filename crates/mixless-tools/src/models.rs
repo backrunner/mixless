@@ -25,7 +25,12 @@ fn valid(dir: &Path, model: &ModelArtifact) -> Result<bool> {
         }
         digest.update(&buf[..n]);
     }
-    Ok(format!("{:x}", digest.finalize()) == model.sha256)
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        == model.sha256)
 }
 
 pub fn verify(dir: &Path) -> Result<()> {

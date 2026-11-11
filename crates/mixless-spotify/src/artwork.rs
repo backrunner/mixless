@@ -13,11 +13,14 @@ pub struct ArtworkClient {
 impl Default for ArtworkClient {
     fn default() -> Self {
         Self {
-            agent: ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(15))
-                .redirects(0)
+            agent: ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(Duration::from_secs(15)))
+                .max_redirects(0)
+                .max_redirects_will_error(false)
                 .user_agent("Mixless/0.1")
-                .build(),
+                .build()
+                .into(),
         }
     }
 }
@@ -33,19 +36,27 @@ impl ArtworkClient {
             .get("https://open.spotify.com/oembed")
             .query("url", &format!("https://open.spotify.com/track/{track_id}"))
             .call()
+            .map_err(mixless_net::HttpError::Transport)
+            .and_then(mixless_net::check_response)
         {
             Ok(response) => response,
-            Err(ureq::Error::Status(404, _)) => return Ok(None),
+            Err(mixless_net::HttpError::Status(404, _)) => return Ok(None),
             Err(error) => return Err(http_error(error)),
         };
-        let metadata = read_bounded(response.into_reader(), MAX_METADATA)?;
+        let metadata = read_bounded(response.into_body().into_reader(), MAX_METADATA)?;
         let value = serde_json::from_slice(&metadata)
             .map_err(|e| SpotifyError::Parse(format!("artwork metadata: {e}")))?;
         let Some(url) = artwork_url(&value)? else {
             return Ok(None);
         };
-        let response = self.agent.get(&url).call().map_err(http_error)?;
-        read_bounded(response.into_reader(), MAX_IMAGE).map(Some)
+        let response = self
+            .agent
+            .get(&url)
+            .call()
+            .map_err(mixless_net::HttpError::Transport)
+            .and_then(mixless_net::check_response)
+            .map_err(http_error)?;
+        read_bounded(response.into_body().into_reader(), MAX_IMAGE).map(Some)
     }
 }
 

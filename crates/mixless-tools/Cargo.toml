@@ -10,9 +10,9 @@ description = "Native development and packaging tools"
 serde = { workspace = true }
 serde_json = { workspace = true }
 mixless-protocol = { workspace = true }
-sha2 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-zip = { version = "2.4", default-features = false, features = ["deflate"] }
+sha2 = "0.11"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+zip = { version = "9.5", default-features = false, features = ["deflate"] }
 tempfile = "3"
 
 [dev-dependencies]

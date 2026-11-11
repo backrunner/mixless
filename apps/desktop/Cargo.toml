@@ -31,14 +31,15 @@ tracing-subscriber = { workspace = true }
 lofty = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "json"] }
 semver = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile = "3"
 fs2 = "0.4"
 async-channel = "2"
 
 [dev-dependencies]
+rusqlite = { workspace = true }
 mixless-midi = { workspace = true }
 gpui = { workspace = true, features = ["test-support"] }
 wat = "1"

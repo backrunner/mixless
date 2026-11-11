@@ -14,15 +14,15 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 blake3.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-sha2 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+sha2 = "0.11"
 hound = "3"
 rustfft = "6"
 fs2 = "0.4"
 tempfile = "3"
 symphonia.workspace = true
 libflac-sys = { version = "0.3.4", default-features = false, features = ["build-flac"] }
-mp3lame-encoder = "0.2.5"
+mp3lame-encoder = "0.3.0"
 
 # ONNX Runtime ships no x86_64-apple-darwin prebuilt (dropped by upstream and
 # pyke ort after 1.23). Inference is gated off there; cached stems still play.
@@ -34,7 +34,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["coreml"
 onnx-protobuf = "0.2.3"
 # onnx-protobuf's generated bindings require this exact protobuf version.
 protobuf = "=3.4.0"
-libloading = "0.8"
+libloading = "0.9"
 libc = "0.2"
 
 [dev-dependencies]

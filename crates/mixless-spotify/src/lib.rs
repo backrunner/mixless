@@ -72,10 +72,12 @@ impl SpotifyClient {
                     .map_err(SpotifyError::Http)?;
                 let response = agent
                     .get(url)
-                    .set("Authorization", &format!("Bearer {token}"))
+                    .header("Authorization", &format!("Bearer {token}"))
                     .call()
+                    .map_err(mixless_net::HttpError::Transport)
+                    .and_then(mixless_net::check_response)
                     .map_err(http_error)?;
-                serde_json::from_reader(response.into_reader())
+                serde_json::from_reader(response.into_body().into_reader())
                     .map_err(|e| SpotifyError::Parse(e.to_string()))
             });
         }
@@ -84,10 +86,13 @@ impl SpotifyClient {
             .map_err(SpotifyError::Http)?;
         let html = agent
             .get(&url)
-            .set("User-Agent", "Mozilla/5.0 Mixless/0.1")
+            .header("User-Agent", "Mozilla/5.0 Mixless/0.1")
             .call()
+            .map_err(mixless_net::HttpError::Transport)
+            .and_then(mixless_net::check_response)
             .map_err(http_error)?
-            .into_string()
+            .into_body()
+            .read_to_string()
             .map_err(|e| SpotifyError::Http(e.to_string()))?;
         parse_embed(&html, &id)
     }
@@ -106,24 +111,29 @@ impl SpotifyClient {
             .map_err(SpotifyError::Http)?;
         let html = agent
             .get(&url)
-            .set("User-Agent", "Mozilla/5.0 Mixless/0.1")
+            .header("User-Agent", "Mozilla/5.0 Mixless/0.1")
             .call()
+            .map_err(mixless_net::HttpError::Transport)
+            .and_then(mixless_net::check_response)
             .map_err(http_error)?
-            .into_string()
+            .into_body()
+            .read_to_string()
             .map_err(|e| SpotifyError::Http(e.to_string()))?;
         page::parse(&html, &id)
     }
 }
-fn http_error(error: ureq::Error) -> SpotifyError {
+fn http_error(error: mixless_net::HttpError) -> SpotifyError {
     let message = match error {
-        ureq::Error::Status(401, _) => "login expired; reconnect Spotify".into(),
-        ureq::Error::Status(403 | 404, _) => {
+        mixless_net::HttpError::Status(401, _) => "login expired; reconnect Spotify".into(),
+        mixless_net::HttpError::Status(403 | 404, _) => {
             "playlist is private, unavailable, or not accessible to this account".into()
         }
-        ureq::Error::Status(429, response) => {
+        mixless_net::HttpError::Status(429, response) => {
             return SpotifyError::RateLimited(
                 response
-                    .header("Retry-After")
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(60),
             );
