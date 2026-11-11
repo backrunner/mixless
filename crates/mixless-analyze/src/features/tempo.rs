@@ -68,6 +68,26 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
             centers.push(candidate);
         }
     }
+    let original_count = centers.len();
+    // Search peaks of the multi-lag comb itself. A broad/syncopated onset
+    // pattern can move the strongest fundamental lag away from the beat,
+    // while its second/fourth harmonics still identify the correct period.
+    let coarse: Vec<_> = (0..=((MAX_BPM - MIN_BPM) * 10.) as usize)
+        .map(|i| {
+            let bpm = MIN_BPM + i as f32 * 0.1;
+            (bpm, comb(bpm))
+        })
+        .collect();
+    let mut peaks: Vec<_> = (1..coarse.len() - 1)
+        .filter(|&i| coarse[i].1 >= coarse[i - 1].1 && coarse[i].1 > coarse[i + 1].1)
+        .collect();
+    peaks.sort_by(|&a, &b| coarse[b].1.total_cmp(&coarse[a].1));
+    for i in peaks.into_iter().take(12) {
+        let candidate = coarse[i].0;
+        if !centers.iter().any(|b| (b - candidate).abs() < 0.5) {
+            centers.push(candidate);
+        }
+    }
     // A true tempo still correlates at its harmonic lags; a 3/4 or 4/3 alias
     // does not. Gate and rank candidates on that comb evidence.
     let best_comb = centers
@@ -80,7 +100,16 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
     let mut fit = 0.;
     let mut phase = 0.;
     let mut selected_mid = mid;
-    for center in centers {
+    for (index, center) in centers.into_iter().enumerate() {
+        if index == original_count {
+            let support = alignment_confidence(frames, bpm, phase);
+            // Keep an already evidenced grid. Broader searches are a repair
+            // for weak phase support, not permission to re-meter a good song.
+            if support >= 0.65 {
+                break;
+            }
+            fit *= 0.15 + 0.85 * support.powi(2);
+        }
         for step in -12..=12 {
             let candidate = center + step as f32 * 0.05;
             if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
@@ -93,6 +122,14 @@ pub(super) fn tempo(frames: &[Frame], duration: f32) -> (f32, f32, f32) {
             }
             let weight = strength / best_comb.max(1e-6);
             let (score, j) = fold(frames, candidate);
+            let phase_support =
+                alignment_confidence(frames, candidate, (j as f32 + 0.5) / 64. * period);
+            let score = score
+                * if index < original_count {
+                    1.
+                } else {
+                    0.15 + 0.85 * phase_support.powi(2)
+                };
             // Keep the original metrical interpretation for near-ties.
             if score * weight > fit * 1.005 {
                 fit = score * weight;
@@ -274,4 +311,25 @@ pub(super) fn pulse_confidence(frames: &[Frame], bpm: f32, phase: f32) -> f32 {
         .clamp(0., 1.);
     let dominance = ((supported - median) / (peak - median).max(1e-6) / 0.85).clamp(0., 1.);
     (prominence * dominance).min(alignment_confidence(frames, bpm, phase))
+}
+
+#[cfg(test)]
+#[test]
+fn a_broad_fundamental_peak_does_not_hide_the_measured_beat() {
+    // Quantized measured onset envelopes from the reported Aeipathy recording.
+    // No PCM or tonal information. Single-lag aliases previously picked 102.4.
+    let rows: Vec<[f32; 2]> =
+        serde_json::from_str(include_str!("fixtures/syncopated-onsets.json")).unwrap();
+    let frames: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, v)| Frame {
+            time: (i * HOP + FFT / 2) as f32 / SR,
+            onset: v[0],
+            low_onset: v[1],
+            ..Default::default()
+        })
+        .collect();
+    let (bpm, _, _) = tempo(&frames, frames.last().unwrap().time);
+    assert!((bpm - 128.).abs() < 0.15, "{bpm}");
 }

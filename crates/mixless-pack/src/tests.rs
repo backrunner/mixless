@@ -42,6 +42,7 @@ fn track(lib: &Library, root: &Path, name: &str, seed: f32) -> TrackId {
         mix_regions: vec![],
         bars: vec![],
         moments: vec![],
+        tonal_frames: vec![],
         stems: None,
         waveform_path: None,
         partial: false,

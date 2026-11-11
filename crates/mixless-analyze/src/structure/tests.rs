@@ -249,3 +249,102 @@ fn snare_roll_can_build_tension_without_getting_louder() {
         "{sections:?}"
     );
 }
+
+#[test]
+fn spectral_opening_arrivals_preserve_build_until_full_band_restart() {
+    // Numeric bar descriptors only, no source audio or local paths. Checkpoints
+    // cover sustained regions, not the detector's exact boundary timestamps.
+    let tracks: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/spectral-arrivals.json")).unwrap();
+    for track in tracks.as_array().unwrap() {
+        let mut measured = bars(track["bars"].as_array().unwrap().len());
+        for (b, row) in measured.iter_mut().zip(track["bars"].as_array().unwrap()) {
+            let value = |i: usize| row[i].as_f64().unwrap() as f32;
+            b.start_sec = value(0);
+            b.end_sec = value(1);
+            b.rms = value(2);
+            b.low_db = value(3);
+            b.mid_db = value(4);
+            b.high_db = value(5);
+            b.onset_density = value(6);
+            b.kick_salience = value(7);
+            b.vocal_presence = value(8);
+            b.vocal_confidence = row[9].as_f64().map(|x| x as f32);
+            b.chroma = std::array::from_fn(|i| row[10][i].as_f64().unwrap() as f32);
+        }
+        let downbeats = track["downbeats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap() as f32)
+            .collect::<Vec<_>>();
+        let (sections, _) = detect(&mut measured, &downbeats);
+        for check in track["checks"].as_array().unwrap() {
+            let label: S = serde_json::from_value(check[2].clone()).unwrap();
+            for sec in check[0].as_u64().unwrap()..check[1].as_u64().unwrap() {
+                let section = sections
+                    .iter()
+                    .find(|s| sec as f32 >= s.start_sec && (sec as f32) < s.end_sec)
+                    .unwrap();
+                assert_eq!(
+                    section.label, label,
+                    "{} at {sec}s: {sections:?}",
+                    track["title"]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn spectral_restart_needs_sustained_bands_and_rhythm_and_preserves_a_full_earlier_peak() {
+    for gain in [0.25f32, 1., 2.] {
+        for shift in [0., 23.] {
+            let mut b = bars(48);
+            for bar in &mut b {
+                bar.rms *= gain;
+                bar.low_db += 20. * gain.log10();
+                bar.mid_db += 20. * gain.log10();
+                bar.high_db += 20. * gain.log10();
+                bar.start_sec += shift;
+                bar.end_sec += shift;
+            }
+            b[15].low_db -= 12.;
+            b[15].kick_salience = 0.;
+            let state = vec![true; b.len()];
+            assert!(
+                dynamics::resolve_opening(&b, &mut state.clone()).is_none(),
+                "bass mute alone"
+            );
+            b[16].high_db += 6.;
+            assert!(
+                dynamics::resolve_opening(&b, &mut state.clone()).is_none(),
+                "one impact"
+            );
+            for bar in &mut b[16..] {
+                bar.high_db += 6.;
+            }
+            assert_eq!(
+                dynamics::resolve_opening(&b, &mut state.clone()),
+                Some((0, 16))
+            );
+            for bar in &mut b[16..] {
+                bar.kick_salience = 0.;
+            }
+            assert!(
+                dynamics::resolve_opening(&b, &mut state.clone()).is_none(),
+                "bright sustained noise is not a drop"
+            );
+            let mut long = bars(64);
+            long[31].low_db -= 12.;
+            long[31].kick_salience = 0.;
+            for bar in &mut long[32..] {
+                bar.high_db += 6.;
+            }
+            assert!(
+                dynamics::resolve_opening(&long, &mut vec![true; 64]).is_none(),
+                "completed earlier peak"
+            );
+        }
+    }
+}

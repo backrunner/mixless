@@ -198,6 +198,7 @@ impl Analyzer {
             phrase_boundaries: vec![],
             mix_regions: vec![],
             moments: vec![],
+            tonal_frames: vec![],
             stems: None,
             waveform_path: None,
             partial: true,

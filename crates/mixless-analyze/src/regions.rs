@@ -77,7 +77,6 @@ pub(super) fn detect(t: &TrackAnalysis) -> Vec<MixRegion> {
             let mut rms = 0.;
             let mut vocal = 0.;
             let mut kick = 0.;
-            let mut chroma = [0f32; 12];
             // The first/last eight bars describe the actual reveal/exit, rather
             // than averaging a busy chorus into an otherwise quiet long window.
             let evidence: Vec<_> = if kind == Kind::In {
@@ -85,20 +84,26 @@ pub(super) fn detect(t: &TrackAnalysis) -> Vec<MixRegion> {
             } else {
                 t.bars[..=index].iter().rev().take(8).collect()
             };
+            let tonal_start = evidence
+                .iter()
+                .map(|b| b.start_sec.max(start))
+                .fold(end, f32::min);
+            let tonal_end = evidence
+                .iter()
+                .map(|b| b.end_sec.min(end))
+                .fold(start, f32::max);
             for b in evidence {
                 let seconds = (b.end_sec.min(end) - b.start_sec.max(start)).max(0.);
                 duration += seconds;
                 rms += b.rms * b.rms * seconds;
                 vocal += b.vocal_presence.max(b.vocal_confidence.unwrap_or(0.)) * seconds;
                 kick += b.kick_salience * seconds;
-                for i in 0..12 {
-                    chroma[i] += b.chroma[i] * seconds * b.rms;
-                }
             }
             if duration <= 0. {
                 continue;
             }
-            let (_, camelot, key_confidence) = crate::features::key(&chroma);
+            let (_, camelot, key_confidence) =
+                mixless_protocol::local_tonality(t, tonal_start, tonal_end);
             let section = t.bars[index].section;
             let structure = match (kind, section) {
                 (Kind::In, S::Intro | S::Break | S::Breakdown | S::Drop)

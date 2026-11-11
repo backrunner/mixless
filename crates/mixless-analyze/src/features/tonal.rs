@@ -13,6 +13,16 @@ pub(super) struct TonalAnalysis {
 }
 
 impl TonalAnalysis {
+    pub fn into_frames(self, duration: f32) -> Vec<mixless_protocol::TonalFrame> {
+        self.frames
+            .into_iter()
+            .map(|(time, chroma)| mixless_protocol::TonalFrame {
+                start_sec: (time - STEP as f32 / (2. * SR)).max(0.),
+                end_sec: (time + STEP as f32 / (2. * SR)).min(duration),
+                chroma,
+            })
+            .collect()
+    }
     pub fn chroma(&self, start: f32, end: f32) -> [f32; 12] {
         let mut chroma = [0.; 12];
         let first = self.frames.partition_point(|f| f.0 < start);
@@ -98,9 +108,18 @@ pub(super) fn analyze(mono: &[f32]) -> TonalAnalysis {
     let mut global = [0.; 12];
     let mut windows = Vec::new();
     let mut local = [0.; 12];
-    let phrase_frames = (16. * SR / STEP as f32) as usize;
+    let mut window_end = 16.;
     let mut chroma_frames = Vec::with_capacity(frames.len());
-    for (index, (time, peaks)) in frames.iter().enumerate() {
+    for (time, peaks) in &frames {
+        // Skipped silent frames must not make a sixteen-second context span
+        // unrelated material on the other side of a long pause.
+        if *time >= window_end {
+            if local.iter().sum::<f32>() > 0. {
+                windows.push(key(&local));
+            }
+            local = [0.; 12];
+            window_end = ((*time / 16.).floor() + 1.) * 16.;
+        }
         let mut chroma = [0.; 12];
         for &(note, weight) in peaks {
             let pitch = note - detuning;
@@ -116,10 +135,6 @@ pub(super) fn analyze(mono: &[f32]) -> TonalAnalysis {
             local[pc] += chroma[pc];
         }
         chroma_frames.push((*time, chroma));
-        if (index + 1) % phrase_frames == 0 {
-            windows.push(key(&local));
-            local = [0.; 12];
-        }
     }
     if local.iter().sum::<f32>() > 0. {
         windows.push(key(&local));
@@ -138,6 +153,47 @@ pub(super) fn analyze(mono: &[f32]) -> TonalAnalysis {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_spectra_preserve_two_keys_across_silence_time_shift_and_gain() {
+        let tone = |root: f32| {
+            (0..(SR * 4.) as usize)
+                .map(|i| {
+                    let t = i as f32 / SR;
+                    [0., 4., 7.]
+                        .iter()
+                        .map(|n| {
+                            let hz = 440. * 2f32.powf((48. + root + n - 69.) / 12.);
+                            (std::f32::consts::TAU * hz * t).sin()
+                        })
+                        .sum::<f32>()
+                        * 0.2
+                })
+                .collect::<Vec<_>>()
+        };
+        for gain in [0.01, 1., 2.] {
+            for offset in [0., 2.] {
+                let mut samples = vec![0.; (offset * SR) as usize];
+                samples.extend(tone(0.).into_iter().map(|v| v * gain));
+                samples.extend(vec![0.; (20. * SR) as usize]);
+                samples.extend(tone(6.).into_iter().map(|v| v * gain));
+                let result = analyze(&samples);
+                assert_eq!(
+                    key(&result.chroma(offset + 0.5, offset + 3.5)).1.as_deref(),
+                    Some("8B")
+                );
+                assert_eq!(
+                    key(&result.chroma(offset + 24.5, offset + 27.5))
+                        .1
+                        .as_deref(),
+                    Some("2B")
+                );
+                assert_eq!(
+                    key(&result.chroma(offset + 5., offset + 23.)),
+                    (None, None, 0.)
+                );
+            }
+        }
+    }
     #[test]
     fn all_major_and_minor_triads_survive_detuning_and_unequal_harmonics() {
         for root in 0..12 {

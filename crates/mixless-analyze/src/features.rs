@@ -1,7 +1,10 @@
 mod clock;
+mod meter;
 mod moments;
 mod tempo;
 mod tonal;
+#[cfg(test)]
+mod validation;
 use tempo::tempo;
 
 use mixless_protocol::{
@@ -13,7 +16,7 @@ const FFT: usize = 2048;
 const HOP: usize = 256;
 // Bump whenever bar structure labels or cue-facing features change; cached
 // analyses from older classifiers must not drive Automix.
-pub const ANALYSIS_VERSION: u32 = 23;
+pub const ANALYSIS_VERSION: u32 = 27;
 
 #[derive(Default, Clone)]
 struct Frame {
@@ -264,30 +267,28 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
     // Downbeat phase is estimated from the strongest recurring low-frequency
     // accent. Confidence includes accent ambiguity; a uniform click is not
     // enough evidence for a musical bar-one.
-    let mut accents = [0.; 4];
-    for (i, &beat) in beats.iter().enumerate() {
+    let mut accents = Vec::with_capacity(beats.len());
+    for &beat in &beats {
         let start = frames.partition_point(|f| f.time < beat - 0.06);
         let end = frames.partition_point(|f| f.time <= beat + 0.06);
-        accents[i % 4] += frames[start..end]
-            .iter()
-            .map(|f| f.low_onset)
-            .fold(0., f32::max);
+        accents.push(
+            frames[start..end]
+                .iter()
+                .map(|f| f.low_onset)
+                .fold(0., f32::max),
+        );
     }
-    let downbeat = (0..4)
-        .max_by(|a, b| accents[*a].total_cmp(&accents[*b]))
-        .unwrap_or(0);
-    let mut downbeats: Vec<_> = beats.iter().skip(downbeat).step_by(4).copied().collect();
+    let meter = meter::detect(&accents);
+    let mut downbeats: Vec<_> = beats
+        .iter()
+        .skip(meter.phase)
+        .step_by(meter.beats)
+        .copied()
+        .collect();
     if downbeats.is_empty() {
         downbeats.push(phase.min(duration));
     }
-    let runner_up = accents
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != downbeat)
-        .map(|(_, v)| *v)
-        .fold(0., f32::max);
-    let accent_confidence =
-        ((accents[downbeat] - runner_up) / accents[downbeat].max(1e-6) / 0.3).clamp(0., 1.);
+    let accent_confidence = meter.confidence;
     // A regular click alone cannot identify bar one. Also validate alignment
     // locally so a constant grid fitted to a tempo-changing song is never
     // advertised as reliable throughout that song.
@@ -380,7 +381,8 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             chord: None,
             local_key: None,
             onset_density: attacks / (p[1] - p[0]).max(0.01),
-            kick_salience: (selected.iter().map(|f| f.low_onset / low_max).sum::<f32>() / 4.)
+            kick_salience: (selected.iter().map(|f| f.low_onset / low_max).sum::<f32>()
+                / meter.beats as f32)
                 .clamp(0., 1.),
             hat_salience: (band[2] / total).sqrt(),
             vocal_presence: risk,
@@ -399,7 +401,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
             // Keep the globally fitted BPM stable for library display and
             // fallback consumers. Runtime timing uses the local grid segments.
             global_bpm: bpm,
-            meter_num: 4,
+            meter_num: meter.beats as u8,
             meter_den: 4,
             segments,
             pulse_confidence,
@@ -416,6 +418,7 @@ pub(crate) fn analyze(id: TrackId, stereo: &[f32], sr: u32) -> TrackAnalysis {
         bars,
         phrase_boundaries,
         mix_regions: vec![],
+        tonal_frames: tonal.into_frames(duration),
         moments: moments::extract(&frames, duration),
         stems: None,
         waveform_path: None,

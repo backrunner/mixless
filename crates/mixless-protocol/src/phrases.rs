@@ -1,6 +1,9 @@
 //! Shared phrase semantics for cue suggestions and transition planning.
 use crate::{SectionLabel as S, TrackAnalysis};
 
+mod relative;
+pub use relative::{relative_recoveries, PeakEvidence, PeakScope};
+
 /// Merge adjacent peak variations before applying the minimum duration. A
 /// timbre or vocal change inside a drop does not finish its musical phrase.
 pub fn peak_ranges(track: &TrackAnalysis) -> Vec<(f32, f32)> {
@@ -19,6 +22,21 @@ pub fn peak_ranges(track: &TrackAnalysis) -> Vec<(f32, f32)> {
             }
         }
         peaks.push((s.start_sec, s.end_sec));
+    }
+    // Coarse Drop/Chorus labels can cover a quieter arrangement within a
+    // heavily limited recording. Only independently measured, sustained arrangement
+    // retreat may split such a run; a periodic marker alone never does.
+    for (lo, hi) in relative_recoveries(track) {
+        peaks = peaks
+            .into_iter()
+            .flat_map(|(start, end)| {
+                if lo > start && hi < end {
+                    vec![(start, lo), (hi, end)]
+                } else {
+                    vec![(start, end)]
+                }
+            })
+            .collect();
     }
     peaks.retain(|&(start, end)| end - start >= 3.5 * local_bar(track, start));
     peaks
@@ -218,7 +236,11 @@ pub fn major_peaks(track: &TrackAnalysis) -> Vec<(f32, f32)> {
         .copied()
         .filter(|p| median(p) >= top * 0.87 && p.1 - p.0 >= 7.5 * bar)
         .collect();
-    if major.is_empty() { peaks } else { major }
+    if major.is_empty() {
+        peaks
+    } else {
+        major
+    }
 }
 
 /// The peak a play-through owes: the first major peak still ahead of the

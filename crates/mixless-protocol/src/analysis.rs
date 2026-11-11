@@ -136,6 +136,16 @@ pub struct MusicalMoment {
     pub vocal_confidence: Option<f32>,
 }
 
+/// High-resolution pitch-class observations, on the source clock. Unlike the
+/// transient moments these use the tuned, whitened tonal spectrum. Each frame
+/// owns one hop interval; gaps carry no tonal evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TonalFrame {
+    pub start_sec: f32,
+    pub end_sec: f32,
+    pub chroma: [f32; 12],
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackAnalysis {
     pub track_id: TrackId,
@@ -151,6 +161,8 @@ pub struct TrackAnalysis {
     #[serde(default)]
     pub mix_regions: Vec<MixRegion>,
     pub bars: Vec<BarFeature>,
+    #[serde(default)]
+    pub tonal_frames: Vec<TonalFrame>,
     #[serde(default)]
     pub moments: Vec<MusicalMoment>,
     /// Complete native model evidence. Missing means unknown, not silent.

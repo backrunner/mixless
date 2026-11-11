@@ -1,7 +1,7 @@
 use super::*;
 use crate::{BarFeature, Section, TempoMap, TrackId};
 
-fn recording(clock: f32, gap_level: f32) -> TrackAnalysis {
+pub(super) fn recording(clock: f32, gap_level: f32) -> TrackAnalysis {
     let sections = [
         (0., 8., S::Intro),
         (8., 40., S::Drop),
@@ -62,6 +62,7 @@ fn recording(clock: f32, gap_level: f32) -> TrackAnalysis {
         phrase_boundaries: vec![],
         mix_regions: vec![],
         moments: vec![],
+        tonal_frames: vec![],
         stems: None,
         waveform_path: None,
         partial: true,

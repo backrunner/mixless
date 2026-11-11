@@ -102,7 +102,8 @@ pub(crate) fn detect(
         .filter(|&i| nov[i] >= threshold && nov[i] >= nov[i - 1] && nov[i] > nov[i + 1])
         .collect();
     peaks.sort_by(|&a, &b| nov[b].total_cmp(&nov[a]));
-    let driving = dynamics::driving(bars, level, attacks);
+    let mut driving = dynamics::driving(bars, level, attacks);
+    let resolved = dynamics::resolve_opening(bars, &mut driving);
     // Keep a short pre-drop silence attached to an evidenced build. It is
     // tension awaiting resolution, not a new silent section or an exit cue.
     for end in 1..bars.len() {
@@ -120,6 +121,9 @@ pub(crate) fn detect(
     }
     let mut cuts = vec![0, bars.len()];
     cuts.extend(dynamics::edges(&driving));
+    if let Some((start, at)) = resolved {
+        cuts.extend([start, at]);
+    }
     let build_edges = dynamics::build_edges(bars, &driving);
     cuts.extend(&build_edges);
     for i in 1..bars.len() {
@@ -140,6 +144,10 @@ pub(crate) fn detect(
     let mut fixed = vec![false; bars.len() + 1];
     fixed[0] = true;
     fixed[bars.len()] = true;
+    if let Some((start, at)) = resolved {
+        fixed[start] = true;
+        fixed[at] = true;
+    }
     for i in 1..bars.len() {
         if silent[i] != silent[i - 1] {
             fixed[i] = true;
@@ -264,6 +272,8 @@ pub(crate) fn detect(
                         >= mean_of(head, |b| b.onset_density).max(1.) * 0.8));
         let label = if silent[p[0]..p[1]].iter().all(|s| *s) {
             S::Silence
+        } else if resolved.is_some_and(|(start, at)| p[0] >= start && p[1] <= at) {
+            S::BuildUp
         } else if !driven && next_driven && build {
             S::BuildUp
         } else if !driven && next_driven && n >= 2 && soft_build {

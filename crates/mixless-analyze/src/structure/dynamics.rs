@@ -99,3 +99,43 @@ pub(super) fn edges(state: &[bool]) -> Vec<usize> {
         })
         .collect()
 }
+
+/// An opening rhythm can precede the actual full-spectrum release. Require a
+/// measured bass/attack interruption, a restart, and a persistent upper-band
+/// expansion; a loud impact or bass mute alone cannot establish a drop.
+pub(super) fn resolve_opening(bars: &[BarFeature], state: &mut [bool]) -> Option<(usize, usize)> {
+    let start = state.iter().position(|v| *v)?;
+    let end = (start..state.len())
+        .find(|&i| !state[i])
+        .unwrap_or(state.len());
+    for at in start + 4..end.min(start + 25).min(bars.len().saturating_sub(6)) {
+        let before = &bars[start..at.saturating_sub(2).max(start + 1)];
+        let after = &bars[at..at + 6];
+        let high_before = quantile(before.iter().map(|b| b.high_db), 0.5);
+        let high_after = quantile(after.iter().map(|b| b.high_db), 0.25);
+        let bass_before = quantile(before.iter().map(|b| b.low_db), 0.5);
+        let bass_after = quantile(after.iter().map(|b| b.low_db), 0.5);
+        let interrupted = bars[at.saturating_sub(2)..at]
+            .iter()
+            .any(|b| b.low_db < bass_before.min(bass_after) - 6. && b.kick_salience < 0.5);
+        if interrupted
+            && bars[at].kick_salience >= 0.5
+            && bars[at].high_db >= high_before + 3.
+            && bars[at].low_db >= bass_before.min(bass_after) - 3.
+            && high_after >= high_before + 3.
+            && after
+                .iter()
+                .filter(|b| b.high_db >= high_before + 3. && b.kick_salience >= 0.5)
+                .count()
+                >= 5
+            && quantile(after.iter().map(|b| b.rms), 0.5)
+                >= quantile(before.iter().map(|b| b.rms), 0.5) * 0.9
+            && quantile(after.iter().map(|b| b.onset_density), 0.5)
+                >= quantile(before.iter().map(|b| b.onset_density), 0.5)
+        {
+            state[start..at].fill(false);
+            return Some((start, at));
+        }
+    }
+    None
+}
