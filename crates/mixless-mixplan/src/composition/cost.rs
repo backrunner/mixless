@@ -2,6 +2,14 @@
 use super::{gains, power, Frame, Shape};
 use crate::score::Tonality;
 
+#[derive(Debug)]
+pub(super) enum Rejection {
+    /// Voice, tonal overlap and foreground gates do not depend on drum fades.
+    Shared,
+    /// Routed power includes drums, so this rejection is shape-specific.
+    Level,
+}
+
 struct Data {
     full: [f32; 2],
     sounding: [[bool; 4]; 2],
@@ -95,7 +103,7 @@ impl<'a> Prepared<'a> {
     /// Relative power and masking, independent of mastering gain. The reference
     /// follows the actual foreground exchange, not a line from the first sample
     /// to a quiet incoming intro: that line would fade an ongoing outgoing peak.
-    pub(super) fn score(&self, shape: &Shape) -> Option<f32> {
+    pub(super) fn score(&self, shape: &Shape) -> Result<f32, Rejection> {
         let frames = self.frames;
         let tonality = self.tonality;
         let mut cost = 0.;
@@ -119,7 +127,7 @@ impl<'a> Prepared<'a> {
                 };
                 // Singers never trade lines across keys that are not confirmed.
                 if sounding(0, 0) && sounding(1, 0) && g[0][0] * g[1][0] > 0.0001 {
-                    return None;
+                    return Err(Rejection::Shared);
                 }
                 let floor = if tonality == Tonality::Unknown {
                     0.25
@@ -129,12 +137,12 @@ impl<'a> Prepared<'a> {
                 if tonal(0) > floor && tonal(1) > floor {
                     shared += f.u - previous;
                     if shared > 1. + 1e-4 {
-                        return None;
+                        return Err(Rejection::Shared);
                     }
                 }
             }
             if f.voice[0].min(f.voice[1]) > 0.35 && g[0][0] * g[1][0] > 0.01 {
-                return None;
+                return Err(Rejection::Shared);
             }
             let p = power(f, g);
             let full = |d: usize| data.full[d];
@@ -157,7 +165,7 @@ impl<'a> Prepared<'a> {
             {
                 absent += f.u - previous;
                 if absent >= 1. {
-                    return None;
+                    return Err(Rejection::Shared);
                 }
             } else {
                 absent = 0.;
@@ -165,7 +173,7 @@ impl<'a> Prepared<'a> {
             previous = f.u;
             let delta = 10. * (heard / target).log10();
             if delta < -6. {
-                return None;
+                return Err(Rejection::Level);
             }
             // Peak weight is checked over a complete local bar by
             // foreground::preserved after rendering the actual routes. A single
@@ -200,7 +208,7 @@ impl<'a> Prepared<'a> {
                 cost += 16. * data.weight[d] * slope.powi(2);
             }
         }
-        Some(cost / frames.len() as f32)
+        Ok(cost / frames.len() as f32)
     }
 }
 

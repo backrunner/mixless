@@ -18,7 +18,7 @@ fn prepared_reductions_match_original_cost_bits_for_success_and_rejection() {
             voice: [0., 0.],
         })
         .collect();
-    let (mut accepted, mut rejected) = (0, 0);
+    let (mut accepted, mut rejected, mut shared) = (0, 0, 0);
     for tonality in [Tonality::Compatible, Tonality::Unknown, Tonality::Conflict] {
         let prepared = Prepared::new(&frames, tonality);
         for i in 0..160 {
@@ -35,8 +35,23 @@ fn prepared_reductions_match_original_cost_bits_for_success_and_rejection() {
                 shape = [[Fade { start: 4., end: 8. }; 4]; 2];
             }
             let expected = reference::cost(&frames, &shape, tonality).map(f32::to_bits);
-            let actual = prepared.score(&shape).map(f32::to_bits);
+            let actual = prepared.score(&shape).ok().map(f32::to_bits);
             assert_eq!(actual, expected, "shape {i}, {tonality:?}");
+            if matches!(prepared.score(&shape), Err(Rejection::Shared)) {
+                shared += 1;
+                for offset in [-4., 0., 4., 20.] {
+                    let mut changed = shape;
+                    changed[0][1] = Fade {
+                        start: offset,
+                        end: offset + 0.5,
+                    };
+                    changed[1][1] = Fade {
+                        start: offset - 2.,
+                        end: offset + 4.,
+                    };
+                    assert_eq!(reference::cost(&frames, &changed, tonality), None);
+                }
+            }
             if actual.is_some() {
                 accepted += 1;
             } else {
@@ -45,6 +60,7 @@ fn prepared_reductions_match_original_cost_bits_for_success_and_rejection() {
         }
     }
     assert!(accepted >= 40 && rejected >= 40);
+    assert!(shared >= 40);
 }
 
 #[test]

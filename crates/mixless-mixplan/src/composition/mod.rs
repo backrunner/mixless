@@ -74,7 +74,7 @@ fn power_with_filters(f: &Frame, g: [[f32; 4]; 2], highpass: [f32; 2]) -> [[f32;
 
 #[cfg(test)]
 fn cost(frames: &[Frame], shape: &Shape, tonality: Tonality) -> Option<f32> {
-    cost::Prepared::new(frames, tonality).score(shape)
+    cost::Prepared::new(frames, tonality).score(shape).ok()
 }
 
 fn bar_at(source: &Polyline, sec: f32) -> f32 {
