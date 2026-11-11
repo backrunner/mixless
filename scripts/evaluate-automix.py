@@ -7,6 +7,7 @@ from pathlib import Path
 
 from automix_eval.metrics import VERSION, STEP, cue_events, evaluate_set
 from automix_eval.signal import Track
+from automix_eval import integrity, queue, realism
 
 
 def read(path, inputs):
@@ -46,17 +47,39 @@ def main():
     for run in runs:
         plans = read(root / run['plans'], inputs)
         result = {k: v for k, v in run.items() if k != 'plans'}
-        result.update(evaluate_set(plans, tracks))
+        count = run.get('evaluated_pairs', len(plans))
+        result.update(evaluate_set(plans, tracks, evaluated_pairs=count))
+        queue.annotate(result, plans, run)
+        realism.annotate(result, plans, tracks)
         if args.sensitivity:
             result['audibility_sensitivity'] = {
-                str(cutoff): evaluate_set(plans, tracks, cutoff)['summary'] for cutoff in (.01, .05)}
+                str(cutoff): evaluate_set(plans, tracks, cutoff, evaluated_pairs=count,
+                    integrity_results=[p['integrity'] for p in result['pairs']])['summary'] for cutoff in (.01, .05)}
+            result['vocal_grouping_sensitivity'] = {}
+            for pulses in (1, 2, 3):
+                values = ([p['integrity'] for p in result['pairs']] if pulses == 2 else
+                          [integrity.evaluate(plan, tracks, plans[i - 1] if i else None,
+                                              gap_scale=pulses / 2)
+                           for i, plan in enumerate(plans[:count])])
+                result['vocal_grouping_sensitivity'][str(pulses)] = integrity.summarize(
+                    [{'integrity': value} for value in values])
+                for pair, value in zip(result['pairs'], values):
+                    pair.setdefault('vocal_grouping', {})[str(pulses)] = {
+                        key: value.get(key) for key in
+                        ('status', 'vocal_events', 'unknown_phrase_source_seconds')}
         if 'annotations' in manifest and 'cues' in run:
             result['cue_events'] = cue_events(read(root / manifest['annotations'], inputs),
                                               read(root / run['cues'], inputs))
         else:
             result['cue_events'] = cue_events(None, None)
         output['runs'].append(result)
-        print(run['name'], json.dumps(result['summary'], separators=(',', ':')), flush=True)
+        print(run['name'], json.dumps({'pairs': count, 'handoff': result['summary']['handoff'],
+                                      'integrity': result['summary']['integrity']}, separators=(',', ':')), flush=True)
+        level, practice = result['realism']['levels']['default'], result['realism']['dj_reference']
+        print(run['name'], json.dumps({
+            'score': result['realism']['score'], 'unscored': result['realism']['unscored_transitions'],
+            'clean_transitions': level['clean'], 'deviating': level['deviating'], 'unknown': level['unknown'],
+            'dj_reference_gap_points': practice.get('mean_gap_percentage_points')}, separators=(',', ':')), flush=True)
     output['input_sha256'] = inputs
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2, allow_nan=False) + '\n')

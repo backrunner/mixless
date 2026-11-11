@@ -1,8 +1,9 @@
 """Versioned diagnostics with exposure, coverage and counterfactual references."""
 import math
 from .signal import Plan, grid_error, heard_chroma, roughness
+from . import handoff, integrity
 
-VERSION = 2
+VERSION = 8
 STEP = .05
 
 
@@ -30,6 +31,7 @@ class Measure:
         return {'eligible_seconds': self.eligible, 'observed_seconds': observed,
                 'mean': sum(v * s * w for v, s, w in self.values) / weighted if weighted else None,
                 'p95': p95, 'max': max((v for v, _, _ in self.values), default=None),
+                'status': 'observed' if observed == self.eligible and observed else 'partial' if observed else 'unknown' if self.eligible else 'not_applicable',
                 'above_seconds': {str(t): sum(s for v, s, _ in self.values if v > t)
                                   for t in self.thresholds}}
 
@@ -123,7 +125,15 @@ def evaluate_pair(data, tracks, previous=None, audible=.02):
             a, b = decks
             inside = 0 <= wall < duration
             observed = all(d['raw'] is not None for d in decks if d['playing'])
-            if inside:
+            if inside and not observed:
+                for d in decks:
+                    if d['playing']:
+                        result['stem_eligible_deck_seconds'] += dt
+                        result['stem_observed_deck_seconds'] += dt * (d['raw'] is not None)
+                for metric in metrics.values():
+                    metric.add(None, dt)
+                continue
+            if inside and observed:
                 for d in decks:
                     if d['playing']:
                         result['stem_eligible_deck_seconds'] += dt
@@ -168,11 +178,10 @@ def evaluate_pair(data, tracks, previous=None, audible=.02):
                 outgoing = sum(total(r['decks'][0]['raw']['power']) for r in window if r['decks'][0]['raw']) / len(window)
                 if outgoing >= .5:
                     if known:
-                        available = sum(max(total(r['decks'][0]['raw']['power']),
-                                            total(r['decks'][1]['raw']['power']) if r['decks'][1]['playing'] else 0)
-                                        for r in window) / len(window)
                         heard = sum(sum(total(d['heard']) for d in r['decks']) for r in window) / len(window)
-                        metrics['peak_deficit_db'].add(max(0, db_ratio(available, heard)), dt)
+                        # The continuing outgoing track is the reference. A
+                        # loud but muted incoming peak is not lost heard energy.
+                        metrics['peak_deficit_db'].add(max(0, db_ratio(outgoing, heard)), dt)
                     else:
                         metrics['peak_deficit_db'].add(None, dt)
                 if i >= 5 and observed:
@@ -216,24 +225,36 @@ def evaluate_pair(data, tracks, previous=None, audible=.02):
             if track.notes and audible_rows:
                 edge = (audible_rows[-1] if side == 0 else audible_rows[0])['decks'][side]['source']
                 result[key] = any(n['start_sec'] + .05 < edge < n['end_sec'] - .05 for n in track.notes)
+    if plan.unsupported:
+        result['stem_eligible_deck_seconds'] = plan.mix_end + max(
+            0., duration - plan.clock.at(data.get('incoming_start_bar', 0)))
+        for metric in metrics.values():
+            metric.add(None, max(duration, STEP))
     result['metrics'] = {k: v.report() for k, v in metrics.items()}
-    result['played_out'] = (data['t_out_a'] >= min(plan.a.duration * .92, plan.a.duration - 8)
-                            and result['audible_overlap_bars'] < 4)
+    result['handoff'] = handoff.summarize(plan, rows, audible)
+    result['audible_overlap_seconds'] = result['handoff']['overlap']['seconds_lower']
+    result['audible_overlap_bars'] = result['handoff']['overlap']['bars_lower']
     entry = previous['t_in_b'] if previous else 0
     drops = [s for s in plan.a.data['sections'] if s['label'] == 'drop'
              and s['start_sec'] >= entry and s['end_sec'] <= data['t_out_a']]
-    result['complete_drop_count'] = len(drops)
-    result['post_first_drop_seconds'] = data['t_out_a'] - drops[0]['end_sec'] if drops else None
+    result['source_contained_drop_count'] = len(drops)
+    result['source_post_first_drop_seconds'] = data['t_out_a'] - drops[0]['end_sec'] if drops else None
     return result
 
 
-def evaluate_set(plans, tracks, audible=.02):
+def evaluate_set(plans, tracks, audible=.02, evaluated_pairs=None, integrity_results=None):
+    count = len(plans) if evaluated_pairs is None else evaluated_pairs
+    if not 0 <= count <= len(plans):
+        raise ValueError("Invalid evaluated transition count")
     pairs = [evaluate_pair(p, tracks, plans[i - 1] if i else None, audible)
-             for i, p in enumerate(plans)]
+             for i, p in enumerate(plans[:count])]
+    for i, (plan, pair) in enumerate(zip(plans, pairs)):
+        pair['integrity'] = (integrity_results[i] if integrity_results is not None else
+                             integrity.evaluate(plan, tracks, plans[i - 1] if i else None))
     # Include every solo stretch exactly once, including the final track. Plan
     # curves include any committed solo restoration; remaining gaps hold offsets.
     solo_burden, solo_seconds, solo_observed, solo_audible, max_pitch = 0., 0., 0., 0., 0.
-    if plans:
+    if count:
         first = tracks[plans[0]['summary']['pair'][0]]
         offset = plans[0]['outgoing_offset']
         rate = max(.01, offset['rate'])
@@ -246,7 +267,7 @@ def evaluate_set(plans, tracks, audible=.02):
                 if seconds > 0:
                     max_pitch = max(max_pitch, abs(offset['pitch_semitones']))
         solo_seconds += max(0, plans[0]['t_in_a']) / rate
-    for i, p in enumerate(plans):
+    for i, p in enumerate(plans[:count]):
         track = tracks[p['summary']['pair'][1]]
         end = plans[i + 1]['t_in_a'] if i + 1 < len(plans) else track.duration
         offset = p['incoming_offset_end']
@@ -265,8 +286,7 @@ def evaluate_set(plans, tracks, audible=.02):
             max_pitch = max(max_pitch, abs(offset['pitch_semitones']))
     summary = {'pairs': len(pairs), 'cuts': sum(p['cut'] for p in pairs),
                'fallbacks': sum(p['fallback'] for p in pairs),
-               'played_out': sum(p['played_out'] for p in pairs),
-               'audible_overlap_ge4_bars': sum(p['audible_overlap_bars'] >= 4 for p in pairs),
+               'handoff': handoff.aggregate(pairs),
                'unsupported_pairs': sum(bool(p['unsupported']) for p in pairs),
                'dry_fx_pairs': sum(p['dry_only_fx'] for p in pairs),
                'violation_pairs': sum(bool(p['violations']) for p in pairs),
@@ -283,10 +303,11 @@ def evaluate_set(plans, tracks, audible=.02):
     for key in ('voice_exit_crossing', 'voice_entry_crossing'):
         summary[key] = {'observed_pairs': sum(p[key] is not None for p in pairs),
                         'crossing_pairs': sum(p[key] is True for p in pairs)}
-    delays = [p['post_first_drop_seconds'] for p in pairs if p['post_first_drop_seconds'] is not None]
-    summary['progression'] = {'first_drop_observed_pairs': len(delays),
+    delays = [p['source_post_first_drop_seconds'] for p in pairs if p['source_post_first_drop_seconds'] is not None]
+    summary['progression'] = {'status': 'source_positions_only_not_heard_progression',
+                              'first_drop_contained_pairs': len(delays),
                               'mean_post_first_drop_seconds': sum(delays) / len(delays) if delays else None,
-                              'multiple_complete_drop_pairs': sum(p['complete_drop_count'] > 1 for p in pairs)}
+                              'multiple_source_contained_drop_pairs': sum(p['source_contained_drop_count'] > 1 for p in pairs)}
     summary['metrics'] = {}
     for key in pairs[0]['metrics'] if pairs else []:
         measures = [p['metrics'][key] for p in pairs]
@@ -301,6 +322,7 @@ def evaluate_set(plans, tracks, audible=.02):
             'max': max((m['max'] for m in measures if m['max'] is not None), default=None),
             'above_seconds': {t: sum(m['above_seconds'][t] for m in measures)
                               for t in measures[0]['above_seconds']}}
+    summary['integrity'] = integrity.summarize(pairs)
     return {'summary': summary, 'pairs': pairs}
 
 

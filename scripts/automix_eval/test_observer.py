@@ -102,6 +102,21 @@ class ObserverTests(unittest.TestCase):
         self.assertGreater(roughness(a, shift_chroma(b, 1)), .9)
         self.assertAlmostEqual(sum(shift_chroma(a, -.25)), 1)
 
+    def test_an_unlocked_incoming_deck_sounds_transposed_by_its_speed(self):
+        p = plan()
+        semitone = 2 ** (1 / 12)
+        p['lanes']['rate_b'] = curve((0, semitone))
+        locked = Plan(p, self.tracks).at(2)[1]
+        self.assertEqual([d['pitch'] for d in locked], [0, 0])
+        p['incoming_varispeed'] = True
+        unlocked = Plan(p, self.tracks).at(2)[1]
+        self.assertEqual(unlocked[0]['pitch'], 0)
+        self.assertAlmostEqual(unlocked[1]['pitch'], 1)
+        # The clash is heard: both tracks hold one note a semitone apart now.
+        result = evaluate_pair(p, self.tracks)
+        self.assertAlmostEqual(result['max_abs_pitch'], 1)
+        self.assertGreater(result['metrics']['tonal_roughness']['mean'], .9)
+
     def test_silent_preparation_is_not_audible_overlap(self):
         p = plan()
         before = evaluate_pair(p, self.tracks)['audible_overlap_seconds']
@@ -109,6 +124,51 @@ class ObserverTests(unittest.TestCase):
         after = evaluate_pair(p, self.tracks)['audible_overlap_seconds']
         self.assertAlmostEqual(before, 8)
         self.assertAlmostEqual(after, 2)
+
+    def test_absent_source_curves_match_explicit_nonzero_origins(self):
+        explicit = evaluate_pair(plan(), self.tracks)
+        p = plan()
+        p['outgoing_source'] = p['incoming_source'] = curve()
+        implicit = evaluate_pair(p, self.tracks)
+        self.assertEqual(implicit['audible_overlap_seconds'], explicit['audible_overlap_seconds'])
+        self.assertEqual(implicit['stem_observed_deck_seconds'], explicit['stem_observed_deck_seconds'])
+        for metric in ('grid_phase_ms', 'peak_deficit_db', 'drum_activity_change'):
+            self.assertEqual(implicit['metrics'][metric], explicit['metrics'][metric])
+
+    def test_delayed_source_integrates_variable_rate_and_extends_short_curve(self):
+        p = plan()
+        p['clock'] = curve((0, 0), (1, 1), (3, 5), (4, 8))
+        p['incoming_start_bar'] = 1
+        p['t_in_b'] = 10
+        p['incoming_source'] = curve()
+        p['lanes']['rate_b'] = curve((0, 1), (4, 2))
+        model = Plan(p, self.tracks)
+        self.assertEqual(model.source_at(1, .5), 10)
+        self.assertAlmostEqual(model.source_at(1, 2), 12.75)
+        self.assertAlmostEqual(model.source_at(1, 4), 21.625)
+        p['incoming_source'] = curve((1, 10), (3, 16))
+        self.assertAlmostEqual(Plan(p, self.tracks).source_at(1, 4), 21.625)
+
+    def test_cut_with_recovery_does_not_read_the_incoming_intro(self):
+        p = plan()
+        p['summary']['length_bars'] = 0
+        p['t_out_a'] = p['t_in_a']
+        p['outgoing_source'] = curve((0, 4), (.25, 4.5))
+        p['incoming_source'] = curve()
+        p['lanes']['xfader'] = curve((0, 1))
+        p['lanes']['gain_a'] = curve((0, -96))
+        quiet_intro = copy.deepcopy(self.data)
+        for f in quiet_intro[1]['stems']['frames']:
+            if f['start_sec'] < 2:
+                f['band_db'] = [[-120] * 3 for _ in range(3)]
+        tracks = {t['track_id']: Track(t) for t in quiet_intro}
+        model = Plan(p, tracks)
+        self.assertEqual(model.mix_end, 0)
+        _, decks = model.at(.2)
+        self.assertFalse(decks[0]['playing'])
+        self.assertAlmostEqual(decks[1]['source'], 4.2)
+        result = evaluate_pair(p, tracks)
+        self.assertLess(result['metrics']['peak_deficit_db']['max'], 1)
 
     def test_missing_stems_and_weak_grid_are_not_perfect_scores(self):
         self.data[0]['stems'] = None
@@ -193,6 +253,18 @@ class ObserverTests(unittest.TestCase):
                     f['band_db'] = [[db - 24 for db in band] for band in f['band_db']]
         r = evaluate_pair(plan(), {t['track_id']: Track(t) for t in quiet})
         self.assertEqual(r['metrics']['peak_deficit_db']['eligible_seconds'], 0)
+
+    def test_a_muted_incoming_peak_does_not_invent_outgoing_energy_loss(self):
+        b = track(2)
+        for f in b['stems']['frames']:
+            if 4 <= f['start_sec'] < 8:
+                f['band_db'] = [[db + 12 for db in part] for part in f['band_db']]
+        tracks = {1: Track(track(1)), 2: Track(b)}
+        p = plan()
+        p['lanes']['xfader'] = curve((0, -1))
+        self.assertLess(evaluate_pair(p, tracks)['metrics']['peak_deficit_db']['max'], .1)
+        p['lanes']['gain_a'] = curve((0, -12))
+        self.assertGreater(evaluate_pair(p, tracks)['metrics']['peak_deficit_db']['mean'], 8)
 
     def test_natural_attack_does_not_increase_control_rise(self):
         modified = copy.deepcopy(self.data)

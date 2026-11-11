@@ -181,7 +181,11 @@ class Plan:
         self.inverse.x, self.inverse.y = self.clock.y, self.clock.x
         self.xfader = Curve(data['lanes']['xfader'])
         self.sources = [Curve(data[k]) for k in ('outgoing_source', 'incoming_source')]
-        self.mix_end = self.clock.at(self.sources[0].x[-1]) if self.sources[0].x else 0
+        self.monotone_sources = [all(b >= a for a, b in zip(c.y, c.y[1:])) for c in self.sources]
+        # The engine stops A at the scheduled overlap boundary. A source curve
+        # may be absent, or include a short post-cut tail / solo recovery.
+        self.mix_bar = data['summary']['length_bars']
+        self.mix_end = self.clock.at(self.mix_bar)
         self.curves = []
         for side, name in zip(('a', 'b'), ('outgoing', 'incoming')):
             l = data['lanes']
@@ -198,6 +202,66 @@ class Plan:
                             if data['lanes'].get(k)]
         if data.get('insert_a'):
             self.unsupported.append('insert_a')
+        if data.get('send_fx'):
+            self.unsupported.append('send_fx')
+        if not all(self.monotone_sources):
+            self.unsupported.append('nonmonotone_source')
+        if any(v <= 0 for c in self.curves for v in c['rate'].y):
+            self.unsupported.append('nonpositive_rate')
+
+    def advance_source(self, side, start, end):
+        """Integrate linear rate against the piecewise-linear device clock."""
+        if end <= start:
+            return 0.0
+        rate = self.curves[side]['rate']
+        points = sorted({start, end, *(x for x in self.clock.x + rate.x if start < x < end)})
+        return sum((self.clock.at(b) - self.clock.at(a)) * (rate.at(a) + rate.at(b)) / 2
+                   for a, b in zip(points, points[1:]))
+
+    def source_at(self, side, u):
+        source = self.sources[side]
+        if source.x:
+            if u <= source.x[-1]:
+                return source.at(u)
+            return source.y[-1] + self.advance_source(side, source.x[-1], u)
+        start = self.data.get('incoming_start_bar', 0) if side else 0
+        origin = self.data['t_in_b' if side else 't_in_a']
+        return origin + self.advance_source(side, start, u)
+
+    def source_wall(self, side, source):
+        """Invert the same source clock used for observation, including launch.
+
+        Only monotone playback is supported. Loop/scratch/FX plans explicitly
+        remain unavailable; a fabricated inverse would misplace voice evidence.
+        Bisection also handles quadratic advancement under a linear rate ramp.
+        """
+        if self.unsupported:
+            return None
+        start_bar = self.data.get('incoming_start_bar', 0) if side else 0
+        end_bar = self.end_bar if side else self.mix_bar
+        start = self.data['t_in_b' if side else 't_in_a']
+        end = self.data['t_end_b' if side else 't_out_a']
+        begin_wall, end_wall = self.clock.at(start_bar), self.clock.at(end_bar)
+        rate = self.curves[side]['rate']
+        if source < start:
+            return begin_wall + (source - start) / max(.01, rate.at(start_bar))
+        if source >= end:
+            return end_wall + (source - end) / max(.01, rate.at(end_bar))
+        curve = self.sources[side]
+        if not self.monotone_sources[side]:
+            return None
+        if curve.y and curve.y[0] <= source < curve.y[-1]:
+            i = bisect_right(curve.y, source)
+            fraction = (source - curve.y[i - 1]) / (curve.y[i] - curve.y[i - 1])
+            return self.clock.at(curve.x[i - 1] + fraction * (curve.x[i] - curve.x[i - 1]))
+        lo, hi = start_bar, end_bar
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            if self.source_at(side, mid) < source:
+                lo = mid
+            else:
+                hi = mid
+        return self.clock.at((lo + hi) / 2)
 
     def at(self, wall):
         u = self.inverse.at(wall)
@@ -205,11 +269,11 @@ class Plan:
         result = []
         for side, track in enumerate((self.a, self.b)):
             c = self.curves[side]
-            sec = self.sources[side].at(u)
+            sec = self.source_at(side, u)
             playing = not side or u >= self.data.get('incoming_start_bar', 0)
             if side == 0 and wall >= self.mix_end:
                 playing = False
-                sec = self.data['t_out_a'] + (wall - self.mix_end) * c['rate'].at(u)
+                sec = self.data['t_out_a'] + self.advance_source(side, self.mix_bar, u)
             fader_power = (x if side else 1 - x) if playing else 0
             # Context makes cuts measurable, and prevents silent preparation
             # from reading a stationary incoming source as audible material.
@@ -237,6 +301,10 @@ class Plan:
                     bands.append(g)
                 gains.append(bands)
             heard = [[p * g for p, g in zip(r, gs)] for r, gs in zip(raw['power'], gains)] if raw else None
+            rate, pitch = c['rate'].at(u), c['pitch'].at(u)
+            if side and self.data.get('incoming_varispeed'):
+                # Key lock off: the speed is also the transposition.
+                pitch += 12 * math.log2(max(.001, rate))
             result.append({'raw': raw, 'heard': heard, 'gains': gains, 'source': sec,
-                           'pitch': c['pitch'].at(u), 'rate': c['rate'].at(u), 'playing': playing})
+                           'pitch': pitch, 'rate': rate, 'playing': playing})
         return u, result
