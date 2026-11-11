@@ -15,8 +15,19 @@ mod key;
 mod weight;
 use key::Key;
 
-const MAX_ENTRIES: usize = 256;
-const MAX_BYTES: usize = 64 * 1024 * 1024;
+#[derive(Clone, Copy)]
+struct Limits {
+    entries: usize,
+    bytes: usize,
+}
+impl Limits {
+    fn for_tracks(n: usize) -> Self {
+        Self {
+            entries: n.saturating_mul(n.saturating_add(64)).clamp(256, 8192),
+            bytes: n.saturating_mul(32).clamp(64, 512) * 1024 * 1024,
+        }
+    }
+}
 
 #[derive(Default)]
 struct Values {
@@ -33,6 +44,7 @@ struct Shared {
     tracks: HashSet<usize>,
     values: Mutex<Values>,
     sources: crate::evidence::Sources,
+    limits: Limits,
 }
 thread_local! { static CURRENT: RefCell<Option<Arc<Shared>>> = const { RefCell::new(None) }; }
 
@@ -63,6 +75,7 @@ impl<'a> Session<'a> {
                     tracks: tracks.iter().map(|t| *t as *const _ as usize).collect(),
                     values: Mutex::new(Values::default()),
                     sources: crate::evidence::Sources::default(),
+                    limits: Limits::for_tracks(tracks.len()),
                 })
             }),
             _tracks: tracks.to_vec(),
@@ -153,11 +166,13 @@ pub(crate) fn plans(
     }
     let plans = compute();
     let bytes = weight::plans(&plans) + key.bytes() * 2 + 128;
-    if bytes <= MAX_BYTES {
+    if bytes <= shared.limits.bytes {
         let stored = Arc::new(plans.clone());
         let mut values = shared.values.lock().unwrap();
         if !values.entries.contains_key(&key) {
-            while values.entries.len() >= MAX_ENTRIES || values.bytes + bytes > MAX_BYTES {
+            while values.entries.len() >= shared.limits.entries
+                || values.bytes + bytes > shared.limits.bytes
+            {
                 let old = values.fifo.pop_front().expect("cache budget has an entry");
                 if let Some((_, size)) = values.entries.remove(&old) {
                     values.bytes -= size;
@@ -182,7 +197,7 @@ impl Drop for Session<'_> {
         if let Some(path) = std::env::var_os("MIXLESS_PLAN_CACHE_STATS") {
             use std::io::Write;
             let values = self.shared.values.lock().unwrap();
-            let stats = serde_json::json!({"hits":values.hits,"misses":values.misses,"entries":values.entries.len(),"evictions":values.evictions,"peak_bytes":values.peak_bytes});
+            let stats = serde_json::json!({"hits":values.hits,"misses":values.misses,"entries":values.entries.len(),"evictions":values.evictions,"peak_bytes":values.peak_bytes,"limit_bytes":self.shared.limits.bytes,"limit_entries":self.shared.limits.entries});
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)

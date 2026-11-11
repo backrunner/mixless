@@ -187,10 +187,15 @@ fn eviction_recomputes_without_truncating_search_and_oversized_plans_bypass() {
     let a = track(1);
     let b = track(2);
     let ctx = context(&a, &b);
-    let session = Session::new(&[&a, &b]);
+    let mut session = Session::new(&[&a, &b]);
+    let limits = Limits {
+        entries: 8,
+        bytes: 128 * 1024,
+    };
+    Arc::get_mut(&mut session.shared).unwrap().limits = limits;
     let _scope = session.enter();
     let mut options = PlannerOptions::default();
-    for i in 0..MAX_ENTRIES + 1 {
+    for i in 0..limits.entries + 1 {
         options.earliest_outgoing_sec = i as f32;
         plans(&ctx, &options, false, || result(i as f32));
     }
@@ -200,12 +205,12 @@ fn eviction_recomputes_without_truncating_search_and_oversized_plans_bypass() {
         999.
     );
     let values = session.shared.values.lock().unwrap();
-    assert_eq!(values.entries.len(), MAX_ENTRIES);
+    assert_eq!(values.entries.len(), limits.entries);
     assert_eq!(values.evictions, 2);
-    assert!(values.bytes <= MAX_BYTES);
+    assert!(values.bytes <= limits.bytes);
     drop(values);
     let mut huge = MixPlan::default();
-    huge.clock.nodes = vec![(0., 1.); MAX_BYTES / 8 + 1];
+    huge.clock.nodes = vec![(0., 1.); limits.bytes / 8 + 1];
     plans(&ctx, &options, true, || vec![huge]);
     assert_eq!(plans(&ctx, &options, true, || result(7.))[0].t_in_a, 7.);
 }
@@ -224,4 +229,17 @@ fn trace_never_skips_the_search_collectors() {
             value
         );
     }
+}
+
+#[test]
+fn request_budgets_scale_without_unbounded_allocation() {
+    let small = Limits::for_tracks(2);
+    let large = Limits::for_tracks(29);
+    assert_eq!(small.entries, 256);
+    assert_eq!(small.bytes, 64 * 1024 * 1024);
+    assert!(large.entries >= 29 * 28);
+    assert!(large.bytes > small.bytes);
+    let huge = Limits::for_tracks(usize::MAX);
+    assert_eq!(huge.entries, 8192);
+    assert_eq!(huge.bytes, 512 * 1024 * 1024);
 }
