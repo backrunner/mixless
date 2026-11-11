@@ -2,7 +2,11 @@
 //! often descend through the same shapes; neither failures nor successes need
 //! to be scored again. The iteration order and strict tie rules stay unchanged.
 use super::{Frame, Shape, Tonality};
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
+    sync::Mutex,
+};
 
 pub(super) fn key(shape: &Shape) -> [u32; 16] {
     std::array::from_fn(|i| {
@@ -14,7 +18,7 @@ pub(super) fn key(shape: &Shape) -> [u32; 16] {
 pub(super) struct Costs<'a> {
     frames: &'a [Frame],
     tonality: Tonality,
-    values: RefCell<HashMap<[u32; 16], Option<f32>>>,
+    values: [Mutex<HashMap<[u32; 16], Option<f32>>>; 32],
 }
 
 impl<'a> Costs<'a> {
@@ -22,20 +26,24 @@ impl<'a> Costs<'a> {
         Self {
             frames,
             tonality,
-            values: RefCell::new(HashMap::new()),
+            values: std::array::from_fn(|_| Mutex::new(HashMap::new())),
         }
     }
 
     pub(super) fn get(&self, shape: &Shape) -> Option<f32> {
         let key = key(shape);
-        if let Some(value) = self.values.borrow().get(&key) {
+        let mut hash = DefaultHasher::new();
+        key.hash(&mut hash);
+        let index = hash.finish() as usize % self.values.len();
+        let mut values = self.values[index].lock().unwrap();
+        if let Some(value) = values.get(&key) {
             return *value;
         }
+        // `cost` is a leaf calculation: no other locks, evidence queries or
+        // nested worker jobs. Keeping this shard locked coalesces identical
+        // cold seeds without blocking unrelated shapes or risking pool starvation.
         let value = super::cost(self.frames, shape, self.tonality);
-        let mut values = self.values.borrow_mut();
-        // Bound memory even for unusually dense phrase evidence. Eviction only
-        // causes recomputation, never truncation of the musical search.
-        if values.len() >= 4096 {
+        if values.len() >= 128 {
             values.clear();
         }
         values.insert(key, value);

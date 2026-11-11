@@ -1082,3 +1082,57 @@ fn cached_shape_costs_preserve_successes_and_rejections() {
         }
     }
 }
+
+#[test]
+fn seed_workers_keep_every_ordered_shape_and_exact_cost() {
+    let (a, b, p) = fixture(1.);
+    let ctx = ctx(&a, &b);
+    let evidence = crate::evidence::Prepared::new(&ctx, true);
+    evidence.run(|| {
+        let frames = frames(&p, &ctx).unwrap();
+        let reference = [
+            crate::level::reference_power(&a).unwrap(),
+            crate::level::reference_power(&b).unwrap(),
+        ];
+        let voices = [
+            voice_windows(&p.outgoing_source, &a, 16., 0.125),
+            voice_windows(&p.incoming_source, &b, 16., 0.125),
+        ];
+        let samples = participation::samples(&p, &ctx, 16.);
+        let mut count = 0;
+        for tone in [Tonality::Compatible, Tonality::Unknown, Tonality::Conflict] {
+            for manual in [false, true] {
+                let run = |parallel| {
+                    seeds::generate(
+                        &p,
+                        &ctx,
+                        tone,
+                        &frames,
+                        reference,
+                        16.,
+                        manual,
+                        &voices,
+                        0.,
+                        6.,
+                        samples.as_deref(),
+                        &duration_reward,
+                        parallel,
+                    )
+                    .into_iter()
+                    .map(|c| {
+                        (
+                            search::key(&c.shape),
+                            c.base.to_bits(),
+                            c.lower_cost.to_bits(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                };
+                let expected = run(false);
+                count += expected.len();
+                assert_eq!(run(true), expected);
+            }
+        }
+        assert!(count > 10, "exercise distinct viable schedules");
+    });
+}
