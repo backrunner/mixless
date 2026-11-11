@@ -126,8 +126,8 @@ pub(super) fn generate(
                     for part in [1] {
                         for deck in 0..2 {
                             let mut selected = shape;
-                            let mut current = costs.get(&shape).unwrap_or(f32::INFINITY);
-                            for width in [0.5, 1., 2., 4.] {
+                            let mut trials = [shape; 5];
+                            for (i, width) in [0.5, 1., 2., 4.].into_iter().enumerate() {
                                 let mut variant = shape;
                                 if !harmonic && part == 2 && deck == 0 {
                                     variant[deck][part].start =
@@ -136,8 +136,12 @@ pub(super) fn generate(
                                     variant[deck][part].end =
                                         (variant[deck][part].start + width).min(n);
                                 }
-                                if let Some(c) = costs.get(&variant).filter(|c| *c < current - 1e-4)
-                                {
+                                trials[i + 1] = variant;
+                            }
+                            let scores = costs.batch(&trials);
+                            let mut current = scores[0].unwrap_or(f32::INFINITY);
+                            for (variant, score) in trials.into_iter().zip(scores).skip(1) {
+                                if let Some(c) = score.filter(|c| *c < current - 1e-4) {
                                     selected = variant;
                                     current = c;
                                 }

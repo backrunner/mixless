@@ -47,4 +47,44 @@ impl<'a> Costs<'a> {
         values.insert(key, value);
         value
     }
+    /// Independent trials preserve the original lookup and scoring order.
+    pub(super) fn batch<const N: usize>(&self, shapes: &[Shape; N]) -> [Option<f32>; N] {
+        std::array::from_fn(|i| self.get(&shapes[i]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::composition::Fade;
+    #[test]
+    fn batches_preserve_ordered_scores_cache_eviction_and_ties() {
+        let frames: Vec<_> = (0..129)
+            .map(|i| Frame {
+                u: i as f32 / 8.,
+                sec: i as f32 / 4.,
+                bands: [[[0.01; 3]; 4]; 2],
+                voice: [0., 0.],
+            })
+            .collect();
+        for tonality in [Tonality::Compatible, Tonality::Unknown, Tonality::Conflict] {
+            let serial = Costs::new(&frames, tonality);
+            let batched = Costs::new(&frames, tonality);
+            for group in 0..1100 {
+                let shapes: [Shape; 5] = std::array::from_fn(|i| {
+                    [[Fade {
+                        start: 4. + group as f32 / 10000.,
+                        end: 6. + i as f32 / 4.,
+                    }; 4]; 2]
+                });
+                let expected = shapes.map(|s| serial.get(&s).map(f32::to_bits));
+                assert_eq!(
+                    batched.batch(&shapes).map(|s| s.map(f32::to_bits)),
+                    expected
+                );
+                assert_eq!(batched.get(&shapes[0]).map(f32::to_bits), expected[0]);
+            }
+            assert_eq!(batched.batch::<0>(&[]), []);
+        }
+    }
 }
