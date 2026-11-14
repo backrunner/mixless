@@ -42,6 +42,7 @@ mod recovery;
 mod rhythm;
 mod ride;
 mod scheduling;
+pub use order::parallel::with_playback_workers;
 pub mod score;
 mod send_fx;
 mod smooth;

@@ -327,7 +327,7 @@ impl Watch {
             sample_rate,
         };
         std::thread::spawn(move || {
-            let prepared = (|| {
+            let prepared = mixless_mixplan::with_playback_workers(|| {
                 if core.mix_preparation.revision() != revision {
                     return None;
                 }
@@ -372,7 +372,7 @@ impl Watch {
                     )
                     .ok()?;
                 Some((ready, a, plan, dense))
-            })();
+            });
             let _ = tx.send(Some(Update {
                 intent: queue_intent,
                 revision,

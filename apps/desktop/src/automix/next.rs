@@ -1,5 +1,8 @@
 //! Stage a usable pair; a decoded but unmixable candidate must not stop the queue.
 use super::*;
+#[cfg(test)]
+#[path = "next/audit.rs"]
+mod audit;
 
 pub(super) struct Next {
     pub outgoing: crate::analysis::PreparedTrack,
@@ -69,36 +72,38 @@ pub(super) fn stage(
             }
             let mut lookahead = order.clone();
             let following = lookahead.next(shuffle);
-            let transition = prepare_and_publish(core, outgoing, &active, || {
-                let snap = core.engine.snapshot();
-                let d = snap.deck(outgoing);
-                if !d.playing && d.frame >= d.frames.saturating_sub(1) {
-                    return Ok(None);
-                }
-                if !d.playing {
-                    return Err("Playback stopped".into());
-                }
-                let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
-                let lead = ((a.analysis.duration_sec - now) * 0.1).clamp(0.005, 0.75);
-                let stem_playback = core.engine.four_stems_ready(outgoing)
-                    && core.engine.four_stems_ready(incoming);
-                let plan = pair::scheduled_pair(
-                    core,
-                    &a,
-                    &b,
-                    now + lead,
-                    played_from,
-                    offset(d),
-                    offset(snap.deck(incoming)),
-                    Some(following),
-                    stem_playback,
-                )?;
-                let display = plan.plan;
-                let prepared = core
-                    .engine
-                    .prepare_plan_on((*display).clone(), outgoing)
-                    .map_err(|e| e.to_string())?;
-                Ok(Some((display, prepared)))
+            let transition = mixless_mixplan::with_playback_workers(|| {
+                prepare_and_publish(core, outgoing, &active, || {
+                    let snap = core.engine.snapshot();
+                    let d = snap.deck(outgoing);
+                    if !d.playing && d.frame >= d.frames.saturating_sub(1) {
+                        return Ok(None);
+                    }
+                    if !d.playing {
+                        return Err("Playback stopped".into());
+                    }
+                    let now = d.frame as f32 / d.src_sample_rate.max(1) as f32;
+                    let lead = ((a.analysis.duration_sec - now) * 0.1).clamp(0.005, 0.75);
+                    let stem_playback = core.engine.four_stems_ready(outgoing)
+                        && core.engine.four_stems_ready(incoming);
+                    let plan = pair::scheduled_pair(
+                        core,
+                        &a,
+                        &b,
+                        now + lead,
+                        played_from,
+                        offset(d),
+                        offset(snap.deck(incoming)),
+                        Some(following),
+                        stem_playback,
+                    )?;
+                    let display = plan.plan;
+                    let prepared = core
+                        .engine
+                        .prepare_plan_on((*display).clone(), outgoing)
+                        .map_err(|e| e.to_string())?;
+                    Ok(Some((display, prepared)))
+                })
             })?;
             if !active() {
                 return Ok(None);
