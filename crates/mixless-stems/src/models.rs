@@ -22,6 +22,36 @@ pub struct Paths {
     pub notes: PathBuf,
 }
 
+/// Missing offline artifacts cannot become usable by waiting for more RAM.
+/// This cheap presence check precedes resource admission; checksum validation
+/// still runs in `ensure` before any model session is created.
+#[cfg(stems_ort)]
+pub(super) fn check_presence(dir: &Path, bundled: Option<&Path>, download: bool) -> Result<()> {
+    if bundled.is_none() && download {
+        return Ok(());
+    }
+    let root = bundled.unwrap_or(dir);
+    for model in STEM_SEPARATORS.iter().chain(std::iter::once(&STEM_NOTES)) {
+        let path = root.join(model.name);
+        let present = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata.is_file() && metadata.len() > 0,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        if !present {
+            return Err(Error::Model(if bundled.is_some() {
+                format!(
+                    "Bundled model missing or damaged: {}; reinstall the installer with models",
+                    model.name
+                )
+            } else {
+                format!("Missing or damaged model: {}", path.display())
+            }));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(stems_ort)]
 pub fn ensure(
     dir: &Path,
@@ -161,6 +191,25 @@ fn artifact(
 #[cfg(all(test, stems_ort))]
 mod tests {
     use super::*;
+    #[test]
+    fn unavailable_offline_artifacts_fail_presence_checks_without_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert!(check_presence(&missing, None, false).is_err());
+        assert!(!missing.exists());
+        assert!(check_presence(&missing, None, true).is_ok());
+        assert!(check_presence(dir.path(), Some(&missing), true).is_err());
+        for model in STEM_SEPARATORS.iter().chain(std::iter::once(&STEM_NOTES)) {
+            std::fs::write(dir.path().join(model.name), b"not verified weights").unwrap();
+        }
+        assert!(check_presence(dir.path(), None, false).is_ok());
+        // Presence is only an admission prerequisite, never permission to load
+        // corrupt weights or skip the existing checksum verification.
+        assert!(ensure(dir.path(), None, false, &mut |_| {}, &|| true).is_err());
+        std::fs::write(dir.path().join(STEM_NOTES.name), b"").unwrap();
+        assert!(check_presence(dir.path(), None, false).is_err());
+    }
+
     #[test]
     fn cache_identity_addresses_one_four_stem_graph() {
         assert_eq!(mixless_protocol::STEM_SEPARATORS.len(), 1);

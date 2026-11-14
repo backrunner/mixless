@@ -131,6 +131,20 @@ impl Processor {
                 "Deep analysis supports tracks up to 20 minutes".into(),
             ));
         }
+        // A loaded session can keep serving its recording even if model files
+        // were removed. Busy slots are resolved by the normal cancellable wait.
+        let has_session = self.states.iter().any(|slot| match slot.try_lock() {
+            Ok(state) => state.inference.is_some(),
+            Err(std::sync::TryLockError::WouldBlock) => true,
+            Err(_) => false,
+        });
+        if !has_session {
+            crate::models::check_presence(
+                &self.models,
+                self.bundled_models.as_deref(),
+                self.download,
+            )?;
+        }
         let mut waiting = false;
         let _memory = crate::resources::acquire(duration, active, || {
             if !waiting {

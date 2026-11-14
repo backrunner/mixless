@@ -432,7 +432,20 @@ mod tests {
         ));
         let id = tracks[0];
         core.analysis.forget(id);
-        job(&core, id);
+        let worker_core = core.clone();
+        let (tx, rx) = channel();
+        let worker = std::thread::spawn(move || {
+            job(&worker_core, id);
+            let _ = tx.send(());
+        });
+        let completed = rx.recv_timeout(std::time::Duration::from_secs(10));
+        if completed.is_err() {
+            // A regression must not leave the whole CI process waiting for
+            // host memory that cannot make absent offline weights available.
+            core.shutting_down.store(true, Ordering::Release);
+        }
+        worker.join().unwrap();
+        completed.expect("missing offline models waited for inference resources");
         let prepared = prepare(&core, id).unwrap();
         assert!(prepared.analysis.stems.is_none());
         assert!(matches!(
@@ -441,7 +454,9 @@ mod tests {
         ));
         assert!(matches!(
             core.analysis.stem_statuses().get(&id),
-            Some(StemStatus::Failed(_))
+            Some(StemStatus::Failed(error))
+                if !mixless_stems::inference_supported()
+                    || error.contains("Missing or damaged model")
         ));
         load_manual(&core, DeckId::A, id, || true).unwrap();
         assert_eq!(core.engine.snapshot().decks[0].track_id, Some(id));
