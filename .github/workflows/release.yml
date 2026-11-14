@@ -387,6 +387,7 @@ jobs:
 
           Both variants contain the same app and use the same library. Updates keep your installed variant.
           NOTES
+          sed -i "s/Mixless-macOS-VERSION/Mixless-macOS-${RELEASE_TAG#v}/g" "${notes_file}"
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             if [[ "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" != "true" ]]; then
               echo "::error::${RELEASE_TAG} is already published; refusing to overwrite it."
