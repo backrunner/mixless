@@ -2475,6 +2475,24 @@
       "platform": "macOS 27.0.1 (26A434)",
       "capture": "Native macOS window capture at 2x; original JPEG bytes from the capture tool, no re-encoding, upscaling or painted UI.",
       "scope": "Synthetic native toolbar preview after switching from BEST to ORDER with OS mouse clicks."
+    },
+    "deck-title-standard": {
+      "file": "deck-title/standard.jpg",
+      "width": 1200,
+      "height": 864,
+      "capturedAt": "2026-11-16T18:48:19.649120+00:00",
+      "build": {
+        "version": "0.1.0",
+        "channel": "dev",
+        "revision": "v0.1.0-1-g7dd2238-dirty",
+        "profile": "debug",
+        "built": "2026-11-16T18:46:07Z"
+      },
+      "binarySha256": "0b578a30b2d74ecca8062568a1cfedb3b7b3f65b6dec6a364a23299be3a0981b",
+      "sha256": "a977775f45c1f29a137a4060d9872ab4640efe393e516885ffbafeb13ccf7c46",
+      "platform": "27.2.1",
+      "capture": "Native macOS window capture at 2x; original JPEG bytes, no re-encoding, upscaling or painted UI.",
+      "scope": "Production deck header with synthetic track metadata in an isolated offline native preview. Temporary preview adapter and broader method visibility only for capture; both removed from final source. 600 pt window captured; 440 pt window also inspected with an intact ellipsis and clear time/BPM spacing. No audio device or playback validation."
     }
   }
 }

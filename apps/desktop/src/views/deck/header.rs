@@ -3,7 +3,11 @@
 use gpui::{IntoElement, SharedString, prelude::*, px};
 use mixless_protocol::{DeckId, DeckSnapshot};
 
-use crate::{state::UiState, theme};
+use crate::{
+    state::UiState,
+    theme,
+    views::{TextTip, ellipsized_text},
+};
 
 use super::deck_label;
 
@@ -22,6 +26,22 @@ impl UiState {
         let key = track
             .and_then(|t| t.camelot.as_deref().or(t.key.as_deref()))
             .map(|key| sounding_key(key, d));
+        let title = loading
+            .cloned()
+            .or_else(|| d.title.clone())
+            .unwrap_or_default();
+        let subtitle: String = if loading.is_some() {
+            if self.pending_play[deck.index()] {
+                "Loading audio… will play".into()
+            } else {
+                "Loading audio…".into()
+            }
+        } else if self.grid_pending(deck) {
+            "Ready to play, analyzing beats & phrases…".into()
+        } else {
+            d.artist.clone().unwrap_or_default()
+        };
+        let title_tip = title.clone();
 
         let focus_btn = {
             let el = gpui::div()
@@ -136,37 +156,27 @@ impl UiState {
                     .gap(px(1.))
                     .child(
                         gpui::div()
+                            .id(("deck-title", deck.index()))
+                            .tooltip(move |_, cx| cx.new(|_| TextTip(title_tip.clone())).into())
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(theme::TEXT)
-                            .truncate()
-                            .child(
-                                loading
-                                    .cloned()
-                                    .or_else(|| d.title.clone())
-                                    .unwrap_or_default(),
-                            ),
+                            .child(ellipsized_text(title).w_full().h(px(21.))),
                     )
                     .child(
                         gpui::div()
+                            .id(("deck-subtitle", deck.index()))
+                            .tooltip({
+                                let subtitle = subtitle.clone();
+                                move |_, cx| cx.new(|_| TextTip(subtitle.clone())).into()
+                            })
                             .text_size(px(10.))
                             .text_color(if loading.is_some() {
                                 theme::WARN
                             } else {
                                 theme::MUTED
                             })
-                            .truncate()
-                            .child(if loading.is_some() {
-                                if self.pending_play[deck.index()] {
-                                    "Loading audio… will play".into()
-                                } else {
-                                    "Loading audio…".into()
-                                }
-                            } else if self.grid_pending(deck) {
-                                "Ready to play, analyzing beats & phrases…".into()
-                            } else {
-                                d.artist.clone().unwrap_or_default()
-                            }),
+                            .child(ellipsized_text(subtitle).w_full().h(px(16.))),
                     ),
             )
             .child(header_right)
