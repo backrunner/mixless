@@ -222,6 +222,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut selected_run = 0f32;
         let mut longest_selected_run = 0f32;
         let mut gain_max = 0.0_f32;
+        let mut gain_min = 0.0_f32;
         let mut levels = Vec::new();
         let mut routing = Vec::new();
         let mut window_power = 0.0_f64;
@@ -236,6 +237,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(|d| d.automix_gain_db)
                 .fold(0., f32::max);
             gain_max = gain_max.max(gain);
+            gain_min = engine
+                .snapshot()
+                .decks
+                .iter()
+                .map(|d| d.automix_gain_db)
+                .fold(gain_min, f32::min);
             window_gain = window_gain.max(gain);
             let audio = engine.render_offline((frames - start).min(256));
             outgoing_frames.push((
@@ -276,6 +283,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "crossfader": snapshot.xfader,
                 "faders": snapshot.decks.each_ref().map(|d| d.fader),
                 "auto_gain_db": snapshot.decks.each_ref().map(|d| d.automix_gain_db),
+                "auto_eq_db": snapshot.decks.each_ref().map(|d| d.automix_eq_db),
+                "auto_stem_db": snapshot.decks.each_ref().map(|d| d.automix_stem_db),
+                "eq_db": snapshot.decks.each_ref().map(|d| d.eq_db),
                 "stems": snapshot.decks.each_ref().map(|d| d.stem_gain),
                 "playing": snapshot.decks.each_ref().map(|d| d.playing),
             }));
@@ -332,7 +342,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
         }
         println!(
-            "{}→{} {:?} {:.2}s peak={:.4} completed stem_blocks={} gain_max={:.2}dB prepare={:.1}ms pitch={:+.1}st rate={:.5}",
+            "{}→{} {:?} {:.2}s peak={:.4} completed stem_blocks={} gain_max={:.2}dB gain_min={:.2}dB prepare={:.1}ms pitch={:+.1}st rate={:.5}",
             a.track_id.0,
             b.track_id.0,
             summary.strategy,
@@ -340,6 +350,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             peak,
             stem_blocks,
             gain_max,
+            gain_min,
             preparation_ms,
             snapshot.decks[1].sounding_pitch_semitones(),
             snapshot.decks[1].rate

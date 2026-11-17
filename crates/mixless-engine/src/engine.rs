@@ -2,7 +2,7 @@
 //! validation, callback rendering, FX parameter transfer and snapshots.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mixless_protocol::{
@@ -34,10 +34,10 @@ mod tests;
 
 use fx::insert_index;
 
-use crate::decode::{AudioBuffer, decode_file};
+use crate::decode::{decode_file, AudioBuffer};
 use crate::device;
 use crate::dsp::{
-    ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue, db_to_lin, xfader_gains,
+    db_to_lin, xfader_gains, ChannelFilter, Isolator, MasterLimiter, SeekXf, SmoothValue,
 };
 use crate::effects::{Effect, EffectKind, EffectParams};
 use crate::resample::Resampler;
@@ -81,6 +81,7 @@ struct DeckRt {
     trim: SmoothValue,
     limiter_gain: SmoothValue,
     automix_gain: SmoothValue,
+    automix_eq: [SmoothValue; 3],
     limiter: MasterLimiter,
     isolator_l: Isolator,
     isolator_r: Isolator,
@@ -193,12 +194,13 @@ struct DeckSlot {
     rate_micro: AtomicU32,  // rate * 1000000
     pitch_centi: AtomicU32, // (semitones + 24) * 100
     keylock: AtomicBool,
-    fader: AtomicU32,              // 0..1000
-    gain_milli: AtomicU32,         // (db + 96) * 100
-    limiter_gain_centi: AtomicU32, // (db + 12) * 100
-    automix_gain_centi: AtomicU32, // temporary positive compensation, db * 100
-    balance_milli: AtomicU32,      // (balance + 1) * 500
-    eq_db: [AtomicU32; 3],         // (db + 96) * 100
+    fader: AtomicU32,                   // 0..1000
+    gain_milli: AtomicU32,              // (db + 96) * 100
+    limiter_gain_centi: AtomicU32,      // (db + 12) * 100
+    automix_gain_centi: AtomicI32,      // temporary signed compensation, db * 100
+    automix_tone_centi: [AtomicI32; 7], // EQ then stem compensation, db * 100
+    balance_milli: AtomicU32,           // (balance + 1) * 500
+    eq_db: [AtomicU32; 3],              // (db + 96) * 100
     eq_kill: [AtomicBool; 3],
     filter_milli: AtomicU32, // (amount + 1) * 500
     resonance_milli: AtomicU32,

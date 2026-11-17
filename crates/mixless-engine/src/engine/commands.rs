@@ -93,17 +93,20 @@ impl Engine {
             | Command::StartAutomix { .. } => return Ok(()),
             _ => {}
         }
+        // Cancellation, the parameter write and plan publication share one
+        // host transaction. The callback only ever try_locks this gate.
+        let _control = self
+            .shared
+            .automation
+            .control
+            .lock()
+            .expect("automation control");
+        // Internal source replacement also stops the old plan, but an
+        // explicit user stop must invalidate work that is still preparing.
+        if matches!(cmd, Command::StopAutomix) {
+            self.shared.automation.invalidate_compensation();
+        }
         self.automation_command(&cmd);
-        // FX snapshots/restores run in the callback under the same lock with
-        // try_lock. A host edit must not race a planned effect's restoration.
-        let _fx_control =
-            matches!(cmd, Command::SetFx { .. } | Command::SetFxBypass { .. }).then(|| {
-                self.shared
-                    .automation
-                    .control
-                    .lock()
-                    .expect("automation control")
-            });
         // Mixer params are atomics — apply on the caller thread so a full
         // command ring cannot drop a play/fader/cue under jog spam.
         self.shared.apply_cmd(&cmd);
@@ -117,9 +120,10 @@ impl Engine {
         let finite = match &cmd {
             Command::SetChannelFilter { amount, .. } => amount.is_finite(),
             Command::SetStemGain { value, .. } => value.is_finite(),
+            Command::SetEq { db, .. } => db.is_finite(),
             _ => {
                 return Err(EngineError::Protocol(
-                    "perform accepts channel filter and stem gain only",
+                    "perform accepts channel filter, stem gain and EQ only",
                 ));
             }
         };

@@ -35,9 +35,19 @@ pub(super) struct AutomationShared {
     /// With key lock off, a solo tempo glide is also a pitch move.
     recovery_rate: AtomicU32,
     pub(super) gain_cancelled: AtomicBool,
+    gain_revision: AtomicU64,
     skip: AtomicBool,
 }
 impl AutomationShared {
+    pub(super) fn invalidate_compensation(&self) {
+        self.gain_revision.fetch_add(1, Ordering::AcqRel);
+        self.gain_cancelled.store(true, Ordering::Release);
+    }
+
+    pub(super) fn eq_taken_over(&self, index: usize) -> bool {
+        self.cancelled.load(Ordering::Acquire) & bit(index, 1) != 0
+    }
+
     fn cancel_lanes(&self, mut mask: u32) {
         if mask & self.recovery_dependencies.load(Ordering::Acquire) != 0 {
             mask |= self.recovery_pitch.load(Ordering::Acquire);
@@ -79,7 +89,10 @@ struct SendRestore {
 struct DeckPoint {
     stems: Option<[u32; 4]>,
     gain: u32,
-    compensation: u32,
+    compensation: i32,
+    // Temporary dB offsets: low/mid/high, then vocals/drums/instruments/bass.
+    // Original EQ and stem envelopes remain available for cancellation.
+    tone_compensation: [i32; 7],
     fader: u32,
     eq: [u32; 3],
     filter: u32,
@@ -99,6 +112,7 @@ struct Point {
 #[derive(Clone)]
 pub struct PreparedMix(Arc<DensePlan>);
 
+#[derive(Clone)]
 struct DensePlan {
     id: u64,
     plan: Arc<MixPlan>,
@@ -112,6 +126,9 @@ struct DensePlan {
     total_frames: usize,
     sample_rate: u32,
     points: Vec<Point>,
+    gain_revision: Option<u64>,
+    gain_sources: Option<gain::Sources>,
+    reset_incoming: bool,
 }
 fn db(db: f32) -> u32 {
     ((db.clamp(-96.0, 12.0) + 96.0) * 100.0).round() as u32
@@ -158,7 +175,20 @@ impl DensePlan {
         outgoing: usize,
         slots: [&DeckSlot; 2],
         sr: u32,
+        shared: &Shared,
+        revision: u64,
     ) -> Result<Self, EngineError> {
+        // Pin the source identities before deriving any envelope state. Host
+        // edits and source publication use this short gate; DSP preparation
+        // does not hold it. An intervening edit discards only compensation.
+        let sources = {
+            let _control = shared.automation.control.lock().expect("prepare sources");
+            if revision == shared.automation.gain_revision.load(Ordering::Acquire) {
+                gain::Sources::capture(slots)
+            } else {
+                None
+            }
+        };
         let invalid = || EngineError::Protocol("invalid automix envelope or timing");
         let summary = plan.summary.as_ref().ok_or_else(invalid)?;
         let boundary_cut = summary.length_bars == 0
@@ -428,6 +458,7 @@ impl DensePlan {
                         }),
                     gain: db(level - attenuation),
                     compensation: 0,
+                    tone_compensation: [0; 7],
                     fader: (base_fader * db_to_lin(attenuation) * 1000.).round() as u32,
                     eq: [
                         db(eq.low.sample(u)),
@@ -521,13 +552,12 @@ impl DensePlan {
                 decks,
             });
         }
-        gain::compile(&plan, slots, &mut points, sr);
         if a.playhead_frames() > start_frame + 1.0 {
             return Err(EngineError::Protocol(
                 "automix start passed during preparation; replan",
             ));
         }
-        Ok(Self {
+        let mut dense = Self {
             id: {
                 static NEXT: AtomicU64 = AtomicU64::new(1);
                 NEXT.fetch_add(1, Ordering::Relaxed)
@@ -549,11 +579,31 @@ impl DensePlan {
             plan: Arc::new(plan),
             outgoing,
             points,
-        })
+            gain_revision: None,
+            gain_sources: None,
+            reset_incoming: false,
+        };
+        gain::compile(&mut dense, slots, shared, sources, revision);
+        if a.playhead_frames() > start_frame + 1.0 {
+            return Err(EngineError::Protocol(
+                "automix start passed during preparation; replan",
+            ));
+        }
+        Ok(dense)
     }
 }
 
 impl Engine {
+    fn preparation_revision(&self) -> u64 {
+        let _control = self
+            .shared
+            .automation
+            .control
+            .lock()
+            .expect("prepare controls");
+        self.shared.automation.gain_revision.load(Ordering::Acquire)
+    }
+
     /// Compile against resident candidate audio without touching either deck.
     /// Expensive envelope and gain preparation must precede armed cancellation.
     pub fn prepare_replacement(
@@ -562,7 +612,9 @@ impl Engine {
         outgoing: DeckId,
         audio: Arc<AudioBuffer>,
         stems: Option<Arc<crate::StemBuffer>>,
+        tempo: &mixless_protocol::TempoMap,
     ) -> Result<PreparedMix, EngineError> {
+        let revision = self.preparation_revision();
         let candidate = DeckSlot::new();
         let pair = plan
             .summary
@@ -574,12 +626,24 @@ impl Engine {
             .store(pair.1 .0 as u64, Ordering::Relaxed);
         candidate.frames.store(audio.frames, Ordering::Relaxed);
         candidate.src_sr.store(audio.sample_rate, Ordering::Relaxed);
+        candidate
+            .bpm_milli
+            .store((tempo.global_bpm * 100.).max(0.) as u32, Ordering::Relaxed);
+        if tempo.beats.len() >= 2 {
+            *candidate.beat_grid.lock().unwrap() =
+                Some(sync::BeatGrid::new(pair.1, tempo.clone())?);
+        }
         *candidate.buffer.lock().unwrap() = Some(audio.clone());
         let old = &self.shared.decks[1 - outgoing.index()];
         candidate.limiter_gain_centi.store(
             old.limiter_gain_centi.load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
+        for (to, from) in candidate.inserts.iter().zip(&old.inserts) {
+            to.revision
+                .store(from.revision.load(Ordering::Acquire), Ordering::Release);
+            to.restore(&from.save());
+        }
         candidate.resonance_milli.store(
             old.resonance_milli.load(Ordering::Relaxed),
             Ordering::Relaxed,
@@ -597,12 +661,19 @@ impl Engine {
                 audio: stems,
             }));
         }
-        Ok(PreparedMix(Arc::new(DensePlan::compile(
+        let mut dense = DensePlan::compile(
             plan,
             outgoing.index(),
             [&self.shared.decks[outgoing.index()], &candidate],
             self.sample_rate(),
-        )?)))
+            &self.shared,
+            revision,
+        )?;
+        // The candidate uses the incoming reset state. Publish that reset with
+        // the plan, without dispatching manual commands that would invalidate
+        // its measurements. Intervening user changes still fail gain_revision.
+        dense.reset_incoming = true;
+        Ok(PreparedMix(Arc::new(dense)))
     }
 
     pub fn load_plan(&self, plan: MixPlan) -> Result<(), EngineError> {
@@ -629,6 +700,7 @@ impl Engine {
         plan: MixPlan,
         outgoing: DeckId,
     ) -> Result<PreparedMix, EngineError> {
+        let revision = self.preparation_revision();
         Ok(PreparedMix(Arc::new(DensePlan::compile(
             plan,
             outgoing.index(),
@@ -637,6 +709,8 @@ impl Engine {
                 &self.shared.decks[1 - outgoing.index()],
             ],
             self.sample_rate(),
+            &self.shared,
+            revision,
         )?)))
     }
 
@@ -676,6 +750,11 @@ impl Engine {
         // before launch. Prime the paused channel to its launch level; the
         // crossfader and stopped transport keep it silent before the first beat.
         let staged = dense.points[0].decks[1];
+        if dense.reset_incoming {
+            b.balance_milli.store(500, Ordering::Relaxed);
+            b.reverse.store(false, Ordering::Relaxed);
+            self.shared.configure_loop(1 - dense.outgoing, 4., false);
+        }
         b.rate_micro.store(staged.rate, Ordering::Relaxed);
         b.pitch_centi.store(staged.pitch, Ordering::Relaxed);
         b.keylock
@@ -733,11 +812,24 @@ impl Engine {
             .map_err(|_| EngineError::Protocol("automix lock poisoned"))?;
         retired.retain(|p| Arc::strong_count(p) > 1);
         let id = dense.id;
+        let gain_valid = dense.gain_revision.is_none_or(|r| {
+            r == shared.gain_revision.load(Ordering::Acquire)
+                && dense
+                    .gain_sources
+                    .as_ref()
+                    .is_some_and(|s| s.matches([a, b]))
+        });
         if let Some(old) = published.replace(dense) {
             retired.push(old);
         }
         shared.cancelled.store(0, Ordering::Release);
-        shared.gain_cancelled.store(false, Ordering::Release);
+        shared.gain_cancelled.store(!gain_valid, Ordering::Release);
+        for slot in [a, b] {
+            slot.automix_gain_centi.store(0, Ordering::Relaxed);
+            for value in &slot.automix_tone_centi {
+                value.store(0, Ordering::Relaxed);
+            }
+        }
         shared.progress.store(0.0f32.to_bits(), Ordering::Relaxed);
         shared.skip.store(false, Ordering::Release);
         shared.paused.store(false, Ordering::Release);
@@ -819,6 +911,12 @@ impl Engine {
         true
     }
     pub fn takeover_lane(&self, lane: LaneId) {
+        let _control = self
+            .shared
+            .automation
+            .control
+            .lock()
+            .expect("take over automation");
         let mask = match lane {
             LaneId::Xfader => XF,
             LaneId::GainA => bit(0, 0),
@@ -836,11 +934,12 @@ impl Engine {
             _ => 0,
         };
         self.shared.automation.cancel_lanes(mask);
+        self.shared.automation.invalidate_compensation();
     }
 
     pub(super) fn stop_automix_for_eject(&self) {
         let auto = &self.shared.automation;
-        let _control = auto.control.lock().expect("eject automation");
+        // The caller holds control through the complete source removal.
         if auto.enabled.load(Ordering::Acquire) {
             if let Some(plan) = auto.published.lock().expect("eject plan").as_ref() {
                 let pair = plan.plan.summary.as_ref().unwrap().pair;
@@ -901,17 +1000,37 @@ impl Engine {
                 | Command::Sync { .. }
                 | Command::SetReverse { .. }
                 | Command::SetJogTouch { touching: true, .. }
+                | Command::SetRoll { .. }
+                | Command::SetFxAutoFade { .. }
+                | Command::SetBrake { .. }
+                | Command::PlayPause { .. }
+                | Command::JumpCue { .. }
+                | Command::TriggerTemporaryCue { .. }
+                | Command::BeginCuePreview { .. }
+                | Command::EndCuePreview { .. }
                 | Command::Jog { .. }
                 | Command::Seek { .. }
                 | Command::ScrubTo { .. }
                 | Command::SetFx { .. }
                 | Command::SetFxBypass { .. }
                 | Command::SetFxSend { .. }
+                | Command::SetMaster { .. }
+                | Command::SetMasterGain { .. }
+                | Command::SetMasterChain { .. }
                 | Command::StopAutomix
         ) {
+            // Loading the exact PCM used by prepare_replacement stops the
+            // old automation, but does not change the measured mixer state.
+            // Publication separately verifies both source/stem identities.
+            if !matches!(cmd, Command::StopAutomix) {
+                auto.invalidate_compensation();
+            }
             auto.gain_cancelled.store(true, Ordering::Release);
             for deck in &self.shared.decks {
                 deck.automix_gain_centi.store(0, Ordering::Relaxed);
+                for value in &deck.automix_tone_centi {
+                    value.store(0, Ordering::Relaxed);
+                }
             }
         }
         let mask = match *cmd {
@@ -1169,6 +1288,16 @@ impl Shared {
                 },
                 Ordering::Relaxed,
             );
+            for (i, value) in s.automix_tone_centi.iter().enumerate() {
+                value.store(
+                    if auto.gain_cancelled.load(Ordering::Acquire) {
+                        0
+                    } else {
+                        p.tone_compensation[i]
+                    },
+                    Ordering::Relaxed,
+                );
+            }
             if let Some(stems) = p.stems {
                 for i in 0..4 {
                     if cancelled & bit(index, 7 + i) == 0 {
@@ -1304,16 +1433,32 @@ impl Shared {
         self.sends[1].restore(&restore.saved[1]);
     }
     pub(super) fn process_block(&self, rt: &mut AudioRt, out: &mut [f32], channels: usize) {
-        self.count_send_restore(&mut rt.automation, out.len() / channels.max(1));
+        self.process_block_observed::<false>(rt, out, channels, &mut []);
+    }
+
+    pub(super) fn process_block_observed<const OBSERVE: bool>(
+        &self,
+        rt: &mut AudioRt,
+        out: &mut [f32],
+        channels: usize,
+        observed: &mut [[f32; 8]],
+    ) {
+        let channels = channels.max(1);
+        self.count_send_restore(&mut rt.automation, out.len() / channels);
         if !self.automation.enabled.load(Ordering::Acquire) && !rt.automation.paused {
-            self.process_audio_block(rt, out, channels);
+            self.process_audio_block_observed::<OBSERVE>(rt, out, channels, observed);
             return;
         }
-        for chunk in out.chunks_mut(STEP * channels.max(1)) {
+        for (i, chunk) in out.chunks_mut(STEP * channels).enumerate() {
             let advance = self.automation_tick(&mut rt.automation);
-            self.process_audio_block(rt, chunk, channels);
+            let capture = if OBSERVE {
+                &mut observed[i * STEP..i * STEP + chunk.len() / channels]
+            } else {
+                &mut []
+            };
+            self.process_audio_block_observed::<OBSERVE>(rt, chunk, channels, capture);
             if advance {
-                rt.automation.elapsed += chunk.len() / channels.max(1);
+                rt.automation.elapsed += chunk.len() / channels;
             }
         }
     }

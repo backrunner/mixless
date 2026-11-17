@@ -24,6 +24,12 @@ impl Engine {
         if source.frames != audio.frames || source.sample_rate != audio.sample_rate {
             return Err(EngineError::Protocol("Stem source alignment mismatch"));
         }
+        let _control = self
+            .shared
+            .automation
+            .control
+            .lock()
+            .expect("publish stems");
         let slot = &self.shared.decks[deck.index()];
         let buffer = slot
             .buffer
@@ -47,7 +53,20 @@ impl Engine {
             source: source.clone(),
             audio,
         });
-        self.retire_stems(current.replace(next));
+        // Late 3→4-stem upgrades change the rendered signal. Retire the old
+        // measurement without cancelling the musical plan. A prepared
+        // replacement can still publish after its exact stems are attached:
+        // commit verifies those identities under this same gate.
+        self.shared
+            .automation
+            .gain_cancelled
+            .store(true, Ordering::Release);
+        let old = current.replace(next);
+        drop(current);
+        drop(buffer);
+        drop(_control);
+        // Reclaim large retired PCM buffers outside the publication gate.
+        self.retire_stems(old);
         Ok(true)
     }
     pub fn stems_ready(&self, deck: DeckId) -> bool {

@@ -3,12 +3,41 @@
 use super::*;
 use mixless_protocol::TempoMap;
 
+#[derive(Clone)]
 pub(super) struct BeatGrid {
     track_id: TrackId,
     tempo: TempoMap,
 }
 
 impl BeatGrid {
+    pub(super) fn new(track_id: TrackId, tempo: TempoMap) -> Result<Self, EngineError> {
+        if tempo.beats.len() < 2
+            || !tempo.beats.iter().all(|t| t.is_finite() && *t >= 0.0)
+            || !tempo.beats.windows(2).all(|w| w[1] - w[0] >= 0.05)
+            || !tempo.downbeats.iter().all(|t| t.is_finite() && *t >= 0.0)
+            || !tempo.downbeats.windows(2).all(|w| w[1] > w[0])
+            || !tempo.segments.iter().all(|s| {
+                s.start_beat.is_finite()
+                    && s.end_beat.is_finite()
+                    && s.end_beat > s.start_beat
+                    && s.start_beat >= 0.0
+                    && s.bpm.is_finite()
+                    && (20.0..=400.0).contains(&s.bpm)
+                    && s.confidence.is_finite()
+                    && (0.0..=1.0).contains(&s.confidence)
+            })
+            || tempo
+                .segments
+                .windows(2)
+                .any(|w| w[1].start_beat < w[0].end_beat)
+        {
+            return Err(EngineError::Protocol(
+                "Beat Sync needs a valid analyzed beat grid",
+            ));
+        }
+        Ok(Self { track_id, tempo })
+    }
+
     fn beat_at(&self, seconds: f64) -> (f64, f64) {
         let beats = &self.tempo.beats;
         let i = beats
@@ -60,30 +89,7 @@ impl Engine {
         track_id: TrackId,
         tempo: TempoMap,
     ) -> Result<(), EngineError> {
-        if tempo.beats.len() < 2
-            || !tempo.beats.iter().all(|t| t.is_finite() && *t >= 0.0)
-            || !tempo.beats.windows(2).all(|w| w[1] - w[0] >= 0.05)
-            || !tempo.downbeats.iter().all(|t| t.is_finite() && *t >= 0.0)
-            || !tempo.downbeats.windows(2).all(|w| w[1] > w[0])
-            || !tempo.segments.iter().all(|s| {
-                s.start_beat.is_finite()
-                    && s.end_beat.is_finite()
-                    && s.end_beat > s.start_beat
-                    && s.start_beat >= 0.0
-                    && s.bpm.is_finite()
-                    && (20.0..=400.0).contains(&s.bpm)
-                    && s.confidence.is_finite()
-                    && (0.0..=1.0).contains(&s.confidence)
-            })
-            || tempo
-                .segments
-                .windows(2)
-                .any(|w| w[1].start_beat < w[0].end_beat)
-        {
-            return Err(EngineError::Protocol(
-                "Beat Sync needs a valid analyzed beat grid",
-            ));
-        }
+        let parsed = BeatGrid::new(track_id, tempo)?;
         let slot = &self.shared.decks[deck.index()];
         let mut grid = slot
             .beat_grid
@@ -94,12 +100,13 @@ impl Engine {
                 "track changed while analyzing beat grid",
             ));
         }
-        *grid = Some(BeatGrid { track_id, tempo });
+        *grid = Some(parsed);
         self.shared.sync_align.store(true, Ordering::Release);
         Ok(())
     }
 
     pub(super) fn enable_sync(&self, deck: DeckId, keylock: bool) -> Result<(), EngineError> {
+        let _control = self.shared.automation.control.lock().expect("enable sync");
         let i = deck.index();
         let o = 1 - i;
         let own = &self.shared.decks[i];

@@ -1,9 +1,11 @@
 //! Continuous offline set with actual carried deck state and four-stem PCM.
 //! render-set ANALYSES PATHS PLANS MODELS CACHE OUTPUT.wav
 //! MIXLESS_AUDIT_LIBRARY may name a SQLite backup to reuse verified legacy stem identities.
+//! MIXLESS_AUDIT_GAIN=off disables only compensation. OUTPUT.audit.json and
+//! OUTPUT.routing.jsonl record publication costs, source clocks and controls.
 use mixless_engine::{Engine, EngineConfig};
 use mixless_protocol::{Command, DeckId, MixPlan, TrackAnalysis};
-use std::{error::Error, path::Path};
+use std::{cell::Cell, error::Error, io::Write, path::Path};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -35,6 +37,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             String::new(),
         )?;
         engine.set_bpm(deck, track.tempo.global_bpm);
+        if track.tempo.beats.len() >= 2 {
+            engine.set_beat_grid(deck, track.track_id, track.tempo.clone())?;
+        }
         let source = engine
             .stem_source(deck, track.track_id)
             .ok_or("Missing source")?;
@@ -108,16 +113,45 @@ fn main() -> Result<(), Box<dyn Error>> {
             sample_format: hound::SampleFormat::Float,
         },
     )?;
-    let mut frames = 0u64;
+    let mut routing = std::io::BufWriter::new(std::fs::File::create(
+        Path::new(&args[5]).with_extension("routing.jsonl"),
+    )?);
+    let frames = Cell::new(0u64);
+    let stage = Cell::new(0usize);
+    let mut transitions = Vec::new();
     let mut peak = 0f32;
     let mut write = |audio: Vec<f32>| -> Result<(), Box<dyn Error>> {
-        frames += audio.len() as u64 / 2;
+        let previous = frames.get();
+        frames.set(previous + audio.len() as u64 / 2);
         for sample in audio {
             if !sample.is_finite() || sample.abs() > 1. {
                 return Err("Invalid rendered sample".into());
             }
             peak = peak.max(sample.abs());
             wav.write_sample(sample)?;
+        }
+        if frames.get() / 2048 != previous / 2048 {
+            let s = engine.snapshot();
+            serde_json::to_writer(
+                &mut routing,
+                &serde_json::json!({
+                    "frame": frames.get(), "stage": stage.get(), "xfader": s.xfader,
+                    "progress": s.automix_progress,
+                    "source_frames": s.decks.each_ref().map(|d| d.frame),
+                    "playing": s.decks.each_ref().map(|d| d.playing),
+                    "rates": s.decks.each_ref().map(|d| d.rate),
+                    "pitch": s.decks.each_ref().map(|d| d.sounding_pitch_semitones()),
+                    "faders": s.decks.each_ref().map(|d| d.fader),
+                    "filter": s.decks.each_ref().map(|d| d.filter_amount),
+                    "gain": s.decks.each_ref().map(|d| d.automix_gain_db),
+                    "eq": s.decks.each_ref().map(|d| d.eq_db),
+                    "auto_eq": s.decks.each_ref().map(|d| d.automix_eq_db),
+                    "stems": s.decks.each_ref().map(|d| d.stem_gain),
+                    "auto_stems": s.decks.each_ref().map(|d| d.automix_stem_db),
+                    "master": s.master_meters,
+                }),
+            )?;
+            writeln!(routing)?;
         }
         Ok(())
     };
@@ -130,6 +164,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     engine.dispatch(Command::PlayPause { deck: DeckId::A })?;
     let mut outgoing = DeckId::A;
     for (i, plan) in plans.into_iter().enumerate() {
+        stage.set(i);
         let incoming = if outgoing == DeckId::A {
             DeckId::B
         } else {
@@ -154,8 +189,29 @@ fn main() -> Result<(), Box<dyn Error>> {
             ((plan.t_in_a - source_sec).max(0.) / deck.rate + plan.duration_sec() + 10.) * 48000.;
         let expected = plan.incoming_offset_end;
         let expected_end = plan.t_end_b;
+        let launch = frames.get() as f64 / 48000.
+            + (plan.t_in_a - source_sec).max(0.) as f64 / deck.rate as f64;
+        let overlap = plan
+            .clock
+            .sample(plan.summary.as_ref().unwrap().length_bars as f32);
+        let original = serde_json::to_value(&plan)?;
         load(i + 1, incoming)?;
+        let preparing = std::time::Instant::now();
         engine.load_plan_on(plan, outgoing)?;
+        let preparation_seconds = preparing.elapsed().as_secs_f64();
+        let published = engine
+            .automix_plan(engine.snapshot().automix_plan_id)
+            .ok_or("Missing published plan")?
+            .1;
+        if serde_json::to_value(published.as_ref())? != original {
+            return Err("Compensation changed the musical plan".into());
+        }
+        if std::env::var("MIXLESS_AUDIT_GAIN").as_deref() == Ok("off") {
+            engine.dispatch(Command::SetDeckLimiterGain {
+                deck: outgoing,
+                db: 0.,
+            })?;
+        }
         let mut elapsed = 0;
         let mut audible_frames = 0;
         while engine.snapshot().automix_on {
@@ -199,6 +255,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             deck.rate,
             audible_frames as f32 / 48000.,
         );
+        transitions.push(serde_json::json!({
+            "index": i, "pair": [tracks[i].track_id, tracks[i + 1].track_id],
+            "launch": launch, "overlap_end": launch + overlap as f64,
+            "completed": frames.get() as f64 / 48000.,
+            "preparation_seconds": preparation_seconds,
+            "available_lead_seconds": (published.t_in_a - source_sec).max(0.) / state.deck(outgoing).rate,
+        }));
         outgoing = incoming;
     }
     let snap = engine.snapshot();
@@ -212,10 +275,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         write(engine.render_offline((remaining - start).min(256)))?;
     }
     drop(write);
+    routing.flush()?;
     wav.finalize()?;
+    std::fs::write(
+        Path::new(&args[5]).with_extension("audit.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "sample_rate": 48000, "frames": frames.get(), "sample_peak": peak,
+            "transitions": transitions,
+        }))?,
+    )?;
     println!(
         "{:.2}s continuous set, peak={peak:.5}, all handoffs complete",
-        frames as f64 / 48000.
+        frames.get() as f64 / 48000.
     );
     Ok(())
 }

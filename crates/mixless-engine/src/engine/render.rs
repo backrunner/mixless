@@ -42,7 +42,15 @@ impl Shared {
         shared.publish_presentation(rt, playback + period, period);
     }
 
-    pub(super) fn process_audio_block(&self, rt: &mut AudioRt, out: &mut [f32], channels: usize) {
+    // The host preview captures the routed decks and pre-master sum. The
+    // ordinary callback specialization eliminates all observation writes.
+    pub(super) fn process_audio_block_observed<const OBSERVE: bool>(
+        &self,
+        rt: &mut AudioRt,
+        out: &mut [f32],
+        channels: usize,
+        observed: &mut [[f32; 8]],
+    ) {
         let sr = self.sample_rate.load(Ordering::Relaxed) as f32;
         let xf_pos = self.xfader.load(Ordering::Relaxed) as f32 / 500.0 - 1.0;
         let curve = match self.xf_curve.load(Ordering::Relaxed) {
@@ -128,6 +136,7 @@ impl Shared {
                 );
                 deck.limiter = MasterLimiter::new(sr);
                 deck.automix_gain = SmoothValue::new(1.0, sr, 0.15);
+                deck.automix_eq = std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15));
                 deck.fader =
                     SmoothValue::new(slot.fader.load(Ordering::Relaxed) as f32 / 1000., sr, 0.003);
                 let balance = slot.balance_milli.load(Ordering::Relaxed) as f32 / 500. - 1.;
@@ -155,7 +164,7 @@ impl Shared {
             }
             for i in 0..4 {
                 deck.stem_gain[i].set(if deck.stems.is_some() {
-                    slot.stem_gain[i].load(Ordering::Relaxed) as f32 / 1000.
+                    slot.effective_stem(i, self.compensation_active())
                 } else {
                     1.
                 });
@@ -243,25 +252,60 @@ impl Shared {
                 loop_range: deck.loop_range,
             };
             for band in 0..3 {
+                deck.eq[band].set_duration(sr, 0.005);
+                if !self.compensation_active()
+                    && self.automation.eq_taken_over(index)
+                    && deck.automix_eq[band].current() != 1.
+                {
+                    // Transfer the audible value to the base smoother before
+                    // dropping the overlay. A manual gesture starts at the
+                    // effective knob value and must not apply AUTO twice.
+                    deck.eq[band] = SmoothValue::new(
+                        (deck.eq[band].current() * deck.automix_eq[band].current())
+                            .min(3.981_071_7),
+                        sr,
+                        if slot.eq_kill[band].load(Ordering::Relaxed) {
+                            0.005
+                        } else {
+                            0.15
+                        },
+                    );
+                    deck.automix_eq[band] = SmoothValue::new(1., sr, 0.15);
+                }
                 let value = if slot.eq_kill[band].load(Ordering::Relaxed) {
                     0.0
                 } else {
                     db_to_lin(slot.eq_db[band].load(Ordering::Relaxed) as f32 / 100.0 - 96.0)
                 };
                 deck.eq[band].set(value);
+                deck.automix_eq[band].set(db_to_lin(
+                    slot.tone_offset(band, self.compensation_active()),
+                ));
             }
             let trim = db_to_lin(slot.gain_milli.load(Ordering::Relaxed) as f32 / 100.0 - 96.0);
             deck.trim.set(trim);
-            deck.limiter_gain.set(db_to_lin(
-                slot.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
-            ));
             let manual_db = slot.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0;
+            let manual_gain = db_to_lin(manual_db);
+            deck.limiter_gain.set_duration(sr, 0.003);
+            if !self.compensation_active()
+                && manual_gain != deck.limiter_gain.target()
+                && deck.automix_gain.current() != 1.
+            {
+                // The knob starts at effective GAIN. Transfer the audible
+                // product before moving to the manual target; otherwise the
+                // fast manual ramp briefly doubles the slow AUTO correction.
+                let audible = (deck.limiter_gain.current() * deck.automix_gain.current())
+                    .clamp(0.251_188_64, 3.981_071_7);
+                deck.limiter_gain = SmoothValue::new(audible, sr, 0.15);
+                deck.automix_gain = SmoothValue::new(1., sr, 0.15);
+            }
+            deck.limiter_gain.set(manual_gain);
             let auto_db = if self.automation.enabled.load(Ordering::Acquire)
                 && !self.automation.paused.load(Ordering::Relaxed)
                 && !self.automation.gain_cancelled.load(Ordering::Acquire)
             {
                 (slot.automix_gain_centi.load(Ordering::Relaxed) as f32 / 100.0)
-                    .min(12.0 - manual_db)
+                    .clamp(-12.0 - manual_db, 12.0 - manual_db)
             } else {
                 slot.automix_gain_centi.store(0, Ordering::Relaxed);
                 0.0
@@ -400,6 +444,18 @@ impl Shared {
                 r += wet[1];
             }
             let master_gain = rt.master_gain.next();
+            if OBSERVE {
+                observed[i] = [
+                    al * cross_a,
+                    ar * cross_a,
+                    bl * cross_b,
+                    br * cross_b,
+                    l,
+                    r,
+                    rt.decks[0].limiter.gain(),
+                    rt.decks[1].limiter.gain(),
+                ];
+            }
             if !l.is_finite() || !r.is_finite() {
                 last_ok = false;
             }

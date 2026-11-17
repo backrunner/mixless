@@ -52,8 +52,8 @@ impl UiState {
                             .h(px(10.))
                             .text_size(px(7.))
                             .text_color(theme::LED_GREEN)
-                            .child(if d.automix_gain_db >= 0.05 {
-                                format!("AUTO +{:.1}", d.automix_gain_db)
+                            .child(if d.automix_gain_db.abs() >= 0.05 {
+                                format!("AUTO {:+.1}", d.automix_gain_db)
                             } else {
                                 String::new()
                             }),

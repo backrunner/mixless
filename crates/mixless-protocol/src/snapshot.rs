@@ -46,6 +46,11 @@ pub struct DeckSnapshot {
     /// Temporary AutoMix compensation added before the deck limiter.
     #[serde(default)]
     pub automix_gain_db: f32,
+    /// Temporary offsets already included in `eq_db` and `stem_gain` targets.
+    #[serde(default)]
+    pub automix_eq_db: [f32; 3],
+    #[serde(default)]
+    pub automix_stem_db: [f32; 4],
     /// Stereo balance, -1.0 ..= 1.0, 0.0 = center.
     #[serde(default)]
     pub balance: f32,
@@ -147,6 +152,8 @@ impl Default for DeckSnapshot {
             gain_db: 0.0,
             limiter_gain_db: 0.0,
             automix_gain_db: 0.0,
+            automix_eq_db: [0.; 3],
+            automix_stem_db: [0.; 4],
             balance: 0.0,
             send: 0.0,
             pfl: false,
@@ -305,6 +312,8 @@ mod tests {
             (-3., 4., 1.),
             (2., 0., 2.),
             (10., 6., 12.),
+            (2., -3., -1.),
+            (-11., -3., -12.),
         ] {
             let deck = DeckSnapshot {
                 gain_db: -20., // Mixer TRIM is independent of the deck GAIN.

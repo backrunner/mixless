@@ -153,14 +153,18 @@ pub(super) fn prepare_and_publish(
                 if !d.playing {
                     return Err("Playback stopped".into());
                 }
-                command(
-                    core,
-                    Command::SetLoopBeats {
-                        deck: outgoing,
-                        beats: d.loop_beats,
-                        on: false,
-                    },
-                )?;
+                // A manual transport command invalidates the measured output.
+                // Do not cancel fresh compensation for an already closed loop.
+                if d.loop_on {
+                    command(
+                        core,
+                        Command::SetLoopBeats {
+                            deck: outgoing,
+                            beats: d.loop_beats,
+                            on: false,
+                        },
+                    )?;
+                }
                 core.engine
                     .commit_plan(prepared)
                     .map_err(|e| e.to_string())?;
@@ -180,6 +184,31 @@ pub(super) fn prepare_and_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_publication_keeps_prepared_compensation() {
+        let (_dir, core, ids) = super::super::tests::fixture();
+        load(&core, DeckId::A, ids[0], || true).unwrap();
+        load(&core, DeckId::B, ids[1], || true).unwrap();
+        command(&core, Command::SetCrossfader { value: -1. }).unwrap();
+        command(&core, Command::PlayPause { deck: DeckId::A }).unwrap();
+        let plan = Arc::new(super::super::tests::compensated_plan(ids[0], ids[1]));
+        prepare_and_publish(
+            &core,
+            DeckId::A,
+            || true,
+            || {
+                let prepared = core
+                    .engine
+                    .prepare_plan_on((*plan).clone(), DeckId::A)
+                    .map_err(|e| e.to_string())?;
+                Ok(Some((plan.clone(), prepared)))
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(super::super::tests::compensation_peak(&core) > 0.1);
+    }
 
     #[test]
     fn loaded_deck_reports_planning_before_a_delayed_plan_and_then_completes() {

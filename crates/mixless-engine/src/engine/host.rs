@@ -285,6 +285,7 @@ impl Engine {
         if !should_commit() {
             return Ok(false);
         }
+        let _control = self.shared.automation.control.lock().expect("load deck");
         self.automation_command(&Command::StopAutomix);
         self.shared.clear_sync();
         self.clear_stems(deck);
@@ -306,6 +307,9 @@ impl Engine {
         // to silence by an older automation plan. Channel faders retain position.
         slot.gain_milli.store(9600, Ordering::Relaxed);
         slot.automix_gain_centi.store(0, Ordering::Relaxed);
+        for value in &slot.automix_tone_centi {
+            value.store(0, Ordering::Relaxed);
+        }
         slot.jog_touch.store(false, Ordering::Release);
         slot.seek_pending.store(false, Ordering::Release);
         slot.temporary_cue.store(0, Ordering::Relaxed);
@@ -338,6 +342,7 @@ impl Engine {
     }
 
     pub fn eject(&self, deck: DeckId) {
+        let _control = self.shared.automation.control.lock().expect("eject deck");
         self.stop_automix_for_eject();
         self.shared.clear_sync();
         let slot = &self.shared.decks[deck.index()];

@@ -4,6 +4,72 @@ use std::time::Instant;
 
 pub(crate) use super::preparation::{best_order_key, cache_best_order};
 
+// A four-second transition with an intentionally attenuated bass band. The
+// fixture's low tones make compensation observable through the desktop path.
+pub(super) fn compensated_plan(a: TrackId, b: TrackId) -> mixless_protocol::MixPlan {
+    use mixless_protocol::*;
+    let line = |nodes: &[(f32, f32)]| Polyline {
+        nodes: nodes.to_vec(),
+    };
+    let eq = EqLane {
+        low: Polyline::constant(-8.),
+        mid: Polyline::constant(0.),
+        high: Polyline::constant(0.),
+    };
+    let filter = FilterLane {
+        lp_hz: Polyline::constant(20000.),
+        hp_hz: Polyline::constant(20.),
+    };
+    MixPlan {
+        summary: Some(MixPlanSummary {
+            pair: (a, b),
+            strategy: StrategyId::PhraseBlend,
+            score: 0.8,
+            used_fallback: false,
+            length_bars: 2,
+        }),
+        t_in_a: 3.,
+        t_out_a: 7.,
+        t_in_b: 0.,
+        t_end_b: 4.,
+        clock: line(&[(0., 0.), (2., 4.)]),
+        outgoing_source: line(&[(0., 3.), (2., 7.)]),
+        incoming_source: line(&[(0., 0.), (2., 4.)]),
+        master_bpm: Polyline::constant(120.),
+        lanes: AutomationLanes {
+            xfader: line(&[(0., -1.), (2., 1.)]),
+            gain_a: line(&[(0., 0.), (1.99, 0.), (2., -96.)]),
+            gain_b: Polyline::constant(0.),
+            eq_a: eq.clone(),
+            eq_b: eq,
+            filter_a: filter.clone(),
+            filter_b: filter,
+            fx_send_a: Polyline::constant(0.),
+            fx_send_b: Polyline::constant(0.),
+            rate_a: Polyline::constant(1.),
+            rate_b: Polyline::constant(1.),
+            pitch_a: Polyline::constant(0.),
+            pitch_b: Polyline::constant(0.),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+pub(super) fn compensation_peak(core: &AppCore) -> f32 {
+    let mut peak = 0f32;
+    for _ in 0..80 {
+        core.engine.render_offline(4800);
+        for d in core.engine.snapshot().decks {
+            peak = peak.max(d.automix_gain_db.abs());
+            for db in d.automix_eq_db.into_iter().chain(d.automix_stem_db) {
+                peak = peak.max(db.abs());
+            }
+        }
+    }
+    peak
+}
+
 pub(crate) fn fixture() -> (tempfile::TempDir, Arc<AppCore>, Vec<TrackId>) {
     let dir = tempfile::tempdir().unwrap();
     let library = mixless_library::Library::open(&dir.path().join("library.db")).unwrap();

@@ -3,6 +3,20 @@
 use super::*;
 
 impl DeckSlot {
+    pub(super) fn tone_offset(&self, index: usize, active: bool) -> f32 {
+        if active {
+            self.automix_tone_centi[index].load(Ordering::Relaxed) as f32 / 100.
+        } else {
+            0.
+        }
+    }
+
+    pub(super) fn effective_stem(&self, index: usize, active: bool) -> f32 {
+        (self.stem_gain[index].load(Ordering::Relaxed) as f32 / 1000.
+            * db_to_lin(self.tone_offset(index + 3, active)))
+        .min(1.)
+    }
+
     pub(super) fn new() -> Self {
         Self {
             stems: Mutex::new(None),
@@ -21,7 +35,8 @@ impl DeckSlot {
             fader: AtomicU32::new(1000),
             gain_milli: AtomicU32::new(9600),
             limiter_gain_centi: AtomicU32::new(1200),
-            automix_gain_centi: AtomicU32::new(0),
+            automix_gain_centi: AtomicI32::new(0),
+            automix_tone_centi: std::array::from_fn(|_| AtomicI32::new(0)),
             balance_milli: AtomicU32::new(500),
             eq_db: [
                 AtomicU32::new(9600),
@@ -99,6 +114,12 @@ impl DeckSlot {
 }
 
 impl Shared {
+    pub(super) fn compensation_active(&self) -> bool {
+        self.automation.enabled.load(Ordering::Acquire)
+            && !self.automation.paused.load(Ordering::Relaxed)
+            && !self.automation.gain_cancelled.load(Ordering::Acquire)
+    }
+
     pub(super) fn snapshot(&self) -> EngineSnapshot {
         let plan_id = self.automation.plan_id.load(Ordering::Acquire);
         let [master_output, cue_output] =
@@ -166,9 +187,7 @@ impl Shared {
                     .try_lock()
                     .ok()
                     .is_some_and(|v| v.as_ref().is_some_and(|v| v.audio.has_bass())),
-                stem_gain: std::array::from_fn(|j| {
-                    s.stem_gain[j].load(Ordering::Relaxed) as f32 / 1000.
-                }),
+                stem_gain: std::array::from_fn(|j| s.effective_stem(j, self.compensation_active())),
                 track_id: if id == 0 {
                     None
                 } else {
@@ -198,11 +217,11 @@ impl Shared {
                         bpm * rate
                     }
                 },
-                eq_db: [
-                    s.eq_db[0].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
-                    s.eq_db[1].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
-                    s.eq_db[2].load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
-                ],
+                eq_db: std::array::from_fn(|j| {
+                    (s.eq_db[j].load(Ordering::Relaxed) as f32 / 100. - 96.
+                        + s.tone_offset(j, self.compensation_active()))
+                    .clamp(-96., 12.)
+                }),
                 eq_kill: [
                     s.eq_kill[0].load(Ordering::Relaxed),
                     s.eq_kill[1].load(Ordering::Relaxed),
@@ -225,6 +244,12 @@ impl Shared {
                 gain_db: s.gain_milli.load(Ordering::Relaxed) as f32 / 100.0 - 96.0,
                 limiter_gain_db: s.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100.0 - 12.0,
                 automix_gain_db: s.automix_gain_centi.load(Ordering::Relaxed) as f32 / 100.0,
+                automix_eq_db: std::array::from_fn(|j| {
+                    s.tone_offset(j, self.compensation_active())
+                }),
+                automix_stem_db: std::array::from_fn(|j| {
+                    s.tone_offset(j + 3, self.compensation_active())
+                }),
                 balance: s.balance_milli.load(Ordering::Relaxed) as f32 / 500.0 - 1.0,
                 send: s.send_milli.load(Ordering::Relaxed) as f32 / 1000.0,
                 pfl: s.pfl.load(Ordering::Relaxed),

@@ -22,6 +22,17 @@ fn fixture_plan(
     outgoing: DeckId,
     configure: impl FnOnce(&mut MixPlan),
 ) -> Engine {
+    fixture_audio(stems, quiet, enabled, outgoing, configure, |_, _| {})
+}
+
+fn fixture_audio(
+    stems: bool,
+    quiet: Option<f32>,
+    enabled: bool,
+    outgoing: DeckId,
+    configure: impl FnOnce(&mut MixPlan),
+    source: impl Fn(usize, &mut AudioBuffer),
+) -> Engine {
     let engine = test_engine(SR);
     for (relative, deck) in [outgoing, DeckId::from_index(1 - outgoing.index()).unwrap()]
         .into_iter()
@@ -41,6 +52,7 @@ fn fixture_plan(
                 }
             }
         }
+        source(relative, Arc::get_mut(&mut buffer).unwrap());
         let wave = Arc::new(crate::compute_preview_waveform(&buffer, 256));
         engine
             .load_buffer_if(
@@ -148,8 +160,8 @@ fn fixture_plan(
 }
 
 #[test]
-fn automix_gain_fills_stem_and_quiet_overlap_dips_without_accumulating() {
-    for (stems, quiet) in [(true, None), (false, Some(0.4))] {
+fn automix_gain_reduces_stem_loss_without_accumulating() {
+    for (stems, quiet) in [(true, None)] {
         for outgoing in [DeckId::A, DeckId::B] {
             let compensated = fixture(stems, quiet, true, outgoing);
             let baseline = fixture(stems, quiet, false, outgoing);
@@ -161,7 +173,11 @@ fn automix_gain_fills_stem_and_quiet_overlap_dips_without_accumulating() {
             let improvement = 10. * (energy(&after) / energy(&before)).log10();
             // A missing incoming stem only earns gain on that deck; it must
             // not make the intact outgoing track louder to fill the deficit.
-            assert!(improvement > 0.5, "stems={stems} improvement={improvement}");
+            let dry = fixture(false, None, false, outgoing);
+            dry.render_offline(4 * SR as usize);
+            let target = energy(&dry.render_offline(SR as usize));
+            assert!(improvement > 0., "stems={stems} improvement={improvement}");
+            assert!((energy(&after) - target).abs() < (energy(&before) - target).abs());
             let snap = compensated.snapshot();
             assert!(snap.automix_on);
             if stems {
@@ -204,7 +220,7 @@ fn automix_gain_ends_at_handoff_before_a_solo_tempo_tail() {
 
 #[test]
 fn automix_gain_leaves_balanced_audio_silence_and_noise_alone() {
-    for quiet in [None, Some(0.), Some(0.0001)] {
+    for quiet in [None, Some(0.4), Some(0.), Some(0.0001)] {
         let engine = fixture(false, quiet, true, DeckId::A);
         engine.render_offline(4 * SR as usize);
         assert!(
@@ -241,6 +257,8 @@ fn automix_gain_follows_each_decks_eq_and_routed_share() {
         }
         let engine = fixture_plan(false, Some(0.4), true, outgoing, |plan| {
             plan.lanes.xfader = Polyline::constant(0.);
+            plan.lanes.eq_a.mid = Polyline::constant(-9.);
+            plan.lanes.eq_b.mid = Polyline::constant(-9.);
             plan.lanes.gain_a = line(&[(0., -12.), (15.9, -12.), (16., -96.)]);
         });
         engine.render_offline(4 * SR as usize);
@@ -291,7 +309,10 @@ fn automix_gain_pause_resume_skip_and_manual_takeover_are_bounded() {
 fn automix_gain_knob_target_tracks_compensation_and_manual_takeover() {
     for outgoing in [DeckId::A, DeckId::B] {
         for controlled in [DeckId::A, DeckId::B] {
-            let engine = fixture(false, Some(0.4), true, outgoing);
+            let engine = fixture_plan(false, None, true, outgoing, |p| {
+                p.lanes.eq_a.mid = Polyline::constant(-6.);
+                p.lanes.eq_b.mid = Polyline::constant(-6.);
+            });
             assert_eq!(
                 engine
                     .snapshot()
@@ -336,7 +357,11 @@ fn automix_gain_knob_target_tracks_compensation_and_manual_takeover() {
 
 #[test]
 fn automix_gain_manual_takeover_cannot_overshoot_the_deck_gain_range() {
-    let engine = fixture(false, Some(0.4), true, DeckId::A);
+    let engine = fixture_plan(true, None, true, DeckId::A, |p| {
+        let stems = p.stem_mix.as_mut().unwrap();
+        stems.outgoing = std::array::from_fn(|_| Polyline::constant(0.4));
+        stems.incoming = std::array::from_fn(|_| line(&[(0., 0.4), (12., 0.4), (16., 1.)]));
+    });
     engine.render_offline(4 * SR as usize);
     assert!(engine.snapshot().decks[0].automix_gain_db > 2.);
     engine
@@ -373,3 +398,10 @@ fn automix_gain_callback_does_not_allocate_and_stop_releases_it() {
         .iter()
         .all(|d| d.automix_gain_db == 0. && d.limiter_gain_db == 0.));
 }
+
+#[path = "automix_gain/lifecycle.rs"]
+mod lifecycle;
+#[path = "automix_gain/output.rs"]
+mod output;
+#[path = "automix_gain/tone.rs"]
+mod tone;

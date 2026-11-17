@@ -33,31 +33,146 @@ waveshaped. PFL remains independent of both master controls.
 
 ### AutoMix transition compensation
 
-Dense-plan preparation estimates stereo power from the actual decoded source
-and aligned retained stems, including residual cross terms and planned EQ,
-filter, trim, fader and crossfader. It samples 400 ms windows every 200 ms on
-the host, using local full-source reference windows before and after the
-transition. No metering allocation or analysis is added to the callback.
+Dense-plan preparation renders an isolated host preview through the production
+source, stretch, stem, EQ/filter, insert, limiter, fader, crossfader, send and
+master graph. It measures 400 ms K-weighted loudness, 3 s short-term loudness,
+phase-aligned 150 Hz / 2 kHz band powers and output true peak. Routed deck,
+pre-master and final output measurements stay separate. The callback's normal
+specialization adds no observation writes, metering, allocation or search.
 
-The temporary correction has a 1 dB deadband and a +6 dB ceiling, additionally
-bounded by the remaining deck GAIN range. Its envelope rises at most 1.5 dB/s
-and falls at most 4 dB/s; a backward pass removes gain before louder material
-returns. Runtime smoothing handles cancellation. Silence/noise, near-empty
-material, sub-two-second transitions and scratch gestures do not receive a
-gain boost. Planning also reduces the rank of windows where both sources are
-quiet relative to their own tracks.
+A second preview supplies a full-source reference at the **same source clocks
+and routing** with neutral channel tone and unity stems. This is a bounded
+reference for compensation, not an alternative strategy. For full foreground
+exchanges, robust local levels before and after the handoff define a slow
+log-power trajectory between the two recordings. Each source's measured local
+dynamics and spectral proportions multiply that trajectory,
+so natural gaps/builds remain; no distant drop or track-wide target is substituted.
+Partial crossfader landings or insufficient endpoint evidence keep the unshaped
+reference. Joint fitting retains the measured cross terms between the routed decks. A missing stem can only earn positive gain on its own audible deck.
+The band excess penalty limits amplification of the material that remains.
+Cancellation does not authorize more gain. A correlated overlap can instead
+receive up to 3 dB attenuation (the coherent equal-power midpoint excess).
 
-Compensation is separate from the manual GAIN setting and source normalization;
-the deck shows its scheduled `AUTO +…` amount. The musical handoff, skip, stop or source
-replacement releases it instead of carrying it into a solo tempo-settling tail
-or the next pair. Pause
-suspends it, and resume restores the current envelope. Manual level, stem,
-tone, FX or transport edits disable this compensation for the current plan.
+Positive correction retains the 6 dB budget and 1 dB deadband. Both signs obey
+remaining manual GAIN range and routed-share authority. Envelopes move at most
+1.5 dB/s, additionally limited to 0.75 dB per sounding beat, and return to zero
+at the handoff before any solo recovery tail. Source silence, near-empty stems,
+closed channels, sub-two-second transitions and scratch gestures receive no
+boost. These limits do not change cue, strategy, ordering, source clocks,
+channel filter or crossfader. The immutable `MixPlan`, cue timing, ordering and planner
+versions are unchanged; effective EQ and stem amplitudes may receive the bounded
+offsets described below.
 
-This is a bounded feed-forward power estimate, not an exact LUFS prediction of
-time stretching or insert/send FX. The deck and master limiters remain the
-sample-peak protection. Offline A/B measurements do not establish subjective
-listening quality or inter-sample true-peak protection.
+A third preview validates the proposed signed GAIN curve. It must improve the
+measured routed sum without worsening the baseline-master-adjusted output
+error, new meaningful band surges, extra deck/master limiting above 0.5 dB, or
+an output true-peak increase beyond the bounded comparison tolerance. A failed
+validation retains the exact plan with zero optional compensation. This does
+not turn the sample-peak playback limiters into true-peak limiters.
+
+Preparation has a ten-second wall-time limit and aborts when the moving outgoing
+deck approaches launch within 250 ms. It publishes no partial curves. Manual
+mixer, master processing, FX and transport changes invalidate the measurement,
+including changes between preparation and publication. Skip, stop, source
+replacement and handoff release compensation; pause suspends it. The existing
+GAIN indicator displays either sign, independently of manual GAIN and source
+normalization.
+
+The preview uses a reproducible source pre-roll of up to three seconds and three
+seconds after handoff. It is a measurement of that digital playback state, not a
+clone of arbitrary live FX history or the hardware/acoustic output. Long-lived
+pre-existing effect tails, manual changes, and subjective musical naturalness
+remain separate validation boundaries. Real PCM renders and numerical agreement
+do not establish listening acceptance. See
+[the gain upgrade audit](../history/2026-11-17-automix-gain.md).
+
+### Joint EQ and stem compensation
+
+After validating broadband GAIN, preparation can refine low/mid/high isolator
+levels and the four planned stem levels. The original envelopes remain stored;
+EQ offsets add in dB and stem offsets multiply the original linear level. The
+current protocol's 0..1 stem range and EQ -96..+12 dB range still apply. Muted
+stems stay zero. An unavailable stem or a plan without stem lanes uses EQ only;
+the LP/HP cutoff and resonance trajectories are not changed.
+
+Small negative probes through the production graph measure each available
+control's response on each routed deck. A bounded local log-power model jointly
+fits GAIN, EQ and stems, including paired transfers between GAIN and a selective
+control when the shared budget is full. This model proposes curves; it does not
+replace PCM loudness measurements. Source-specific corrections have a lower
+regularization cost than EQ affecting all sources in the same band.
+
+Each EQ/stem offset is limited to 2 dB in either direction, reduced by routed
+share. Every stem/band path shares the existing +6/-3 dB correction budget;
+opposing corrections cannot create extra headroom. Existing broadband correction
+can move toward zero to make room for selective correction. Tone offsets move
+at most 1 dB/s and 0.75 dB per sounding beat, taper to zero, and cannot reverse a
+moving base fade beyond control quantization. No new tone boost is authorized by
+silence, a closed route, near-muted material or cancellation evidence.
+
+Actual renders must improve the spectral objective against both the accepted
+GAIN curve and the untouched plan without increasing broadband error. Final
+output, short-term, band surge, limiter and true-peak checks remain mandatory.
+An optimistic proposal may be retried at half and quarter strength. The ten-second
+host budget includes probes and retries; exhaustion retains an already validated
+GAIN curve if source/control/launch guards still hold. No probe runs on the callback.
+
+Snapshots expose effective EQ/stem targets and separate automatic offsets.
+Existing controls therefore start manual gestures at their effective values.
+Cancellation smoothly releases the overlay; EQ takeover transfers the current
+combined value into its release ramp so AUTO is not applied twice. Stem targets
+continue using the existing 150 ms smoothing. Numerical validation and source
+identity checks do not certify arbitrary live FX history or subjective sound.
+See [the joint compensation audit](../history/2026-11-17-automix-tone.md).
+
+Desktop publication avoids redundant loop-off commands, which are otherwise
+treated as manual takeover and invalidate the prepared measurement. Replacement
+preparation uses the candidate's beat grid and the incoming reset state. Its
+commit applies that reset with the plan, preserving the control revision and
+exact PCM/stem identity checks for intervening user edits. Signed gain/EQ/stem
+slew limits share the available step across interpolated zero crossings.
+Validation also limits additional contrast between adjacent measured output
+windows to 0.75 dB for total loudness, all three bands and short-term loudness,
+reserving 0.25 dB below the 1 dB audit boundary for window alignment and carried
+DSP state in continuous playback.
+The fitting grid remains about 200 ms. Validation reads the same 400 ms/3 s
+loudness windows at four offsets (about 50 ms apart), and checks the same
+200 ms band-power difference at every 32-frame offset. Band power uses a
+rolling two-hop window rather than an average of the last two readouts, so
+more frequent reads do not shorten its window. Boundaries are quantized to
+audio blocks without accumulating drift at 44.1 kHz. All these measurements
+run on the preparation thread; the playback callback only applies the curves.
+This preserves existing transients while rejecting extra jumps caused by a
+boosted source becoming dominant during routing or stem changes. Effectively
+silent bands do not supply ratio evidence. GAIN candidates, like tone candidates,
+can back off to one-half or one-quarter and must be rendered again within the
+same preparation budget; otherwise the original plan plays without that layer.
+See [the full-set review](../history/2026-11-17-automix-set-review.md).
+
+Host parameter edits, source/stem publication and plan commit share the short
+automation control gate. Cancellation and the parameter write cannot interleave
+with commit's validation/reset. Preparation pins the control revision before
+copying candidate settings and the source identities before compiling envelopes;
+the expensive previews do not hold this gate. A late three-to-four-stem upgrade
+invalidates the active compensation while retaining the musical plan. An explicit
+Stop also invalidates in-flight measurements; the internal stop used to install
+an exactly prepared replacement still relies on source identity verification.
+
+Manual GAIN takeover transfers the current manual-times-AUTO product to one
+smoother before releasing AUTO. This avoids a short boost or dip when dragging
+from the displayed effective value. Other cancellation paths retain their normal
+AUTO release. Preview copies the user's FX auto-fade setting; changes to that
+setting or live roll invalidate prior measurements. Active live roll, brake,
+reverse, loop, jog and cue-preview transport states bypass optional compensation
+because the forward preview does not reproduce those states. Callback processing
+continues to use nonblocking try_lock and allocation-free smoothing.
+See [the lifecycle code review](../history/2026-11-17-automix-lifecycle-review.md).
+
+Pre-transition performance gestures use `Engine::perform` for channel filter,
+stem gain and EQ. These host-generated moves return to neutral before the armed
+transition and do not mark its lanes or compensation as manually taken over.
+The same EQ command sent through `dispatch` still applies manual takeover.
+See [the follow-up review](../history/2026-11-17-automix-followup-review.md).
 
 ### Independent tempo and key
 

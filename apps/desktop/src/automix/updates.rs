@@ -153,6 +153,43 @@ mod tests {
         assert_eq!(order.next(false), ids[0]);
     }
     #[test]
+    fn replacement_publication_keeps_compensation_unless_the_user_edits_output() {
+        for manual in [false, true] {
+            let (_dir, core, ids) = super::super::tests::fixture();
+            prepare_playlist(&core, ids.clone());
+            let (old, order) = armed(&core, &ids);
+            let mut watch = Watch::new(core.mix_preparation.revision());
+            prepare_playlist(&core, vec![ids[2], ids[1]]);
+            let mut update = pending(&core, &mut watch, &order);
+            let (ready, a, _, _) = update.prepared.take().unwrap();
+            let plan = Arc::new(super::super::tests::compensated_plan(ids[0], ids[2]));
+            let dense = core
+                .engine
+                .prepare_replacement(
+                    (*plan).clone(),
+                    DeckId::A,
+                    ready.buf.clone(),
+                    ready.stems.clone(),
+                    &ready.prepared.analysis.tempo,
+                )
+                .unwrap();
+            update.prepared = Some((ready, a, plan, dense));
+            if manual {
+                command(&core, Command::SetMasterGain { db: -2. }).unwrap();
+            }
+            update
+                .publish(&core, DeckId::A, &old, || true)
+                .unwrap()
+                .unwrap();
+            let peak = super::super::tests::compensation_peak(&core);
+            assert!(
+                if manual { peak == 0. } else { peak > 0.1 },
+                "manual={manual}, {peak}"
+            );
+        }
+    }
+
+    #[test]
     fn changed_playlist_replaces_only_silent_deck_after_preparation_and_completes() {
         let (_dir, core, ids) = super::super::tests::fixture();
         prepare_playlist(&core, ids.clone());
@@ -369,6 +406,7 @@ impl Watch {
                         outgoing,
                         ready.buf.clone(),
                         ready.stems.clone(),
+                        &ready.prepared.analysis.tempo,
                     )
                     .ok()?;
                 Some((ready, a, plan, dense))
@@ -445,9 +483,10 @@ impl Update {
         if !accepted {
             return Ok(None);
         }
-        reset_deck(core, incoming, &active)?;
         // The immutable envelope was compiled while the previous plan remained
-        // armed. Publication performs no decode, stem reads or gain analysis.
+        // armed. Commit also applies its measured incoming reset state;
+        // dispatching reset commands here would cancel the fresh compensation.
+        // Publication performs no decode, stem reads or gain analysis.
         let transition = next::prepare_and_publish(core, outgoing, &active, || {
             Ok(Some((plan.clone(), dense.clone())))
         })?;

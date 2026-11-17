@@ -1,284 +1,297 @@
-//! Host-only feed-forward compensation. Inspect the actual retained stem PCM
-//! and scheduled channel processing; never run a loudness rider in the callback.
+//! Host-only gain preparation. Fit against routed PCM, then validate with
+//! the production playback graph. Strategy and musical envelopes are immutable.
 use super::*;
-use crate::source::{SampleSource, StemSource};
+#[path = "gain/fit.rs"]
+mod fit;
+#[path = "gain/meter.rs"]
+mod meter;
+#[path = "gain/reference.rs"]
+mod reference;
+#[path = "gain/render.rs"]
+mod render;
+#[path = "gain/tone.rs"]
+mod tone;
 
 const HOP: f32 = 0.2;
-const MAX_DB: f32 = 6.0;
-const RISE_DB_PER_SECOND: f32 = 1.5;
-const FALL_DB_PER_SECOND: f32 = 4.0;
 
-struct Probe {
-    audio: Arc<AudioBuffer>,
-    stems: Option<Arc<stems::PreparedStems>>,
-    manual_gain: f32,
-    resonance: f32,
+#[derive(Clone)]
+pub(super) struct Sources {
+    // Retain the identities so a replaced buffer cannot reuse its address.
+    audio: [Arc<AudioBuffer>; 2],
+    stems: [Option<Arc<crate::StemBuffer>>; 2],
 }
-
-impl Probe {
-    fn from_slot(slot: &DeckSlot) -> Option<Self> {
-        let audio = slot.buffer.lock().ok()?.clone()?;
-        let stems = slot
-            .stems
-            .lock()
-            .ok()?
-            .clone()
-            .filter(|s| Arc::ptr_eq(&s.source, &audio));
+impl Sources {
+    pub(super) fn capture(slots: [&DeckSlot; 2]) -> Option<Self> {
         Some(Self {
-            audio,
-            stems,
-            manual_gain: db_to_lin(
-                slot.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100. - 12.,
-            ),
-            resonance: if slot.resonance_enabled.load(Ordering::Relaxed) {
-                slot.resonance_milli.load(Ordering::Relaxed) as f32 / 1000.
-            } else {
-                0.
-            },
+            audio: [
+                slots[0].buffer.lock().ok()?.clone()?,
+                slots[1].buffer.lock().ok()?.clone()?,
+            ],
+            stems: [
+                slots[0]
+                    .stems
+                    .lock()
+                    .ok()?
+                    .as_ref()
+                    .map(|s| s.audio.clone()),
+                slots[1]
+                    .stems
+                    .lock()
+                    .ok()?
+                    .as_ref()
+                    .map(|s| s.audio.clone()),
+            ],
         })
     }
-
-    /// Stereo powers of the whole source and the retained, EQ/filter-shaped
-    /// source. Keep cross terms between stems, including the residual, intact.
-    fn powers(
-        &self,
-        sec: f32,
-        point: Option<&DeckPoint>,
-        loop_range: Option<(u64, u64)>,
-    ) -> [f32; 2] {
-        let sr = self.audio.sample_rate as f32;
-        let gains = point
-            .and_then(|p| p.stems)
-            .map_or([1.; 4], |s| s.map(|g| g as f32 / 1000.));
-        let source = StemSource::new(
-            &self.audio,
-            self.stems.as_ref().map(|s| s.audio.as_ref()),
-            gains,
-        );
-        let mut eq = [Isolator::new(sr), Isolator::new(sr)];
-        let mut filters = [ChannelFilter::new(sr), ChannelFilter::new(sr)];
-        if let Some(p) = point {
-            for ch in 0..2 {
-                eq[ch].gain = p.eq.map(|g| db_to_lin(g as f32 / 100. - 96.));
-                eq[ch].set_resonance(self.resonance);
-                filters[ch].set_resonance(self.resonance);
-                filters[ch].set_amount(sr, p.filter as f32 / 500. - 1.);
-            }
-        }
-        // 80 ms settles the local filters; 400 ms averages over transients.
-        let warmup = (0.08 * sr) as usize;
-        let frames = (0.48 * sr) as usize;
-        let start = ((sec - 0.28) * sr).round() as i64;
-        let mut power = [0.0_f64; 2];
-        let mut count = 0;
-        for j in 0..frames {
-            let mut frame = start + j as i64;
-            if let Some((start, length)) = loop_range {
-                frame = start as i64 + (frame - start as i64).rem_euclid(length.max(1) as i64);
-            }
-            if frame < 0 || frame >= self.audio.frames as i64 {
-                continue;
-            }
-            let full = self.audio.sample(frame as usize);
-            let selected = source.sample(frame as usize);
-            for ch in 0..2 {
-                let shaped = if point.is_some() {
-                    filters[ch].process(eq[ch].process(selected[ch]))
-                } else {
-                    full[ch]
-                };
-                if j >= warmup {
-                    power[0] += (full[ch] as f64).powi(2);
-                    power[1] += (shaped as f64).powi(2);
+    pub(super) fn matches(&self, slots: [&DeckSlot; 2]) -> bool {
+        slots.iter().enumerate().all(|(d, slot)| {
+            let Ok(audio) = slot.buffer.lock() else {
+                return false;
+            };
+            let Ok(stems) = slot.stems.lock() else {
+                return false;
+            };
+            audio
+                .as_ref()
+                .is_some_and(|a| Arc::ptr_eq(a, &self.audio[d]))
+                && match (&self.stems[d], stems.as_ref()) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => {
+                        Arc::ptr_eq(a, &b.audio) && Arc::ptr_eq(&self.audio[d], &b.source)
+                    }
+                    _ => false,
                 }
-            }
-            count += usize::from(j >= warmup);
-        }
-        let scale = (self.audio.loudness.gain as f64).powi(2) / (2 * count.max(1)) as f64;
-        power.map(|p| (p * scale) as f32)
-    }
-
-    fn anchor(&self, start: f32, end: f32) -> f32 {
-        let mut powers: Vec<_> = (0..8)
-            .map(|i| self.powers(start + (end - start) * (i as f32 + 0.5) / 8., None, None)[0])
-            .filter(|p| p.is_finite() && *p > 1e-6)
-            .collect();
-        if powers.is_empty() {
-            return 0.;
-        }
-        powers.sort_by(f32::total_cmp);
-        // Upper median resists a brief drum gap, without targeting a track's drop.
-        powers[powers.len() * 5 / 8]
+        })
     }
 }
 
-fn source_time(plan: &MixPlan, relative: usize, sec: f32) -> (f32, Option<(u64, u64)>) {
-    let u = bar_at(&plan.clock, sec);
-    let (curve, start, launch, rate, op) = if relative == 0 {
-        (
-            &plan.outgoing_source,
-            plan.t_in_a,
-            0.,
-            &plan.lanes.rate_a,
-            &plan.lanes.loop_a,
-        )
-    } else {
-        (
-            &plan.incoming_source,
-            plan.t_in_b,
-            plan.clock.sample(plan.incoming_start_bar),
-            &plan.lanes.rate_b,
-            &plan.lanes.loop_b,
-        )
-    };
-    let source = if curve.nodes.is_empty() {
-        start + (sec - launch).max(0.) * rate.sample(u)
-    } else {
-        curve.sample(u)
-    };
-    let range = op
-        .as_ref()
-        .filter(|op| u >= op.on_bar && u < op.off_bar)
-        .map(|op| (op.start_src_frame, op.length_src_frames));
-    (source, range)
+struct Guard<'a> {
+    slot: &'a DeckSlot,
+    slots: [&'a DeckSlot; 2],
+    sources: Sources,
+    shared: &'a Shared,
+    initial_frame: f64,
+    start_frame: f64,
+    revision: u64,
+    began: std::time::Instant,
 }
-
-fn smooth(values: &mut [f32], dt: f32) {
-    if values.is_empty() {
-        return;
+impl Guard<'_> {
+    fn valid(&self) -> bool {
+        self.current() && self.began.elapsed().as_secs_f32() < 10.
     }
-    values[0] = 0.;
-    *values.last_mut().unwrap() = 0.;
-    for i in 1..values.len() {
-        values[i] = values[i].min(values[i - 1] + RISE_DB_PER_SECOND * dt);
-    }
-    // Look ahead and remove compensation before a drop/stem return, rather
-    // than waiting for a limiter to push an unexpectedly louder signal down.
-    for i in (0..values.len() - 1).rev() {
-        values[i] = values[i].min(values[i + 1] + FALL_DB_PER_SECOND * dt);
-    }
-}
-
-pub(super) fn compile(plan: &MixPlan, slots: [&DeckSlot; 2], points: &mut [Point], sr: u32) {
-    let Some(summary) = &plan.summary else {
-        return;
-    };
-    let overlap = plan.clock.sample(summary.length_bars as f32);
-    if overlap < 2. || plan.lanes.scratch_a.is_some() || plan.lanes.scratch_b.is_some() {
-        return;
-    }
-    let (Some(a), Some(b)) = (Probe::from_slot(slots[0]), Probe::from_slot(slots[1])) else {
-        return;
-    };
-    let slot = slots[0];
-    let initial_frame = slot.playhead_frames();
-    let start_frame = plan.t_in_a as f64 * a.audio.sample_rate as f64;
-    let incoming_end = source_time(plan, 1, overlap).0;
-    let anchors = [
-        a.anchor((plan.t_in_a - 4.).max(0.), plan.t_in_a.max(0.4)),
-        b.anchor(
-            incoming_end,
-            (incoming_end + 4.).min(b.audio.frames as f32 / b.audio.sample_rate as f32),
-        ),
-    ];
-    let probes = [a, b];
-    // The clock can include a solo tempo-settling tail after the handoff.
-    // Source maps may end at the overlap boundary, so stop compensation here
-    // instead of repeatedly probing a frozen source position in that tail.
-    let duration = overlap;
-    let count = (duration / HOP).ceil().max(1.) as usize;
-    let dt = duration / count as f32;
-    let mut corrections: [Vec<f32>; 2] = std::array::from_fn(|_| Vec::with_capacity(count + 1));
-    for i in 0..=count {
-        let now = slot.playhead_frames();
-        let guard = probes[0].audio.sample_rate as f64
-            * slot.rate_micro.load(Ordering::Relaxed) as f64
+    fn current(&self) -> bool {
+        let now = self.slot.playhead_frames();
+        let lead = self.slot.src_sr.load(Ordering::Relaxed) as f64
+            * self.slot.rate_micro.load(Ordering::Relaxed) as f64
             / 1_000_000.
-            * 0.15;
-        if now > initial_frame && now + guard > start_frame {
-            // A live deck is approaching the launch. Keep the uncompensated
-            // plan rather than delaying the beat for optional gain analysis.
-            return;
+            * 0.25;
+        self.sources.matches(self.slots)
+            && self.shared.automation.gain_revision.load(Ordering::Acquire) == self.revision
+            && !(now > self.initial_frame && now + lead > self.start_frame)
+    }
+}
+
+fn smooth(values: &mut [f32], dt: f32, speed: f32) {
+    if let Some(v) = values.first_mut() {
+        *v = 0.;
+    }
+    if let Some(v) = values.last_mut() {
+        *v = 0.;
+    }
+    limit_signed_slope(values, |_| speed * dt);
+}
+
+fn limit_signed_slope(values: &mut [f32], edge: impl Fn(usize) -> f32) {
+    // Work on magnitudes independently: a positive/negative change must pass
+    // through neutral, never average into an unauthorized boost in a gap.
+    // Split an edge at its interpolated zero crossing. Giving each sign a
+    // whole edge budget would allow twice the intended slew across that edge.
+    let original = values.to_vec();
+    let budget = |i: usize, at: usize| {
+        let (a, b) = (original[i - 1], original[i]);
+        if a * b < 0. {
+            edge(i) * original[at].abs() / (a.abs() + b.abs())
+        } else {
+            edge(i)
         }
-        let sec = i as f32 * dt;
-        let point = &points[((sec * sr as f32) as usize / STEP).min(points.len() - 1)];
-        let (xa, xb) = xfader_gains(point.xf as f32 / 500. - 1., XfCurve::EqualPower, false);
-        let cross = [xa, xb];
-        let routing: [f32; 2] = std::array::from_fn(|d| {
-            if d == 1 && sec < plan.clock.sample(plan.incoming_start_bar) {
+    };
+    for sign in [-1., 1.] {
+        let mut magnitude: Vec<_> = original.iter().map(|v| (v * sign).max(0.)).collect();
+        if magnitude.is_empty() {
+            continue;
+        }
+        for i in 1..magnitude.len() {
+            magnitude[i] = magnitude[i].min(magnitude[i - 1] + budget(i, i));
+        }
+        for i in (0..magnitude.len() - 1).rev() {
+            magnitude[i] = magnitude[i].min(magnitude[i + 1] + budget(i + 1, i));
+        }
+        for (v, m) in values.iter_mut().zip(magnitude) {
+            if *v * sign > 0. {
+                *v = sign * m;
+            }
+        }
+    }
+}
+
+pub(super) fn compile(
+    dense: &mut DensePlan,
+    slots: [&DeckSlot; 2],
+    shared: &Shared,
+    sources: Option<Sources>,
+    revision: u64,
+) {
+    let duration = dense.overlap_frames as f32 / dense.sample_rate as f32;
+    if duration < 2. || dense.plan.lanes.scratch_a.is_some() || dense.plan.lanes.scratch_b.is_some()
+    {
+        return;
+    }
+    // These live transport modes are not reproduced by the forward preview.
+    // Leave the plan intact rather than fit a different signal path.
+    if slots.iter().any(|s| {
+        s.roll.load(Ordering::Relaxed)
+            || s.brake.load(Ordering::Relaxed)
+            || s.reverse.load(Ordering::Relaxed)
+            || s.loop_on.load(Ordering::Relaxed)
+            || s.jog_touch.load(Ordering::Acquire)
+            || s.preview_cue.load(Ordering::Acquire) != 0
+    }) {
+        return;
+    }
+    let Some(sources) = sources else {
+        return;
+    };
+    let guard = Guard {
+        slot: slots[0],
+        slots,
+        sources,
+        shared,
+        initial_frame: slots[0].playhead_frames(),
+        start_frame: dense.start_frame,
+        revision,
+        began: std::time::Instant::now(),
+    };
+    let Some(base) = render::render(dense, slots, shared, false, &guard) else {
+        return;
+    };
+    let Some(mut reference) = render::render(dense, slots, shared, true, &guard) else {
+        return;
+    };
+    let dt = ((HOP * dense.sample_rate as f32) as usize / STEP).max(1) as f32 * STEP as f32
+        / dense.sample_rate as f32;
+    reference::shape(dense, &mut reference, dt);
+    let base_output = base.output;
+    let base = base.readings;
+    let reference = reference.readings;
+    let count = (duration / dt).ceil() as usize;
+    if base.len() < count || reference.len() != base.len() {
+        return;
+    }
+    let manual = slots.map(|s| s.limiter_gain_centi.load(Ordering::Relaxed) as f32 / 100. - 12.);
+    let mut values: [Vec<f32>; 2] = std::array::from_fn(|_| vec![0.; count + 1]);
+    for i in 0..count {
+        // Readings end at (i+1)*dt; their momentary window is centered near i*dt.
+        let point = &dense.points[((i as f32 * dt * dense.sample_rate as f32) as usize / STEP)
+            .min(dense.points.len() - 1)];
+        let (a, b) = xfader_gains(point.xf as f32 / 500. - 1., XfCurve::EqualPower, false);
+        let routing = [a, b];
+        let routing = std::array::from_fn(|d| {
+            if d == 1
+                && i as f32 * dt < dense.incoming_start_frames as f32 / dense.sample_rate as f32
+            {
                 0.
             } else {
-                cross[d] * point.decks[d].fader as f32 / 1000.
+                routing[d] * point.decks[d].fader as f32 / 1000.
             }
         });
-        let strongest = routing.iter().copied().fold(0f32, f32::max);
-        for relative in 0..2 {
-            let p = &point.decks[relative];
-            let weight = routing[relative];
-            if weight < 0.01 {
-                corrections[relative].push(0.);
-                continue;
+        let gain = fit::point(&base[i], &reference[i], routing, manual);
+        for d in 0..2 {
+            values[d][i] = gain[d];
+        }
+    }
+    // At most 1.5 dB/s and 0.75 dB per sounding beat. Slow material gets a
+    // longer motion without making half/double-time grids the only clock.
+    let slowest = dense
+        .points
+        .iter()
+        .map(|p| p.tempo)
+        .filter(|v| v.is_finite() && *v > 0.)
+        .reduce(f32::min)
+        .unwrap_or(120.);
+    let slew = (0.75 * slowest / 60.).clamp(0.25, 1.5);
+    for v in &mut values {
+        smooth(v, dt, slew);
+    }
+    let gain_changed = values.iter().flatten().any(|v| v.abs() >= 0.05);
+    let mut candidate = dense.clone();
+    for (j, point) in candidate.points.iter_mut().enumerate() {
+        let sec = (j * STEP) as f32 / dense.sample_rate as f32;
+        if sec >= duration {
+            continue;
+        }
+        let pos = sec / dt;
+        let i = (pos.floor() as usize).min(count - 1);
+        for d in 0..2 {
+            let db =
+                values[d][i] + (values[d][i + 1] - values[d][i]) * (pos - i as f32).clamp(0., 1.);
+            let edge = slew * sec.min(duration - sec).max(0.);
+            point.decks[d].compensation = (db.clamp(-edge, edge) * 100.).round() as i32;
+        }
+    }
+    let mut best = dense.clone();
+    let mut measured = base.clone();
+    let mut measured_output = base_output.clone();
+    let mut changed = false;
+    if gain_changed {
+        let proposed = candidate.clone();
+        for fraction in [1., 0.5, 0.25] {
+            for (point, from) in candidate.points.iter_mut().zip(&proposed.points) {
+                for d in 0..2 {
+                    point.decks[d].compensation =
+                        (from.decks[d].compensation as f32 * fraction).round() as i32;
+                }
             }
-            let probe = &probes[relative];
-            let (time, loop_range) = source_time(plan, relative, sec);
-            let powers = probe.powers(time, Some(p), loop_range);
-            let gain = weight * db_to_lin(p.gain as f32 / 100. - 96.) * probe.manual_gain;
-            let actual = powers[1] * gain * gain;
-            let full = powers[0] * gain * gain;
-            let reference = anchors[relative] * gain * gain;
-            // Restore only this deck's retained material. A full outgoing
-            // track must not be boosted to fill a missing incoming stem.
-            // Crossfader/channel attenuation is intentional: taper the gain
-            // budget with its relative routed power, never invert the fader.
-            let authority = (weight / strongest.max(0.01)).powi(2);
-            let cap = (MAX_DB * authority).min(12. - 20. * probe.manual_gain.log10());
-            // No gain chasing noise, fully muted stems, or deliberate deep
-            // gaps. A 1 dB deadband leaves ordinary beat variation alone.
-            let target = reference.max(full);
-            let correction = if actual.is_finite()
-                && target.is_finite()
-                && actual > 1e-6
-                && full > 1e-6
-                && actual > target * 0.01
-            {
-                (10. * (target / actual).log10() - 1.).clamp(0., cap.max(0.))
-            } else {
-                0.
+            let Some(result) = render::render(&candidate, slots, shared, false, &guard) else {
+                break;
             };
-            corrections[relative].push(correction);
+            if result.readings.len() == base.len()
+                && fit::acceptable(&base, &reference, &result.readings)
+                && fit::stable_output(&base_output, &result.output)
+            {
+                best = candidate;
+                measured = result.readings;
+                measured_output = result.output;
+                changed = true;
+                break;
+            }
         }
     }
-    for values in &mut corrections {
-        smooth(values, dt);
+    if let Some(candidate) = tone::refine(
+        dense,
+        &best,
+        &base,
+        &measured,
+        &reference,
+        &base_output,
+        &measured_output,
+        slots,
+        shared,
+        &guard,
+        dt,
+        slew,
+    ) {
+        best = candidate;
+        changed = true;
     }
-    for (j, point) in points.iter_mut().enumerate() {
-        let position = (j * STEP) as f32 / sr as f32 / dt;
-        let i = (position.floor() as usize).min(count - 1);
-        let t = (position - i as f32).clamp(0., 1.);
-        for (d, deck) in point.decks.iter_mut().enumerate() {
-            let values = &corrections[d];
-            let db = values[i] + (values[i + 1] - values[i]) * t;
-            deck.compensation = (db * 100.).round() as u32;
-        }
+    // An optional refinement that exhausts its budget cannot discard an
+    // already validated gain curve. Identity and launch guards still apply.
+    if changed && guard.current() {
+        dense.points = best.points;
+        dense.gain_revision = Some(guard.revision);
+        dense.gain_sources = Some(guard.sources);
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compensation_ramps_slowly_and_releases_before_a_return() {
-        let mut values = vec![6.; 51];
-        values[30] = 0.;
-        smooth(&mut values, 0.2);
-        assert_eq!(values[0], 0.);
-        assert_eq!(values[30], 0.);
-        assert_eq!(*values.last().unwrap(), 0.);
-        assert!(values.iter().any(|v| *v > 4.));
-        for pair in values.windows(2) {
-            assert!(pair[1] - pair[0] <= 0.30001);
-            assert!(pair[0] - pair[1] <= 0.80001);
-        }
-    }
-}
+#[path = "gain/tests.rs"]
+mod tests;

@@ -144,11 +144,21 @@ impl Isolator {
     }
 
     pub fn process(&mut self, x: f32) -> f32 {
+        let [low, mid, high] = self.split(x);
+        self.combine(x, low, mid, high)
+    }
+
+    /// Analysis uses the same phase-aligned crossover as the channel EQ.
+    pub(crate) fn split(&mut self, x: f32) -> [f32; 3] {
         let low_split = self.low_lp.process(x);
         let upper_split = self.split_hp.process(x);
         let low = self.low_align_lp.process(low_split) + self.low_align_hp.process(low_split);
         let mid = self.mid_lp.process(upper_split);
         let high = self.high_hp.process(upper_split);
+        [low, mid, high]
+    }
+
+    fn combine(&mut self, x: f32, low: f32, mid: f32, high: f32) -> f32 {
         let g = |i: usize, v: f32| {
             if self.kill[i] {
                 0.0
@@ -286,6 +296,19 @@ pub struct SmoothValue {
 }
 
 impl SmoothValue {
+    pub(crate) fn current(&self) -> f32 {
+        self.current
+    }
+
+    pub(crate) fn target(&self) -> f32 {
+        self.target
+    }
+
+    pub(crate) fn set_duration(&mut self, sample_rate: f32, seconds: f32) {
+        // Changing the duration affects the next target, not a ramp underway.
+        self.duration = (sample_rate * seconds).round().max(1.) as u32;
+    }
+
     pub fn new(value: f32, sample_rate: f32, seconds: f32) -> Self {
         Self {
             current: value,
@@ -356,6 +379,9 @@ pub struct MasterLimiter {
 }
 
 impl MasterLimiter {
+    pub(crate) fn gain(&self) -> f32 {
+        self.gain
+    }
     pub fn new(sr: f32) -> Self {
         Self {
             gain: 1.0,

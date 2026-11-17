@@ -13,6 +13,7 @@ impl DeckRt {
             trim: SmoothValue::new(1.0, sr, 0.003),
             limiter_gain: SmoothValue::new(1.0, sr, 0.003),
             automix_gain: SmoothValue::new(1.0, sr, 0.15),
+            automix_eq: std::array::from_fn(|_| SmoothValue::new(1., sr, 0.15)),
             limiter: MasterLimiter::new(sr),
             isolator_l: Isolator::new(sr),
             isolator_r: Isolator::new(sr),
@@ -275,7 +276,9 @@ impl Shared {
         };
         rt.presentation_step = if rt.playing || rt.touching { step } else { 0. };
 
-        let eq = std::array::from_fn(|band| rt.eq[band].next());
+        let eq = std::array::from_fn(|band| {
+            (rt.eq[band].next() * rt.automix_eq[band].next()).min(3.981_071_7)
+        });
         rt.isolator_l.gain = eq;
         rt.isolator_r.gain = eq;
 
@@ -294,8 +297,9 @@ impl Shared {
         // Both master and PFL hear the same limited signal. Fader and balance
         // stay downstream so limiting cannot counteract a channel fade.
         // The two smoothers have different release times. Keep their product
-        // within +12 dB even during a manual takeover of active compensation.
-        let drive = (rt.limiter_gain.next() * rt.automix_gain.next()).min(3.981_071_7);
+        // within -12..+12 dB even during a manual takeover of active compensation.
+        let drive =
+            (rt.limiter_gain.next() * rt.automix_gain.next()).clamp(0.251_188_64, 3.981_071_7);
         let input_gain = rt.trim.next() * drive;
         let (left, right) = rt
             .limiter
